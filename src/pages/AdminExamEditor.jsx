@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
 import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation } from '../services/adminGeminiService';
+import { getUniversities } from '../data/examRegistry';
 
 function AdminExamEditor() {
     const { id } = useParams();
@@ -19,9 +20,9 @@ function AdminExamEditor() {
     // Form states
     const [examId, setExamId] = useState('');
     const [university, setUniversity] = useState('');
-    const [universityId, setUniversityId] = useState('');
+    const [universityId, setUniversityId] = useState(Math.floor(Math.random() * 10000));
     const [faculty, setFaculty] = useState('');
-    const [facultyId, setFacultyId] = useState('');
+    const [facultyId, setFacultyId] = useState('fac' + Math.floor(Math.random() * 10000));
     const [year, setYear] = useState(new Date().getFullYear());
     const [subject, setSubject] = useState('');
     const [subjectEn, setSubjectEn] = useState('english');
@@ -41,11 +42,43 @@ function AdminExamEditor() {
     } : null);
 
 
+    const [universitiesData, setUniversitiesData] = useState([]);
+
     useEffect(() => {
+        getUniversities().then(data => setUniversitiesData(data || []));
         if (!isNew) {
             fetchExam();
         }
     }, [id]);
+
+    useEffect(() => {
+        if (isNew) {
+            setExamId(`${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase());
+        }
+    }, [universityId, facultyId, year, subjectEn, isNew]);
+
+    const handleUniversityChange = (e) => {
+        const val = e.target.value;
+        setUniversity(val);
+        const match = universitiesData.find(u => u.name === val);
+        if (match) {
+            setUniversityId(match.id);
+        } else {
+            setUniversityId(Math.floor(Math.random() * 10000));
+        }
+    };
+
+    const handleFacultyChange = (e) => {
+        const val = e.target.value;
+        setFaculty(val);
+        const uni = universitiesData.find(u => u.name === university);
+        const match = uni?.faculties.find(f => f.name === val);
+        if (match) {
+            setFacultyId(match.id);
+        } else {
+            setFacultyId('fac' + Math.floor(Math.random() * 10000));
+        }
+    };
 
     const fetchExam = async () => {
         const { data, error } = await getAdminExamById(id);
@@ -593,46 +626,30 @@ function AdminExamEditor() {
                     </div>
                 )}
 
-                {/* ID命名ルール */}
-                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r shadow-sm">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <span className="text-yellow-400 text-xl font-bold">💡</span>
-                        </div>
-                        <div className="ml-3">
-                            <h3 className="text-sm font-bold text-yellow-800">各IDの命名ルール（重要）</h3>
-                            <div className="mt-2 text-sm text-yellow-700 space-y-1">
-                                <p><strong>ID (一意な英数字):</strong> URLの一部になります。必ず <code>[大学]-[学部]-[西暦]-[科目]</code> の形式にしてください。<br />例: <code>meiji-law-2025-english</code>, <code>kanda-2025-english</code></p>
-                                <p><strong>大学ID (数値):</strong> 大学ごとの固定数値です。早慶(1,2)、MARCH(3~7)、日東駒専(8~11)...の順に番号を振ってください。</p>
-                                <p><strong>学部ID (英数字):</strong> 学部ごとの固定文字列です。例: 法学部=<code>law</code>, 文学部=<code>bungaku</code></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 {/* 基本情報フォーム */}
                 <div className="bg-white rounded-xl shadow p-6">
                     <h2 className="text-xl font-bold border-b pb-2 mb-4">基本情報</h2>
+
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6 rounded shadow-sm text-sm text-blue-800">
+                        <p><strong>💡 ヒント:</strong> 大学名や学部名を入力すると、過去の登録データから自動的にIDが紐付けられます。</p>
+                        <p>ID（URLの一部）は、選択された情報に基づいて裏側で自動生成されます。</p>
+                        {isNew && <p className="mt-1 font-mono text-xs text-blue-600">現在の生成ID: {examId}</p>}
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">ID (一意な英数字)</label>
-                            <input type="text" value={examId} onChange={e => setExamId(e.target.value)} disabled={!isNew} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
-                        </div>
-                        <div>
                             <label className="block text-sm font-medium text-gray-700">大学名</label>
-                            <input type="text" value={university} onChange={e => setUniversity(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">大学ID (数値)</label>
-                            <input type="number" value={universityId} onChange={e => setUniversityId(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
+                            <input type="text" list="uni-list" value={university} onChange={handleUniversityChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" placeholder="例: 明治大学" />
+                            <datalist id="uni-list">
+                                {universitiesData.map(u => <option key={u.id} value={u.name} />)}
+                            </datalist>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">学部名</label>
-                            <input type="text" value={faculty} onChange={e => setFaculty(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">学部ID (英数字)</label>
-                            <input type="text" value={facultyId} onChange={e => setFacultyId(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
+                            <input type="text" list="fac-list" value={faculty} onChange={handleFacultyChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" placeholder="例: 法学部" />
+                            <datalist id="fac-list">
+                                {universitiesData.find(u => u.name === university)?.faculties.map(f => <option key={f.id} value={f.name} />)}
+                            </datalist>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">年度</label>
