@@ -702,7 +702,8 @@ function AdminExamEditor() {
                                             <tr>
                                                 <th className="px-2 py-2 text-left w-12">ID</th>
                                                 <th className="px-2 py-2 text-left w-20">ラベル</th>
-                                                <th className="px-2 py-2 text-left w-16">形式</th>
+                                                <th className="px-2 py-2 text-left w-20">形式</th>
+                                                <th className="px-2 py-2 text-left w-24">完答グループ</th>
                                                 <th className="px-2 py-2 text-left w-32">選択肢(カンマ区切り)</th>
                                                 <th className="px-2 py-2 text-left w-16">配点</th>
                                                 <th className="px-2 py-2 text-left w-20">正解</th>
@@ -723,11 +724,14 @@ function AdminExamEditor() {
                                                         <select value={q.type || 'text'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-full p-1 border rounded text-xs">
                                                             <option value="text">記述</option>
                                                             <option value="selection">選択</option>
-                                                            <option value="complete">完答</option>
+                                                            <option value="complete">完答(旧)</option>
                                                             <option value="unordered">順不同</option>
                                                             <option value="mixed">併用(マーク/記述)</option>
                                                             <option value="correction">訂正</option>
                                                         </select>
+                                                    </td>
+                                                    <td className="px-2 py-2">
+                                                        <input type="text" value={q.completeGroupId || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'completeGroupId', e.target.value)} className="w-full p-1 border rounded text-xs" placeholder="A, 1 等" title="同じ文字を入力した問題同士が完答グループになります" />
                                                     </td>
                                                     <td className="px-2 py-2">
                                                         <input type="text" value={q.options ? q.options.join(',') : ''} onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} disabled={!['selection', 'complete', 'unordered', 'mixed'].includes(q.type)} className="w-full p-1 border rounded text-xs disabled:bg-gray-200" placeholder="a,b,c,d" />

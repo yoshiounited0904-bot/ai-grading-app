@@ -8,6 +8,7 @@ export const gradeObjectively = (examData, userAnswers) => {
     const questionFeedback = [];
     let score = 0;
     let maxScore = 0;
+    const completeGroups = {};
 
     examData.structure.forEach(section => {
         section.questions.forEach(q => {
@@ -21,18 +22,36 @@ export const gradeObjectively = (examData, userAnswers) => {
 
             if (isObjective) {
                 const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type);
-                if (isCorrect) {
-                    score += q.points || 0;
-                }
 
-                questionFeedback.push({
+                const feedbackItem = {
                     id: q.id,
                     userAnswer: Array.isArray(userAnswer) ? userAnswer.join(', ') : userAnswer,
                     correctAnswer: correctAnswer,
                     correct: isCorrect,
                     explanation: q.explanation || (isCorrect ? "正解です。" : "不正解です。正解を確認しましょう。"),
                     isSubjective: false
-                });
+                };
+
+                if (q.completeGroupId && q.completeGroupId.trim() !== '') {
+                    const groupId = q.completeGroupId.trim();
+                    if (!completeGroups[groupId]) {
+                        completeGroups[groupId] = {
+                            questions: [],
+                            allCorrect: true,
+                            totalPoints: 0
+                        };
+                    }
+                    completeGroups[groupId].questions.push(feedbackItem);
+                    if (!isCorrect) {
+                        completeGroups[groupId].allCorrect = false;
+                    }
+                    completeGroups[groupId].totalPoints += (q.points || 0);
+                } else {
+                    if (isCorrect) {
+                        score += q.points || 0;
+                    }
+                    questionFeedback.push(feedbackItem);
+                }
             } else {
                 // Mark for AI processing
                 questionFeedback.push({
@@ -45,6 +64,24 @@ export const gradeObjectively = (examData, userAnswers) => {
                 });
             }
         });
+    });
+
+    // Process Complete Groups
+    Object.keys(completeGroups).forEach(groupId => {
+        const group = completeGroups[groupId];
+        if (group.allCorrect) {
+            score += group.totalPoints;
+            group.questions.forEach(fq => {
+                questionFeedback.push(fq);
+            });
+        } else {
+            // Failed group: Mark all as incorrect
+            group.questions.forEach(fq => {
+                fq.correct = false;
+                fq.explanation = "【完答問題: グループ内で不正解が含まれるため不正解扱いとなります】\n" + (fq.explanation || "");
+                questionFeedback.push(fq);
+            });
+        }
     });
 
     return {
