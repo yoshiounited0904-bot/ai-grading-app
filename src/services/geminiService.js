@@ -154,7 +154,7 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
             return {
                 score: objScore,
                 maxScore: examData.maxScore || 100,
-                passProbability: calculatePassProbability(objScore, examData.maxScore),
+                passProbability: calculatePassProbability(objScore, examData.maxScore, examData.passing_lines),
                 weaknessAnalysis: simpleWeakness,
                 questionFeedback: initialFeedback,
                 detailedAnalysis: examData.detailedAnalysis || ""
@@ -212,7 +212,7 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         return {
             score: totalScore,
             maxScore: maxScore,
-            passProbability: calculatePassProbability(totalScore, maxScore),
+            passProbability: calculatePassProbability(totalScore, maxScore, examData.passing_lines),
             weaknessAnalysis: aiResult.generalWeakness,
             questionFeedback: finalFeedback,
             detailedAnalysis: examData.detailedAnalysis || ""
@@ -224,7 +224,15 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
     }
 };
 
-const calculatePassProbability = (score, max) => {
+const calculatePassProbability = (score, max, passingLines) => {
+    if (passingLines) {
+        if (score >= (passingLines.A || 0)) return "A";
+        if (score >= (passingLines.B || 0)) return "B";
+        if (score >= (passingLines.C || 0)) return "C";
+        if (score >= (passingLines.D || 0)) return "D";
+        return "E";
+    }
+
     const ratio = score / max;
     if (ratio >= 0.8) return "A";
     if (ratio >= 0.7) return "B";

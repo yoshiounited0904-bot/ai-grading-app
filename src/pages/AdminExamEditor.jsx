@@ -36,7 +36,8 @@ function AdminExamEditor() {
         max_score: 100,
         detailed_analysis: '',
         structure: [],
-        pdf_path: ''
+        pdf_path: '',
+        passing_lines: { A: 80, B: 70, C: 60, D: 40 }
     } : null);
 
 
@@ -97,7 +98,8 @@ function AdminExamEditor() {
                 max_score: data.max_score,
                 detailed_analysis: data.detailed_analysis,
                 structure: data.structure,
-                pdf_path: data.pdf_path
+                pdf_path: data.pdf_path,
+                passing_lines: data.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
             });
         }
         setLoading(false);
@@ -133,12 +135,13 @@ function AdminExamEditor() {
                 }
             );
 
-            setExamData({
+            setExamData(prev => ({
                 max_score: result.max_score,
                 detailed_analysis: result.detailed_analysis,
                 structure: result.structure,
-                pdf_path: result.pdf_path
-            });
+                pdf_path: result.pdf_path,
+                passing_lines: prev?.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
+            }));
             alert('マスターデータの生成が完了しました！内容を確認・編集して保存してください。');
         } catch (error) {
             alert('生成中にエラーが発生しました。\n' + error.message);
@@ -184,7 +187,8 @@ function AdminExamEditor() {
             pdf_path: finalPdfPath,
             max_score: parseInt(examData.max_score),
             detailed_analysis: examData.detailed_analysis,
-            structure: examData.structure
+            structure: examData.structure,
+            passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
         };
 
         const { error } = await saveAdminExam(payload);
@@ -234,7 +238,8 @@ function AdminExamEditor() {
             pdf_path: finalPdfPath,
             max_score: parseInt(examData.max_score),
             detailed_analysis: examData.detailed_analysis,
-            structure: examData.structure
+            structure: examData.structure,
+            passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
         };
 
         const { error } = await saveAdminExam(payload);
@@ -256,7 +261,8 @@ function AdminExamEditor() {
                 pdfPath: payload.pdf_path,
                 maxScore: payload.max_score,
                 detailedAnalysis: payload.detailed_analysis,
-                structure: payload.structure
+                structure: payload.structure,
+                passingLines: payload.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
             };
             navigate(`/exam/${formattedExam.universityId}-${formattedExam.facultyId}-preview`, {
                 state: {
@@ -584,6 +590,31 @@ function AdminExamEditor() {
                             <label className="block text-sm font-medium text-gray-700">満点 (合計配点)</label>
                             <input type="number" value={examData?.max_score || 100} onChange={e => setExamData(prev => ({ ...prev, max_score: parseInt(e.target.value) || 100 }))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
                         </div>
+                    </div>
+
+                    <div className="mt-6 border-t pt-4">
+                        <h3 className="text-md font-bold mb-3 text-gray-700">合格判定ライン（最低得点）</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            {['A', 'B', 'C', 'D'].map(grade => (
+                                <div key={grade}>
+                                    <label className="block text-sm font-medium text-gray-700">{grade}判定</label>
+                                    <input
+                                        type="number"
+                                        value={examData?.passing_lines?.[grade] ?? ''}
+                                        onChange={e => setExamData(prev => ({
+                                            ...prev,
+                                            passing_lines: {
+                                                ...(prev?.passing_lines || { A: 80, B: 70, C: 60, D: 40 }),
+                                                [grade]: parseInt(e.target.value) || 0
+                                            }
+                                        }))}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border"
+                                        placeholder={`${grade}判定の点数`}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-sm text-gray-500 mt-2">※ ここで設定した点数未満の場合、自動的に一つ下の判定になります（D判定未満はE判定）。デフォルトは8割でA判定などの割合計算です。</p>
                     </div>
                 </div>
 
