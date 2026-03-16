@@ -10,9 +10,11 @@ export const gradeObjectively = (examData, userAnswers) => {
     let maxScore = 0;
     const completeGroups = {};
 
-    examData.structure.forEach(section => {
-        section.questions.forEach(q => {
-            const userAnswer = userAnswers[q.id] || "";
+    examData.structure.forEach((section, sIdx) => {
+        section.questions.forEach((q, qIdx) => {
+            const questionId = q.id || `${section.id}-${qIdx + 1}`;
+            const uniqueKey = `${section.id}_${qIdx}_${questionId}`;
+            const userAnswer = userAnswers[uniqueKey] !== undefined ? userAnswers[uniqueKey] : (userAnswers[q.id] || "");
             const correctAnswer = q.correctAnswer;
             maxScore += q.points || 0;
 

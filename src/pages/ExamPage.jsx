@@ -399,15 +399,16 @@ const ExamPage = () => {
                                         ).map((q, i) => {
                                             // Handle both object (from questions array) and generated index
                                             const questionId = q.id || `${section.id}-${i + 1}`;
+                                            const uniqueKey = `${section.id}_${i}_${questionId}`;
                                             const qType = q.type || section.type || 'text';
                                             const qOptions = q.options || section.options || [];
 
                                             // Determine if multiple selection is allowed
                                             // Check if correctAnswer contains comma (e.g., "c, a")
-                                            const isMultiple = q.correctAnswer && q.correctAnswer.includes(',');
+                                            const isMultiple = q.correctAnswer && String(q.correctAnswer).includes(',');
 
                                             return (
-                                                <div key={questionId} style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                                                <div key={uniqueKey} style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
                                                     <span style={{ minWidth: '30px', fontWeight: '600', fontSize: '0.9rem', paddingTop: '0.2rem' }}>
                                                         {q.label || `(${i + 1})`}
                                                     </span>
@@ -417,14 +418,14 @@ const ExamPage = () => {
                                                                 <label key={option} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                                                                     <input
                                                                         type={isMultiple ? "checkbox" : "radio"}
-                                                                        name={questionId}
+                                                                        name={uniqueKey}
                                                                         value={option}
                                                                         checked={
                                                                             isMultiple
-                                                                                ? (answers[questionId] || []).includes(option)
-                                                                                : answers[questionId] === option
+                                                                                ? (answers[uniqueKey] || []).includes(option)
+                                                                                : answers[uniqueKey] === option
                                                                         }
-                                                                        onChange={(e) => handleAnswerChange(questionId, e.target.value, isMultiple)}
+                                                                        onChange={(e) => handleAnswerChange(uniqueKey, e.target.value, isMultiple)}
                                                                         disabled={!timerStarted}
                                                                     />
                                                                     <span>{option}</span>
@@ -447,8 +448,8 @@ const ExamPage = () => {
                                                                 cursor: !timerStarted ? 'not-allowed' : 'text'
                                                             }}
                                                             placeholder="解答を入力..."
-                                                            value={answers[questionId] || ''}
-                                                            onChange={(e) => handleAnswerChange(questionId, e.target.value)}
+                                                            value={answers[uniqueKey] || ''}
+                                                            onChange={(e) => handleAnswerChange(uniqueKey, e.target.value)}
                                                             disabled={!timerStarted}
                                                         />
                                                     )}
