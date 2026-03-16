@@ -507,62 +507,10 @@ ${subjectSpecificRules}
       structure: fullSections
     };
 
-    // --- STEP 1.5: MATH NORMALIZATION FOR POINTS ---
-    // LLMs often fail to make a long list of numbers sum exactly to the max score.
-    // We mathematically normalize the points here to perfectly match maxScore.
-    let currentTotal = 0;
-    structureData.structure.forEach(sec => {
-      sec.questions.forEach(q => {
-        currentTotal += (parseInt(q.points) || 0);
-      });
-    });
-
-    const targetTotal = parseInt(extraInfo.maxScore) || 100;
-
-    if (currentTotal > 0 && currentTotal !== targetTotal) {
-      console.log(`[Step 1.5] Normalizing points. AI Total: ${currentTotal}, Target: ${targetTotal}`);
-      const ratio = targetTotal / currentTotal;
-      let newTotal = 0;
-
-      // First pass: proportional multiplication
-      structureData.structure.forEach(sec => {
-        sec.questions.forEach(q => {
-          let orig = parseInt(q.points) || 0;
-          let newVal = Math.max(1, Math.round(orig * ratio));
-          q.points = newVal;
-          newTotal += newVal;
-        });
-      });
-
-      // Second pass: distribute the remaining difference (+/- 1 point) across the highest-value questions
-      let diff = targetTotal - newTotal;
-      if (diff !== 0) {
-        let flatQs = [];
-        structureData.structure.forEach(sec => sec.questions.forEach(q => flatQs.push(q)));
-        // Sort descending so larger questions absorb the rounding differences
-        flatQs.sort((a, b) => b.points - a.points);
-
-        let i = 0;
-        let safeguards = 0;
-        while (diff > 0 && safeguards < 1000) {
-          flatQs[i % flatQs.length].points += 1;
-          diff--;
-          i++;
-          safeguards++;
-        }
-
-        i = 0; safeguards = 0;
-        while (diff < 0 && safeguards < 1000) {
-          if (flatQs[i % flatQs.length].points > 1) {
-            flatQs[i % flatQs.length].points -= 1;
-            diff++;
-          }
-          i++;
-          safeguards++;
-        }
-      }
-      console.log(`[Step 1.5] Normalization complete. Points now exactly sum to ${targetTotal}.`);
-    }
+    // --- STEP 1.5: MATH NORMALIZATION FOR POINTS (REMOVED) ---
+    // The automatic point normalization logic (+1/-1 adjustments) has been removed.
+    // We now strictly rely on the rigorous AI Prompt rules provided by the user
+    // to allocate the correct points and have them sum exactly to maxScore.
 
     // --- STEP 3: DETAILED ANALYSIS ---
     // Detailed per-question explanations are now generated on-demand
