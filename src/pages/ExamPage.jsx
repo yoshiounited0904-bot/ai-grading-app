@@ -422,8 +422,8 @@ const ExamPage = () => {
                                                                         value={option}
                                                                         checked={
                                                                             isMultiple
-                                                                                ? (answers[uniqueKey] || []).includes(option)
-                                                                                : answers[uniqueKey] === option
+                                                                                ? (answers[uniqueKey] || []).map(String).includes(String(option))
+                                                                                : String(answers[uniqueKey] || '') === String(option)
                                                                         }
                                                                         onChange={(e) => handleAnswerChange(uniqueKey, e.target.value, isMultiple)}
                                                                         disabled={!timerStarted}
