@@ -337,11 +337,13 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
       subjectSpecificRules = ENGLISH_RULES + `
 ※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
 上記の【出力形式（厳守）】の要件に従った思考プロセス（分類、配点理由、要素分解、全体チェック）は、必ず最終JSON形式の「説明用フィールド」（例：detailedAnalysisやexplanationなど）に含めて出力してください。
+さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${extraInfo?.maxScore || '指定なし'}点）と完全に一致するように調整してください。
 `;
     } else if (isSocial) {
       subjectSpecificRules = SOCIAL_RULES + `
 ※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
 上記の【出力形式（厳守）】の要件に従った思考プロセス（分類、配点理由、要素分解、全体チェック）は、必ず最終JSON形式の「説明用フィールド」（例：detailedAnalysisやexplanationなど）に含めて出力してください。
+さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${extraInfo?.maxScore || '指定なし'}点）と完全に一致するように調整してください。
 `;
     } else {
       subjectSpecificRules = `
@@ -892,11 +894,13 @@ export const regeneratePointsAllocation = async (apiKey, subjectType, examData, 
       subjectSpecificRules = ENGLISH_RULES + `
 ※ 重要: 本システムでは最終出力として必ず JSON フォーマットが必要です。
 この厳密なルールに基づいて配点（points）を再計算し、JSONの各設問の配点データに反映してください。文章等での回答は不要であり、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、再計算後のすべての小問の \`points\` の合計が、必ず指定された満点（${examData?.max_score || '指定なし'}点）と完全に一致するように調整してください。
 `;
     } else if (isSocial) {
       subjectSpecificRules = SOCIAL_RULES + `
 ※ 重要: 本システムでは最終出力として必ず JSON フォーマットが必要です。
 この厳密なルールに基づいて配点（points）を再計算し、JSONの各設問の配点データに反映してください。文章等での回答は不要であり、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、再計算後のすべての小問の \`points\` の合計が、必ず指定された満点（${examData?.max_score || '指定なし'}点）と完全に一致するように調整してください。
 `;
     } else {
       subjectSpecificRules = `
