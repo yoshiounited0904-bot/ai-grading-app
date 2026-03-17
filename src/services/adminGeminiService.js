@@ -371,163 +371,141 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     }
 
     const outputId = extraInfo.id;
+    const maxScore = parseInt(extraInfo.maxScore) || 100;
+    const sectionsCount = Object.keys(answerFilesBySection).length;
 
-    // --- STAGE 0: FULL OCR TRANSCRIPTION (The Foundation) ---
-    console.log(`[Stage 0] Transcribing all documents to text...`);
-    const totalFilesCount = questionFiles.length + totalAnswerFilesCount;
-    const ocrPrompt = `
-あなたはプロのデータ入力スペシャリスト兼入試分析官です。
-今回、合計【${totalFilesCount}枚】のファイル（問題と解答）が提供されています。
-これら【${totalFilesCount}枚】すべての画像を端から端まで詳細に読み取り、試験内容を「絶対に途中で省略・欠落させず、すべて正確に」マークダウン形式のテキストとして書き出してください。
-
-【重要な指示】
-解答ファイルは「大問ごと」に区切って提示しています（例：=== 【第1問 解答】 ===）。
-解答と問題の対応関係が明確になるように、必ず大問の番号とセットで正確にデータを抽出してください。
-
-【出力要件】
-1. ページの順序を守り、ページ番号または「第1問」「問題」などの見出しで区切ること。
-2. 小問の記号（問1、(a)、1..等）や選択肢の内容を正確に書き起こすこと。
-3. 表や特殊な配置も、可能な限りテキストで理解できるように記述すること。
-4. 本文、設問、解答のすべてを含めること。
-5. 出力はテキストのみとしてください（Markdown形式が好ましい）。
-
-このテキストは、以降のすべての詳細解析の「唯一のソース」となります。
+    // --- STAGE 0: FULL OCR FOR QUESTIONS ONLY ---
+    console.log(`[Stage 0] Transcribing question documents...`);
+    const qOcrPrompt = `
+あなたはプロのデータ入力スペシャリストです。
+提供された問題用紙のすべての画像を端から端まで詳細に読み取り、「絶対に途中で省略・欠落させず、すべて正確に」マークダウン形式のテキストとして書き出してください。
+ページの順序を守り、ページ番号または「第1問」「問題」などの見出しで区切ってください。
 `;
 
-    const ocrResult = await withRetry(() => model.generateContent({
+    const qOcrResult = await withRetry(() => model.generateContent({
       contents: [{
         role: 'user', parts: [
-          { text: "=== 【全体 問題ファイル】 ===" },
           ...questionInlineData,
-          ...groupedAnswerParts,
-          { text: ocrPrompt }
+          { text: qOcrPrompt }
         ]
       }],
-      generationConfig: {
-        maxOutputTokens: 8192,
-      }
+      generationConfig: { maxOutputTokens: 8192 }
     }));
+    const questionText = qOcrResult.response.text();
+    console.log(`[Stage 0] Question transcription complete. Length: ${questionText.length}`);
 
-    const transcribedText = ocrResult.response.text();
-    console.log(`[Stage 0] Transcription complete. Length: ${transcribedText.length} characters.`);
+    // --- STAGE 1: PER-SECTION ANSWER OCR AND EXTRACTION ---
+    const extractedSections = [];
 
-    // --- STEP 1a: OVERVIEW EXTRACTION (Using transcribed text) ---
-    console.log(`[Step 1/3] Extracting high-level exam structure for ${outputId}...`);
-    const step1aPrompt = `
-以下の試験内容（テキストデータ）を分析し、試験の全体構造（大問のIDとラベルのみ）を抽出してください。
-満点は事前に「${extraInfo.maxScore}点」と指定されています。各大問に合計何点を配分すべきかを推測してください。
+    for (const [sectionIndex, rawFiles] of Object.entries(answerFilesBySection)) {
+      if (!rawFiles || rawFiles.length === 0) continue;
 
-【解析対象データ】
-${transcribedText}
+      console.log(`[Stage 1] Processing section ${sectionIndex} / ${sectionsCount} ...`);
 
-【厳格ルール】
-1. JSON形式のみを出力してください。
-2. アスタリスク（*）記号を絶対に使用しないでください。
-3. 全ての大問の 推測配分 (allocatedPoints) の合計が、必ず指定された満点（${extraInfo.maxScore}点）と一致するように調整してください。
-${subjectSpecificRules}
+      const filesArray = await Promise.all(rawFiles.map(file => fileToBase64(file)));
+      const inlineData = filesArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+
+      // 1a. OCR the answers for this section
+      const aOcrPrompt = `以下の画像は、試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
+      const aOcrResult = await withRetry(() => model.generateContent({
+        contents: [{ role: 'user', parts: [...inlineData, { text: aOcrPrompt }] }],
+        generationConfig: { maxOutputTokens: 2048 }
+      }));
+      const answerText = aOcrResult.response.text();
+
+      // 1b. Extract structure and answers for this section ONLY
+      const extractPrompt = `
+以下の「問題用紙テキスト全体」と「第${sectionIndex}問の解答テキスト」を分析し、**第${sectionIndex}問**に関する設問構造と正解のみを抽出してください。
+
+【問題用紙全体テキスト】
+${questionText}
+
+【第${sectionIndex}問 解答テキスト】
+${answerText}
+
+【抽出条件と厳格ルール】
+1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
+2. explanationフィールドは必ず空文字列を設定すること。
+3. アスタリスク（*）記号を絶対に使用しないでください。
+4. 以下のJSON構造（オブジェクト1つ）のみを出力してください（コードブロックなし）。
+5. gradingCriteriaフィールドは含めないでください。
+6. 選択問題（type: "selection"等）の \`options\` 配列には、選択肢の文章テキストは含めず、「記号・番号（例: "1", "a", "ア" など）」のみを含めてください。
+7. 「配点」は後で計算するため、すべての小問の \`points\` は 0 に設定してください。
 
 【出力構造】
 {
-  "maxScore": ${extraInfo.maxScore},
-  "sections": [
+  "id": "${sectionIndex}",
+  "label": "第${sectionIndex}問",
+  "allocatedPoints": 0,
+  "questions": [
     {
-      "id": "I",
-      "label": "第1問（長文読解）",
-      "allocatedPoints": 40
+      "id": "小問ID",
+      "label": "小問ラベル",
+      "type": "selection",
+      "options": ["a", "b", "c", "d"],
+      "correctAnswer": "正解（完全一致で）",
+      "points": 0,
+      "explanation": ""
     }
   ]
 }
 `;
 
-    const result1a = await withRetry(() => model.generateContent(step1aPrompt), 5, 3000);
+      const extractResult = await withRetry(() => model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
+        generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
+      }), 5, 4000);
 
-    const overviewText = result1a.response.text();
-    const overviewData = JSON.parse(sanitizeJson(overviewText));
-    console.log(`[Step 1a] Structure found: ${overviewData.sections.length} sections. Total points: ${overviewData.maxScore}`);
-
-    // Add a small delay between text-only requests
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // --- STEP 1b: ALL SECTIONS IN ONE REQUEST ---
-    // Instead of sending one request per section (which causes 429 rate limit errors),
-    // we send a single request asking the AI to extract all sections at once.
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    console.log(`[Step 2/3] Extracting ALL ${overviewData.sections.length} sections in a single request...`);
-
-    const sectionsSummary = overviewData.sections.map(s =>
-      `- 大問 ${s.id}（${s.label}）: 合計 ${s.allocatedPoints} 点`
-    ).join('\n');
-
-    const step1bPrompt = `
-以下の試験内容（テキストデータ）を分析し、すべての大問・小問について、正解と配点のみを抽出してください。
-
-【解析対象データ】
-${transcribedText}
-
-【大問一覧と配点指示】
-${sectionsSummary}
-
-【厳格ルール】
-1. 各大問の小問配点の合計は、上記で指定した点数と一致させること。
-2. 小問の正解と配点のみ、explanationフィールドは必ず空文字列を設定すること。
-3. アスタリスク（*）記号を絶対に使用しないでください。
-4. 以下のJSON構造のみを出力してください（コードブロックなし）。
-5. gradingCriteriaフィールドは一切含めないでください。
-6. 【重要】選択問題（type: "selection"等）の \`options\` 配列には、選択肢の「記号・番号（例: "1", "a", "ア" など）」のみを格納し、選択肢の文章テキストは絶対に含めないでください。
-${subjectSpecificRules}
-
-【出力構造】
-[
-  {
-    "id": "I",
-    "label": "大問ラベル",
-    "allocatedPoints": 40,
-    "questions": [
-      {
-        "id": "小問ID",
-        "label": "小問ラベル",
-        "type": "selection",
-        "options": ["a", "b", "c", "d"],
-        "correctAnswer": "正解",
-        "points": 5,
-        "explanation": ""
+      const sectionRaw = extractResult.response.text();
+      try {
+        const parsedSection = JSON.parse(sanitizeJson(sectionRaw));
+        extractedSections.push(parsedSection);
+      } catch (err) {
+        console.error(`[AdminGeminiService] Failed to parse section ${sectionIndex}:`, err);
       }
-    ]
-  }
-]
-`;
 
-    const result1b = await withRetry(() => model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: step1bPrompt }] }],
-      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-    }), 10, 5000);
-    const allSectionsRaw = result1b.response.text();
-    const allSectionsSanitized = sanitizeJson(allSectionsRaw);
-
-    let parsedSections;
-    try {
-      parsedSections = JSON.parse(allSectionsSanitized);
-    } catch (err) {
-      console.error('[AdminGeminiService] Failed to parse all sections. Raw length:', allSectionsSanitized.length);
-      console.error('[AdminGeminiService] First 1000 chars:', allSectionsSanitized.substring(0, 1000));
-      console.error('[AdminGeminiService] Last 200 chars:', allSectionsSanitized.slice(-200));
-      throw new Error(`全セクションの解析に失敗しました。AIの回答が正しいJSON形式ではありません。(解析: ${err.message})`);
+      // Respect rate limits between sections
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
-    console.log(`[Step 2/3] Successfully extracted ${parsedSections.length} sections.`);
+    console.log(`[Stage 1] Completed extraction for ${extractedSections.length} sections.`);
 
-    // Support both flat (old) and the new sections-with-questions format
-    const fullSections = parsedSections.map(sec => ({
-      id: sec.id,
-      label: sec.label,
-      allocatedPoints: sec.allocatedPoints,
-      questions: sec.questions || []
+    // --- STAGE 2: GLOBAL POINTS ALLOCATION ---
+    console.log(`[Stage 2] Allocating global points to sum up to ${maxScore}...`);
+    const pointsPrompt = `
+以下の試験マスターデータは、すべての設問と正解を抽出したものですが、配点（points）が全て0になっています。
+科目別の厳格なルールに基づいて、各大問(allocatedPoints)および各小問(points)に適切な点数を割り当ててください。
+
+【配点条件】
+1. 小問の \`points\` の合計が \`allocatedPoints\` になり、全大問の \`allocatedPoints\` の合計が必ず **${maxScore}** 点になること。
+2. これまでに抽出された id, label, type, options, correctAnswer 等の構造は**一切変更してはいけません**。配点数値のみを更新してください。
+${subjectSpecificRules}
+
+【対象データ】
+${JSON.stringify(extractedSections, null, 2)}
+
+【出力要件】
+配点（points / allocatedPoints）を正しい数値で埋めた同じJSON構造の配列（リスト）のみを出力してください。
+`;
+
+    const pointsResult = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: pointsPrompt }] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
     }));
 
+    let fullSections = extractedSections; // Fallback
+    try {
+      fullSections = JSON.parse(sanitizeJson(pointsResult.response.text()));
+    } catch (err) {
+      console.error(`[AdminGeminiService] Failed to parse points allocation. Using 0 points fallback.`, err);
+    }
+
     const structureData = {
-      maxScore: overviewData.maxScore,
+      maxScore: maxScore,
       structure: fullSections
     };
+
+    console.log(`[Stage 2] Points allocated successfully.`);
 
     // --- STEP 1.5: MATH NORMALIZATION FOR POINTS (REMOVED) ---
     // The automatic point normalization logic (+1/-1 adjustments) has been removed.
