@@ -29,7 +29,8 @@ function AdminExamEditor() {
 
     // PDF/Image files
     const [questionFiles, setQuestionFiles] = useState([]);
-    const [answerFiles, setAnswerFiles] = useState([]);
+    const [sectionCount, setSectionCount] = useState(1);
+    const [answerFilesBySection, setAnswerFilesBySection] = useState({ 1: [] });
 
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
@@ -106,7 +107,8 @@ function AdminExamEditor() {
     };
 
     const handleGenerate = async () => {
-        if (questionFiles.length === 0 || answerFiles.length === 0 || !examId) {
+        const totalAnswerFiles = Object.values(answerFilesBySection).reduce((sum, arr) => sum + arr.length, 0);
+        if (questionFiles.length === 0 || totalAnswerFiles === 0 || !examId) {
             alert('ID、問題ファイル、解答ファイルは少なくとも1つずつ必須です。');
             return;
         }
@@ -127,7 +129,7 @@ function AdminExamEditor() {
                 apiKey,
                 subjectEn,
                 questionFiles,
-                answerFiles,
+                answerFilesBySection,
                 {
                     id: examId, university, universityId: parseInt(universityId),
                     faculty, facultyId, year: parseInt(year), subject,
@@ -288,19 +290,20 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
+    const flatAnswerFiles = Object.values(answerFilesBySection).flat();
+
     const handleRegenerateExplanation = async (sIdx, qIdx, q) => {
-        if (!confirm(`問題 ${q.label || q.id} の解説を再生成しますか？\nGemini APIを呼び出します。`)) return;
+        if (!confirm(`問${q.id}の解説を再生成しますか？\n（内容が上書きされます）`)) return;
 
-        let oldExplanation = q.explanation;
-        handleStructureChange(sIdx, qIdx, 'explanation', '再生成中...');
-
+        const oldExplanation = q.explanation;
+        handleStructureChange(sIdx, qIdx, 'explanation', '🔄 AI生成中...');
         try {
             const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
             const newExplanation = await regenerateQuestionExplanation(
                 apiKey,
                 q,
                 questionFiles,
-                answerFiles
+                flatAnswerFiles
             );
             handleStructureChange(sIdx, qIdx, 'explanation', newExplanation);
         } catch (error) {
@@ -314,7 +317,7 @@ function AdminExamEditor() {
             alert('マスターデータが存在しません。');
             return;
         }
-        if (questionFiles.length === 0 && answerFiles.length === 0) {
+        if (questionFiles.length === 0 && flatAnswerFiles.length === 0) {
             alert('全体詳細解説をAIで生成するには、問題または解答のファイルを少なくとも1つアップロードしてください。');
             return;
         }
@@ -335,7 +338,7 @@ function AdminExamEditor() {
                 subjectEn,
                 examData,
                 questionFiles,
-                answerFiles
+                flatAnswerFiles
             );
 
             setExamData(prev => ({ ...prev, detailed_analysis: newAnalysis }));
@@ -369,7 +372,7 @@ function AdminExamEditor() {
                 subjectEn,
                 examData,
                 questionFiles,
-                answerFiles
+                flatAnswerFiles
             );
 
             setExamData(prev => ({ ...prev, structure: newStructure }));
@@ -639,15 +642,51 @@ function AdminExamEditor() {
                 {/* PDF生成 (新規時または再生成時) */}
                 <div className="bg-white rounded-xl shadow p-6 border border-accent-gold">
                     <h2 className="text-xl font-bold border-b pb-2 mb-4 text-accent-gold">AIによる自動生成</h2>
-                    <p className="text-sm text-gray-600 mb-4">問題と解答のファイル (PDF または 画像) をアップロードして、配点・解答・解説を自動生成します。複数ファイルの選択が可能です。</p>
-                    <div className="flex flex-col md:flex-row gap-4 items-end">
-                        <div className="flex-1">
-                            <label className="block text-sm font-medium text-gray-700">問題ファイル ({questionFiles.length}個選択中)</label>
-                            <input type="file" multiple accept="application/pdf,image/webp,image/jpeg,image/png" onChange={e => setQuestionFiles(Array.from(e.target.files))} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                    <p className="text-sm text-gray-600 mb-4">問題ファイルの全体と、大問ごとの解答ファイル (PDF または 画像) をアップロードして、配点・解答・解説を自動生成します。</p>
+
+                    <div className="mb-4">
+                        <label className="block text-sm font-bold text-gray-700 mb-1">大問数 (解答の分割アップロード用)</label>
+                        <select
+                            value={sectionCount}
+                            onChange={e => {
+                                const count = parseInt(e.target.value) || 1;
+                                setSectionCount(count);
+                                const newAnswerFiles = {};
+                                for (let i = 1; i <= count; i++) {
+                                    newAnswerFiles[i] = answerFilesBySection[i] || [];
+                                }
+                                setAnswerFilesBySection(newAnswerFiles);
+                            }}
+                            className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border bg-gray-50"
+                        >
+                            {Array.from({ length: 15 }).map((_, i) => (
+                                <option key={i + 1} value={i + 1}>{i + 1}個</option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">※ 指定した数だけ、解答を大問ごとに分割してアップロードできるようになります。</p>
+                    </div>
+
+                    <div className="flex flex-col md:flex-row gap-6 items-start border-t border-gray-100 pt-4">
+                        <div className="flex-1 w-full">
+                            <label className="block text-sm font-bold text-gray-700 mb-2">共通：問題ファイル ({questionFiles.length}個選択中)</label>
+                            <input type="file" multiple accept="application/pdf,image/webp,image/jpeg,image/png" onChange={e => setQuestionFiles(Array.from(e.target.files))} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
                         </div>
-                        <div className="flex-1">
-                            <label className="block text-sm font-medium text-gray-700">解答ファイル ({answerFiles.length}個選択中)</label>
-                            <input type="file" multiple accept="application/pdf,image/webp,image/jpeg,image/png" onChange={e => setAnswerFiles(Array.from(e.target.files))} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                        <div className="flex-1 w-full bg-gray-50 p-4 rounded-lg border border-gray-200">
+                            <label className="block text-sm font-bold text-gray-700 mb-2">大問ごとの解答ファイル</label>
+                            <div className="space-y-4">
+                                {Array.from({ length: sectionCount }).map((_, i) => (
+                                    <div key={i + 1} className="flex flex-col gap-1 border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                                        <label className="text-xs font-bold text-gray-600">第{i + 1}問 の解答 ({answerFilesBySection[i + 1]?.length || 0}個選択中)</label>
+                                        <input
+                                            type="file"
+                                            multiple
+                                            accept="application/pdf,image/webp,image/jpeg,image/png"
+                                            onChange={e => setAnswerFilesBySection(prev => ({ ...prev, [i + 1]: Array.from(e.target.files) }))}
+                                            className="w-full text-xs text-gray-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
 

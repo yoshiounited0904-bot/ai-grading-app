@@ -300,7 +300,7 @@ const fileToBase64 = (file) => {
   });
 };
 
-export const generateExamMasterData = async (apiKey, subjectType, questionFiles, answerFiles, extraInfo) => {
+export const generateExamMasterData = async (apiKey, subjectType, questionFiles, answerFilesBySection, extraInfo) => {
   try {
     const trimmedKey = apiKey?.trim();
     console.log("[AdminGeminiService] Using model:", MODELS.PRIMARY);
@@ -322,7 +322,6 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     try {
       model = genAI.getGenerativeModel({
         model: MODELS.PRIMARY,
-        // tools: [{ googleSearch: {} }]
       });
     } catch (err) {
       console.error("[AdminGeminiService] Failed to get generative model:", err);
@@ -355,19 +354,35 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     }
 
     const questionFileDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
-    const answerFileDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
-
     const questionInlineData = questionFileDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-    const answerInlineData = answerFileDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+
+    const groupedAnswerParts = [];
+    let totalAnswerFilesCount = 0;
+
+    for (const [section, files] of Object.entries(answerFilesBySection)) {
+      if (files && files.length > 0) {
+        totalAnswerFilesCount += files.length;
+        groupedAnswerParts.push({ text: `\n\n=== 【第${section}問 解答】 ===\n` });
+        const sectionFileDataArray = await Promise.all(files.map(file => fileToBase64(file)));
+        for (const fd of sectionFileDataArray) {
+          groupedAnswerParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } });
+        }
+      }
+    }
+
     const outputId = extraInfo.id;
 
     // --- STAGE 0: FULL OCR TRANSCRIPTION (The Foundation) ---
     console.log(`[Stage 0] Transcribing all documents to text...`);
-    const totalFilesCount = questionFiles.length + answerFiles.length;
+    const totalFilesCount = questionFiles.length + totalAnswerFilesCount;
     const ocrPrompt = `
 あなたはプロのデータ入力スペシャリスト兼入試分析官です。
 今回、合計【${totalFilesCount}枚】のファイル（問題と解答）が提供されています。
 これら【${totalFilesCount}枚】すべての画像を端から端まで詳細に読み取り、試験内容を「絶対に途中で省略・欠落させず、すべて正確に」マークダウン形式のテキストとして書き出してください。
+
+【重要な指示】
+解答ファイルは「大問ごと」に区切って提示しています（例：=== 【第1問 解答】 ===）。
+解答と問題の対応関係が明確になるように、必ず大問の番号とセットで正確にデータを抽出してください。
 
 【出力要件】
 1. ページの順序を守り、ページ番号または「第1問」「問題」などの見出しで区切ること。
@@ -382,8 +397,9 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     const ocrResult = await withRetry(() => model.generateContent({
       contents: [{
         role: 'user', parts: [
-          ...questionInlineData.map(d => ({ inlineData: d.inlineData })),
-          ...answerInlineData.map(d => ({ inlineData: d.inlineData })),
+          { text: "=== 【全体 問題ファイル】 ===" },
+          ...questionInlineData,
+          ...groupedAnswerParts,
           { text: ocrPrompt }
         ]
       }],
