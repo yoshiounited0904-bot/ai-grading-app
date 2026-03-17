@@ -541,14 +541,57 @@ function AdminExamEditor() {
                                 <span className="text-xl">🛠️</span> 外部AI（ChatGPT等）を使って解説を作る場合（CSVファイル）
                             </summary>
                             <div className="mt-4 border-t pt-4">
-                                <div className="text-xs text-gray-600 mb-4 space-y-1">
-                                    <p className="font-semibold">【使い方】</p>
-                                    <ol className="list-decimal list-inside space-y-1 ml-1">
-                                        <li>下の「CSVをエクスポート」でファイルをダウンロード</li>
-                                        <li>ChatGPT等にPDFとCSVをアップロードし「explanation列を日本語で埋めてCSVを返して」と指示</li>
-                                        <li>AIが返したCSVを下の「解説入りCSVをインポート」からアップロード</li>
-                                        <li>最後に必ず「保存」ボタンをクリック</li>
-                                    </ol>
+                                <div className="text-xs text-gray-600 mb-4 space-y-4">
+                                    <div>
+                                        <p className="font-semibold mb-1">【使い方】</p>
+                                        <ol className="list-decimal list-inside space-y-1 ml-1">
+                                            <li>下の「CSVをエクスポート」でファイルをダウンロード</li>
+                                            <li>ChatGPT等にPDFとCSVをアップロードし、以下のプロンプトを投げる</li>
+                                            <li>AIが返したCSVを下の「解説入りCSVをインポート」からアップロード</li>
+                                            <li>最後に必ず「保存」ボタンをクリック</li>
+                                        </ol>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-lg border border-gray-200 relative">
+                                        <button
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                const promptText = `添付した2つのファイルを使ってください。
+・PDFファイル：大学入試の問題と解答
+・CSVファイル：各小問の構造データ（正解・配点が入っています）
+
+CSVの「explanation」列を、以下の条件で埋めてください：
+
+1. 2〜3文で簡潔に書くこと
+2. なぜその正解になるのか、本文の根拠を1文で明示すること
+3. 選択問題は、他の選択肢が間違っている理由を1文加えること
+4. アスタリスク（*）は使わない
+5. 日本語で書くこと
+
+CSVファイルをそのまま返してください（他の列は変更しないこと）。`;
+                                                navigator.clipboard.writeText(promptText);
+                                                alert('プロンプトをコピーしました！ChatGPTなどに貼り付けてご利用ください。');
+                                            }}
+                                            className="absolute top-2 right-2 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[10px] font-bold transition-colors"
+                                        >
+                                            📋 コピー
+                                        </button>
+                                        <p className="font-semibold text-gray-700 mb-2 border-b pb-1">AI用コピープロンプト</p>
+                                        <pre className="whitespace-pre-wrap font-sans text-[11px] leading-snug">
+                                            添付した2つのファイルを使ってください。{"\n"}
+                                            ・PDFファイル：大学入試の問題と解答{"\n"}
+                                            ・CSVファイル：各小問の構造データ（正解・配点が入っています）{"\n"}
+                                            {"\n"}
+                                            CSVの「explanation」列を、以下の条件で埋めてください：{"\n"}
+                                            {"\n"}
+                                            1. 2〜3文で簡潔に書くこと{"\n"}
+                                            2. なぜその正解になるのか、本文の根拠を1文で明示すること{"\n"}
+                                            3. 選択問題は、他の選択肢が間違っている理由を1文加えること{"\n"}
+                                            4. アスタリスク（*）は使わない{"\n"}
+                                            5. 日本語で書くこと{"\n"}
+                                            {"\n"}
+                                            CSVファイルをそのまま返してください（他の列は変更しないこと）。
+                                        </pre>
+                                    </div>
                                 </div>
                                 <div className="flex flex-wrap gap-3">
                                     <button onClick={handleCsvExport} className="px-4 py-2 bg-gray-600 text-white rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors">
