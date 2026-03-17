@@ -170,7 +170,12 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         Grade the following SUBJECTIVE questions based on the Master Data criteria.
         
         **Master Data Criteria:**
-        ${JSON.stringify(pendingAiGrading.map(q => ({ id: q.id, criteria: q.gradingCriteria, correctAnswer: q.correctAnswer })))}
+        ${JSON.stringify(pendingAiGrading.map(q => ({
+            id: q.id,
+            correctAnswer: q.correctAnswer,
+            points: q.points,
+            instruction: q.gradingInstruction // Custom instruction from admin
+        })))}
         
         **User Answers:**
         ${JSON.stringify(pendingAiGrading.map(q => ({ id: q.id, answer: q.userAnswer })))}

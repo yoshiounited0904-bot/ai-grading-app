@@ -20,7 +20,8 @@ export const gradeObjectively = (examData, userAnswers) => {
 
             // Only process objective types here
             // mixed and correction are always treated as subjective to allow AI evaluation of reasons/corrections
-            const isObjective = ['selection', 'complete', 'unordered'].includes(q.type) || (q.type === 'text' && !q.gradingCriteria);
+            const hasInstruction = (q.gradingInstruction && q.gradingInstruction.trim() !== '') || (q.gradingCriteria && q.gradingCriteria.trim() !== '');
+            const isObjective = ['selection', 'complete', 'unordered'].includes(q.type) && !hasInstruction;
 
             if (isObjective) {
                 const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type);
@@ -61,7 +62,7 @@ export const gradeObjectively = (examData, userAnswers) => {
                     userAnswer: userAnswer,
                     correctAnswer: correctAnswer,
                     points: q.points,
-                    gradingCriteria: q.gradingCriteria,
+                    gradingInstruction: q.gradingInstruction || q.gradingCriteria || "",
                     isSubjective: true
                 });
             }
