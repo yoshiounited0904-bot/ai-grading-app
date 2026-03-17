@@ -406,6 +406,24 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
+    const handleAddSection = () => {
+        const newStructure = [...(examData.structure || [])];
+        newStructure.push({
+            id: String(newStructure.length + 1),
+            label: `第${newStructure.length + 1}問`,
+            allocatedPoints: 0,
+            questions: []
+        });
+        setExamData({ ...examData, structure: newStructure });
+    };
+
+    const handleDeleteSection = (sectionIdx) => {
+        if (!confirm('この大問に含まれるすべての小問も削除されます。本当に削除しますか？')) return;
+        const newStructure = [...examData.structure];
+        newStructure.splice(sectionIdx, 1);
+        setExamData({ ...examData, structure: newStructure });
+    };
+
     // --- CSV Export: download current structure as CSV for external AI to fill ---
     const handleCsvExport = () => {
         if (!examData?.structure?.length) {
@@ -712,20 +730,28 @@ function AdminExamEditor() {
                         <div className="space-y-6">
                             {examData.structure.map((section, sIdx) => (
                                 <div key={sIdx} className="border rounded-lg p-4 bg-gray-50">
-                                    <div className="flex items-center gap-4 mb-4">
-                                        <input
-                                            type="text"
-                                            value={section.id}
-                                            onChange={e => handleStructureChange(sIdx, null, 'id', e.target.value)}
-                                            className="w-24 p-1 border rounded"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={section.label}
-                                            onChange={e => handleStructureChange(sIdx, null, 'label', e.target.value)}
-                                            className="flex-1 p-1 border rounded"
-                                            placeholder="大問ラベル"
-                                        />
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex flex-1 items-center gap-4">
+                                            <input
+                                                type="text"
+                                                value={section.id}
+                                                onChange={e => handleStructureChange(sIdx, null, 'id', e.target.value)}
+                                                className="w-24 p-1 border rounded font-bold"
+                                            />
+                                            <input
+                                                type="text"
+                                                value={section.label}
+                                                onChange={e => handleStructureChange(sIdx, null, 'label', e.target.value)}
+                                                className="flex-1 p-1 border rounded font-bold"
+                                                placeholder="大問ラベル"
+                                            />
+                                        </div>
+                                        <button
+                                            onClick={() => handleDeleteSection(sIdx)}
+                                            className="ml-4 text-xs bg-red-50 text-red-600 hover:bg-red-100 font-bold py-1 px-3 rounded border border-red-200 transition-colors"
+                                        >
+                                            大問ごと削除
+                                        </button>
                                     </div>
 
                                     <table className="min-w-full bg-white border border-gray-200 text-sm">
@@ -807,6 +833,15 @@ function AdminExamEditor() {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+
+                        <div className="mt-6 flex justify-center">
+                            <button
+                                onClick={handleAddSection}
+                                className="bg-white text-indigo-600 hover:bg-indigo-50 font-bold py-3 px-8 rounded-lg shadow-sm border-2 border-dashed border-indigo-200 transition-all text-sm w-full md:w-auto"
+                            >
+                                ＋ 新しい大問（セクション）を追加
+                            </button>
                         </div>
 
                         <div className="mt-8 border-t pt-8">
