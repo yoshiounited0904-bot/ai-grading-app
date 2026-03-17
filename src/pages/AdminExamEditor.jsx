@@ -201,7 +201,7 @@ function AdminExamEditor() {
             alert('保存に失敗しました:\n' + error.message);
         } else {
             alert('保存しました！');
-            navigate('/admin');
+            // navigate('/admin'); <-- Removed to preserve local file state
         }
     };
 
@@ -267,13 +267,13 @@ function AdminExamEditor() {
                 structure: payload.structure,
                 passingLines: payload.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
             };
-            navigate(`/exam/${formattedExam.universityId}-${formattedExam.facultyId}-preview`, {
-                state: {
-                    exam: formattedExam,
-                    universityName: formattedExam.university,
-                    universityId: formattedExam.universityId
-                }
-            });
+            // Open preview in a new tab to preserve the current Admin Editor state (file inputs)
+            localStorage.setItem('previewExamData', JSON.stringify({
+                exam: formattedExam,
+                universityName: formattedExam.university,
+                universityId: formattedExam.universityId
+            }));
+            window.open(`/exam/${formattedExam.universityId}-${formattedExam.facultyId}-preview`, '_blank');
         }
     };
 
@@ -753,6 +753,8 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                             <div className="flex-1 w-full">
                                 <label className="block text-sm font-bold text-gray-700 mb-2">共通：問題ファイル ({questionFiles.length}個選択中)</label>
                                 <input type="file" multiple accept="application/pdf,image/webp,image/jpeg,image/png" onChange={e => setQuestionFiles(Array.from(e.target.files))} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                                {questionFiles.length > 0 && <p className="text-xs text-indigo-600 mt-2 font-medium">✅ {questionFiles.map(f => f.name).join(', ')} を保持しています</p>}
+                                {questionFiles.length === 0 && !isNew && examData?.pdf_path && <p className="text-xs text-gray-500 mt-2">※DB上のPDF: <a href={examData.pdf_path} target="_blank" className="underline text-blue-500">確認する</a></p>}
                             </div>
                             <div className="flex-1 w-full bg-gray-50 p-4 rounded-lg border border-gray-200">
                                 <label className="block text-sm font-bold text-gray-700 mb-2">大問ごとの解答ファイル</label>

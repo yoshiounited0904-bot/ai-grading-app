@@ -6,7 +6,22 @@ import { gradeExamWithGemini } from '../services/geminiService';
 const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { exam, universityName, universityId } = location.state || {};
+    let { exam, universityName, universityId } = location.state || {};
+    
+    // Check localStorage if coming from Admin "Save & Preview" new tab
+    if (!exam) {
+        try {
+            const previewData = localStorage.getItem('previewExamData');
+            if (previewData) {
+                const parsed = JSON.parse(previewData);
+                exam = parsed.exam;
+                universityName = parsed.universityName;
+                universityId = parsed.universityId;
+            }
+        } catch (e) {
+            console.error("Failed to parse preview data from localStorage", e);
+        }
+    }
 
     // Debug: Check what is actually being passed
     // alert(`Debug State: ID=${universityId}, Exam=${!!exam}`);
