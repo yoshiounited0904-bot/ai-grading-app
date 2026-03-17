@@ -363,9 +363,11 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
 
     // --- STAGE 0: FULL OCR TRANSCRIPTION (The Foundation) ---
     console.log(`[Stage 0] Transcribing all documents to text...`);
+    const totalFilesCount = questionFiles.length + answerFiles.length;
     const ocrPrompt = `
 あなたはプロのデータ入力スペシャリスト兼入試分析官です。
-提供されたすべての画像（問題と解答）を詳細に読み取り、試験内容を「欠落なく、正確に」マークダウン形式のテキストとして書き出してください。
+今回、合計【${totalFilesCount}枚】のファイル（問題と解答）が提供されています。
+これら【${totalFilesCount}枚】すべての画像を端から端まで詳細に読み取り、試験内容を「絶対に途中で省略・欠落させず、すべて正確に」マークダウン形式のテキストとして書き出してください。
 
 【出力要件】
 1. ページの順序を守り、ページ番号または「第1問」「問題」などの見出しで区切ること。
@@ -384,7 +386,10 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
           ...answerInlineData.map(d => ({ inlineData: d.inlineData })),
           { text: ocrPrompt }
         ]
-      }]
+      }],
+      generationConfig: {
+        maxOutputTokens: 8192,
+      }
     }));
 
     const transcribedText = ocrResult.response.text();
@@ -477,7 +482,7 @@ ${subjectSpecificRules}
 
     const result1b = await withRetry(() => model.generateContent({
       contents: [{ role: 'user', parts: [{ text: step1bPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
     }), 10, 5000);
     const allSectionsRaw = result1b.response.text();
     const allSectionsSanitized = sanitizeJson(allSectionsRaw);
