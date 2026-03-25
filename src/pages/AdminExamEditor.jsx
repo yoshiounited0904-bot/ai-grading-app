@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis } from '../services/adminGeminiService';
 import { getUniversities } from '../data/examRegistry';
 
 function AdminExamEditor() {
@@ -12,6 +12,7 @@ function AdminExamEditor() {
     const [loading, setLoading] = useState(!isNew);
     const [generating, setGenerating] = useState(false);
     const [generatingDetailed, setGeneratingDetailed] = useState(false);
+    const [generatingSectionAnalysis, setGeneratingSectionAnalysis] = useState({});
     const [regeneratingPoints, setRegeneratingPoints] = useState(false);
     const [saving, setSaving] = useState(false);
 
@@ -30,7 +31,9 @@ function AdminExamEditor() {
     // PDF/Image files
     const [questionFiles, setQuestionFiles] = useState([]);
     const [sectionCount, setSectionCount] = useState(1);
+    const [questionFilesBySection, setQuestionFilesBySection] = useState({ 1: [] });
     const [answerFilesBySection, setAnswerFilesBySection] = useState({ 1: [] });
+    const [sectionInstructionsBySection, setSectionInstructionsBySection] = useState({ 1: '' });
 
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
@@ -129,8 +132,10 @@ function AdminExamEditor() {
             const result = await generateExamMasterData(
                 apiKey,
                 subjectEn,
-                questionFiles,
+                questionFiles, // Common reference
+                questionFilesBySection,
                 answerFilesBySection,
+                sectionInstructionsBySection,
                 {
                     id: examId, university, universityId: parseInt(universityId),
                     faculty, facultyId, year: parseInt(year), subject,
@@ -291,6 +296,39 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
+    const handleAddGenerationSection = () => {
+        const newCount = sectionCount + 1;
+        setSectionCount(newCount);
+        setAnswerFilesBySection(prev => ({ ...prev, [newCount]: [] }));
+        setQuestionFilesBySection(prev => ({ ...prev, [newCount]: [] }));
+        setSectionInstructionsBySection(prev => ({ ...prev, [newCount]: '' }));
+    };
+
+    const handleDeleteGenerationSection = (num) => {
+        if (sectionCount <= 1) return;
+        if (!confirm(`第${num}問のアップロード設定を削除しますか？`)) return;
+
+        setSectionCount(prev => prev - 1);
+
+        // Offset the files for higher sections
+        const newAnswerFiles = {};
+        const newQuestionFiles = {};
+        const newInstructions = {};
+
+        let targetIdx = 1;
+        for (let i = 1; i <= sectionCount; i++) {
+            if (i === num) continue;
+            newAnswerFiles[targetIdx] = answerFilesBySection[i] || [];
+            newQuestionFiles[targetIdx] = questionFilesBySection[i] || [];
+            newInstructions[targetIdx] = sectionInstructionsBySection[i] || '';
+            targetIdx++;
+        }
+
+        setAnswerFilesBySection(newAnswerFiles);
+        setQuestionFilesBySection(newQuestionFiles);
+        setSectionInstructionsBySection(newInstructions);
+    };
+
     const flatAnswerFiles = Object.values(answerFilesBySection).flat();
 
     const handleRegenerateExplanation = async (sIdx, qIdx, q) => {
@@ -303,8 +341,8 @@ function AdminExamEditor() {
             const newExplanation = await regenerateQuestionExplanation(
                 apiKey,
                 q,
-                questionFiles,
-                flatAnswerFiles
+                questionFilesBySection[sIdx + 1] || questionFiles, // Use section files if available
+                answerFilesBySection[sIdx + 1] || []
             );
             handleStructureChange(sIdx, qIdx, 'explanation', newExplanation);
         } catch (error) {
@@ -313,6 +351,27 @@ function AdminExamEditor() {
         }
     };
 
+    const handleRegenerateSectionAnalysis = async (sIdx, section) => {
+        if (!confirm(`第${section.id}問の全体解説を再生成しますか？\n（内容が上書きされます）`)) return;
+
+        setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: true }));
+        try {
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            const newAnalysis = await generateSectionDetailedAnalysis(
+                apiKey,
+                subjectEn,
+                section,
+                questionFilesBySection[sIdx + 1] || [],
+                answerFilesBySection[sIdx + 1] || [],
+                sectionInstructionsBySection[sIdx + 1] || ''
+            );
+            handleStructureChange(sIdx, null, 'sectionAnalysis', newAnalysis);
+        } catch (error) {
+            alert('大問解説の再生成に失敗しました:\n' + error.message);
+        } finally {
+            setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: false }));
+        }
+    };
     const handleRegenerateDetailedAnalysis = async () => {
         if (!examData) {
             alert('マスターデータが存在しません。');
@@ -417,6 +476,7 @@ function AdminExamEditor() {
             id: String(newStructure.length + 1),
             label: `第${newStructure.length + 1}問`,
             allocatedPoints: 0,
+            sectionAnalysis: '',
             questions: []
         });
         setExamData({ ...examData, structure: newStructure });
@@ -749,48 +809,76 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                     <h2 className="text-xl font-bold border-b pb-2 mb-4 text-accent-gold">AIによる自動生成</h2>
                     <p className="text-sm text-gray-600 mb-4">問題ファイルの全体と、大問ごとの解答ファイル (PDF または 画像) をアップロードして、配点・解答・解説を自動生成します。</p>
 
-                    <div className="mb-4">
-                        <label className="block text-sm font-bold text-gray-700 mb-1">大問数 (解答の分割アップロード用)</label>
-                        <select
-                            value={sectionCount}
-                            onChange={e => {
-                                const count = parseInt(e.target.value) || 1;
-                                setSectionCount(count);
-                                const newAnswerFiles = {};
-                                for (let i = 1; i <= count; i++) {
-                                    newAnswerFiles[i] = answerFilesBySection[i] || [];
-                                }
-                                setAnswerFilesBySection(newAnswerFiles);
-                            }}
-                            className="block w-32 rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border bg-gray-50"
+                    <div className="mb-4 flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700">大問の設定 (現在: {sectionCount}個)</label>
+                            <p className="text-[10px] text-gray-500 mt-0.5">※ 問題・解答を大問ごとに分割してアップロードできます。精度向上のため推奨します。</p>
+                        </div>
+                        <button
+                            onClick={handleAddGenerationSection}
+                            className="bg-navy-blue text-white hover:bg-opacity-90 font-bold py-1.5 px-4 rounded shadow-sm text-sm transition-colors flex items-center gap-1"
                         >
-                            {Array.from({ length: 15 }).map((_, i) => (
-                                <option key={i + 1} value={i + 1}>{i + 1}個</option>
-                            ))}
-                        </select>
-                        <p className="text-xs text-gray-500 mt-1">※ 指定した数だけ、解答を大問ごとに分割してアップロードできるようになります。</p>
+                            <span className="text-lg leading-none">+</span> 大問を追加
+                        </button>
                     </div>
 
                     <div className="flex flex-col md:flex-row gap-6 items-start border-t border-gray-100 pt-4">
                         <div className="flex-1 w-full">
-                            <label className="block text-sm font-bold text-gray-700 mb-2">共通：問題ファイル ({questionFiles.length}個選択中)</label>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">共通：問題ファイル (表示用) ({questionFiles.length}個選択中)</label>
                             <input type="file" multiple accept="application/pdf,image/webp,image/jpeg,image/png" onChange={e => setQuestionFiles(Array.from(e.target.files))} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                            <p className="text-[10px] text-gray-500 mt-1">※ ここでアップロードされたファイルは、生徒用画面に表示されます。</p>
                             {questionFiles.length > 0 && <p className="text-xs text-indigo-600 mt-2 font-medium">✅ {questionFiles.map(f => f.name).join(', ')} を保持しています</p>}
                             {questionFiles.length === 0 && !isNew && examData?.pdf_path && <p className="text-xs text-gray-500 mt-2">※DB上のPDF: <a href={examData.pdf_path} target="_blank" className="underline text-blue-500">確認する</a></p>}
                         </div>
-                        <div className="flex-1 w-full bg-gray-50 p-4 rounded-lg border border-gray-200">
-                            <label className="block text-sm font-bold text-gray-700 mb-2">大問ごとの解答ファイル</label>
-                            <div className="space-y-4">
+                        <div className="flex-[2] w-full bg-gray-50 p-4 rounded-lg border border-gray-200">
+                            <label className="block text-sm font-bold text-gray-700 mb-2">大問ごとの設定 (AI解析用)</label>
+                            <div className="space-y-6">
                                 {Array.from({ length: sectionCount }).map((_, i) => (
-                                    <div key={i + 1} className="flex flex-col gap-1 border-b border-gray-200 pb-3 last:border-0 last:pb-0">
-                                        <label className="text-xs font-bold text-gray-600">第{i + 1}問 の解答 ({answerFilesBySection[i + 1]?.length || 0}個選択中)</label>
-                                        <input
-                                            type="file"
-                                            multiple
-                                            accept="application/pdf,image/webp,image/jpeg,image/png"
-                                            onChange={e => setAnswerFilesBySection(prev => ({ ...prev, [i + 1]: Array.from(e.target.files) }))}
-                                            className="w-full text-xs text-gray-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                                        />
+                                    <div key={i + 1} className="space-y-3 border-b border-gray-200 pb-5 last:border-0 last:pb-0 relative group">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="bg-navy-blue text-white text-xs font-bold px-2 py-0.5 rounded-full">第{i + 1}問</span>
+                                            </div>
+                                            {sectionCount > 1 && (
+                                                <button
+                                                    onClick={() => handleDeleteGenerationSection(i + 1)}
+                                                    className="text-[10px] text-red-500 hover:text-red-700 font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+                                                >
+                                                    この大問設定を削除
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">問題ファイル ({questionFilesBySection[i + 1]?.length || 0})</label>
+                                                <input
+                                                    type="file"
+                                                    multiple
+                                                    accept="application/pdf,image/webp,image/jpeg,image/png"
+                                                    onChange={e => setQuestionFilesBySection(prev => ({ ...prev, [i + 1]: Array.from(e.target.files) }))}
+                                                    className="w-full text-[10px] text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">解答ファイル ({answerFilesBySection[i + 1]?.length || 0})</label>
+                                                <input
+                                                    type="file"
+                                                    multiple
+                                                    accept="application/pdf,image/webp,image/jpeg,image/png"
+                                                    onChange={e => setAnswerFilesBySection(prev => ({ ...prev, [i + 1]: Array.from(e.target.files) }))}
+                                                    className="w-full text-[10px] text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">AIへの個別指示（任意）</label>
+                                            <textarea
+                                                value={sectionInstructionsBySection[i + 1] || ''}
+                                                onChange={e => setSectionInstructionsBySection(prev => ({ ...prev, [i + 1]: e.target.value }))}
+                                                placeholder="例: この大問は資料読解なので、図表の根拠を重視して解説を作ってください。"
+                                                className="w-full p-2 border rounded text-xs bg-white h-12"
+                                            />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -960,6 +1048,25 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                                     >
                                         ＋ 小問を追加
                                     </button>
+                                </div>
+
+                                <div className="mt-6 border-t pt-4">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-sm font-bold text-gray-700">第{section.id}問 の全体解説（詳細）</label>
+                                        <button
+                                            onClick={() => handleRegenerateSectionAnalysis(sIdx, section)}
+                                            disabled={generatingSectionAnalysis[sIdx]}
+                                            className="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 font-bold py-1 px-3 rounded border border-purple-200 transition-colors flex items-center gap-1"
+                                        >
+                                            {generatingSectionAnalysis[sIdx] ? '🔄 生成中...' : '🤖 大問解説をAIで生成'}
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        value={section.sectionAnalysis || ''}
+                                        onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)}
+                                        placeholder="各大問ごとの詳細な読解プロセスや、全体のまとめを記述します。"
+                                        className="w-full p-3 border rounded text-xs h-32 bg-white"
+                                    />
                                 </div>
                             </div>
                         ))}

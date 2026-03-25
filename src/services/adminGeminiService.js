@@ -300,7 +300,7 @@ const fileToBase64 = (file) => {
   });
 };
 
-export const generateExamMasterData = async (apiKey, subjectType, questionFiles, answerFilesBySection, extraInfo) => {
+export const generateExamMasterData = async (apiKey, subjectType, questionFiles, questionFilesBySection, answerFilesBySection, sectionInstructionsBySection, extraInfo) => {
   try {
     const trimmedKey = apiKey?.trim();
     console.log("[AdminGeminiService] Using model:", MODELS.PRIMARY);
@@ -310,23 +310,8 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
       throw new Error("Gemini API Key is not set. .env.localファイルを確認し、開発サーバーを再起動（Ctrl+Cして npm run dev）してください。");
     }
 
-    let genAI;
-    try {
-      genAI = new GoogleGenerativeAI(trimmedKey);
-    } catch (err) {
-      console.error("[AdminGeminiService] Failed to initialize GoogleGenerativeAI:", err);
-      throw new Error("Gemini APIの初期化に失敗しました。APIキーの形式が正しくない可能性があります。");
-    }
-
-    let model;
-    try {
-      model = genAI.getGenerativeModel({
-        model: MODELS.PRIMARY,
-      });
-    } catch (err) {
-      console.error("[AdminGeminiService] Failed to get generative model:", err);
-      throw new Error(`モデル "${MODELS.PRIMARY}" の読み込みに失敗しました。`);
-    }
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
     const isEnglish = subjectType === 'english';
     const isSocial = subjectType === 'social';
@@ -353,84 +338,74 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
 `;
     }
 
-    const questionFileDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
-    const questionInlineData = questionFileDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    // --- STAGE 0: COMMON OCR (Reference) ---
+    let commonQuestionText = "";
+    if (questionFiles && questionFiles.length > 0) {
+      console.log(`[Stage 0] Transcribing common question documents...`);
+      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
 
-    const groupedAnswerParts = [];
-    let totalAnswerFilesCount = 0;
-
-    for (const [section, files] of Object.entries(answerFilesBySection)) {
-      if (files && files.length > 0) {
-        totalAnswerFilesCount += files.length;
-        groupedAnswerParts.push({ text: `\n\n=== 【第${section}問 解答】 ===\n` });
-        const sectionFileDataArray = await Promise.all(files.map(file => fileToBase64(file)));
-        for (const fd of sectionFileDataArray) {
-          groupedAnswerParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } });
-        }
-      }
+      const qOcrPrompt = `提供された問題用紙の画像を正確にテキスト化してください。`;
+      const qOcrResult = await withRetry(() => model.generateContent({
+        contents: [{ role: 'user', parts: [...qInlineData, { text: qOcrPrompt }] }],
+        generationConfig: { maxOutputTokens: 8192 }
+      }));
+      commonQuestionText = qOcrResult.response.text();
     }
 
-    const outputId = extraInfo.id;
-    const maxScore = parseInt(extraInfo.maxScore) || 100;
+    // --- STAGE 1: PER-SECTION PROCESSING ---
+    const extractedSections = [];
     const sectionsCount = Object.keys(answerFilesBySection).length;
 
-    // --- STAGE 0: FULL OCR FOR QUESTIONS ONLY ---
-    console.log(`[Stage 0] Transcribing question documents...`);
-    const qOcrPrompt = `
-あなたはプロのデータ入力スペシャリストです。
-提供された問題用紙のすべての画像を端から端まで詳細に読み取り、「絶対に途中で省略・欠落させず、すべて正確に」マークダウン形式のテキストとして書き出してください。
-ページの順序を守り、ページ番号または「第1問」「問題」などの見出しで区切ってください。
-`;
-
-    const qOcrResult = await withRetry(() => model.generateContent({
-      contents: [{
-        role: 'user', parts: [
-          ...questionInlineData,
-          { text: qOcrPrompt }
-        ]
-      }],
-      generationConfig: { maxOutputTokens: 8192 }
-    }));
-    const questionText = qOcrResult.response.text();
-    console.log(`[Stage 0] Question transcription complete. Length: ${questionText.length}`);
-
-    // --- STAGE 1: PER-SECTION ANSWER OCR AND EXTRACTION ---
-    const extractedSections = [];
-
-    for (const [sectionIndex, rawFiles] of Object.entries(answerFilesBySection)) {
-      if (!rawFiles || rawFiles.length === 0) continue;
+    for (const [sectionIndex, rawAnswerFiles] of Object.entries(answerFilesBySection)) {
+      if (!rawAnswerFiles || rawAnswerFiles.length === 0) continue;
 
       console.log(`[Stage 1] Processing section ${sectionIndex} / ${sectionsCount} ...`);
 
-      const filesArray = await Promise.all(rawFiles.map(file => fileToBase64(file)));
-      const inlineData = filesArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-
       // 1a. OCR the answers for this section
-      const aOcrPrompt = `以下の画像は、試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
+      const aDataArray = await Promise.all(rawAnswerFiles.map(file => fileToBase64(file)));
+      const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+      const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
       const aOcrResult = await withRetry(() => model.generateContent({
-        contents: [{ role: 'user', parts: [...inlineData, { text: aOcrPrompt }] }],
+        contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
         generationConfig: { maxOutputTokens: 2048 }
       }));
       const answerText = aOcrResult.response.text();
 
-      // 1b. Extract structure and answers for this section ONLY
-      const extractPrompt = `
-以下の「問題用紙テキスト全体」と「第${sectionIndex}問の解答テキスト」を分析し、**第${sectionIndex}問**に関する設問構造と正解のみを抽出してください。
+      // 1b. OCR the specific questions for this section (if provided)
+      let sectionQuestionText = "";
+      const rawQuestionFiles = questionFilesBySection[sectionIndex] || [];
+      if (rawQuestionFiles.length > 0) {
+        console.log(`[Stage 1] Transcribing specific questions for section ${sectionIndex}...`);
+        const qDataArray = await Promise.all(rawQuestionFiles.map(file => fileToBase64(file)));
+        const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+        const sqOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
+        const sqOcrResult = await withRetry(() => model.generateContent({
+          contents: [{ role: 'user', parts: [...qInlineData, { text: sqOcrPrompt }] }],
+          generationConfig: { maxOutputTokens: 4096 }
+        }));
+        sectionQuestionText = sqOcrResult.response.text();
+      }
 
-【問題用紙全体テキスト】
-${questionText}
+      // 1c. Extract structure
+      const sectionInstruction = sectionInstructionsBySection[sectionIndex] || "";
+      const extractPrompt = `
+以下の試験素材を分析し、**第${sectionIndex}問**に関する設問構造と正解のみを抽出してください。
+
+【第${sectionIndex}問 問題テキスト】
+${sectionQuestionText || commonQuestionText || "（問題テキストなし）"}
 
 【第${sectionIndex}問 解答テキスト】
 ${answerText}
 
+${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
+
 【抽出条件と厳格ルール】
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
-2. explanationフィールドは必ず空文字列を設定すること。
-3. アスタリスク（*）記号を絶対に使用しないでください。
-4. 以下のJSON構造（オブジェクト1つ）のみを出力してください（コードブロックなし）。
-5. gradingCriteriaフィールドは含めないでください。
-6. 選択問題（type: "selection"等）の \`options\` 配列には、選択肢の文章テキストは含めず、「記号・番号（例: "1", "a", "ア" など）」のみを含めてください。
-7. 「配点」は後で計算するため、すべての小問の \`points\` は 0 に設定してください。
+2. アスタリスク（*）記号を絶対に使用しないでください。
+3. 以下のJSON構造（オブジェクト1つ）のみを出力してください（コードブロックなし）。
+4. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
+5. 全ての小問の \`points\` は 0 に設定してください。
 
 【出力構造】
 {
@@ -443,7 +418,7 @@ ${answerText}
       "label": "小問ラベル",
       "type": "selection",
       "options": ["a", "b", "c", "d"],
-      "correctAnswer": "正解（完全一致で）",
+      "correctAnswer": "正解",
       "points": 0,
       "explanation": ""
     }
@@ -464,7 +439,6 @@ ${answerText}
         console.error(`[AdminGeminiService] Failed to parse section ${sectionIndex}:`, err);
       }
 
-      // Respect rate limits between sections
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
@@ -988,6 +962,71 @@ ${JSON.stringify(currentStructure, null, 2)}
     return mergedStructure;
   } catch (error) {
     console.error("Error regenerating point allocation:", error);
+    throw error;
+  }
+};
+
+export const generateSectionDetailedAnalysis = async (apiKey, subjectType, sectionData, questionFiles = [], answerFiles = [], specialInstruction = "") => {
+  try {
+    const trimmedKey = apiKey?.trim();
+    if (!trimmedKey) throw new Error("Gemini API Key is not set.");
+
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
+
+    const imageParts = [];
+    if (questionFiles && questionFiles.length > 0) {
+      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    }
+    if (answerFiles && answerFiles.length > 0) {
+      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    }
+
+    let basePrompt = "";
+    if (subjectType === 'english') {
+      basePrompt = `あなたは難関大学入試の英語講師です。第${sectionData.id}問（${sectionData.label}）の英語長文について、受験生の頭の中での思考プロセスを再現した詳細な解説を作成してください。
+【ルール】
+1. 英文を引用し、一文ごとに読解のポイントを説明すること。
+2. 設問の根拠が本文のどこにあるかを明示すること。
+3. 文法事項だけでなく、論理構成（逆接、抽象→具体など）を言語化すること。
+`;
+    } else if (subjectType === 'social') {
+      basePrompt = `あなたは大学入試の社会科（日本史・世界史・地理）の専門講師です。第${sectionData.id}問（${sectionData.label}）について、各小問の背景知識や、資料・図表の読み方のポイントを詳細に解説してください。
+【ルール】
+1. 単なる正解の提示ではなく、なぜその知識が必要なのか、どう考えれば正解に辿りつくかを記述すること。
+2. 誤選択肢がなぜ間違っているのか、歴史的事実に基づいて解説すること。
+`;
+    } else {
+      basePrompt = `あなたは大学入試の専門講師です。第${sectionData.id}問（${sectionData.label}）について、各小問の解き方や考え方のプロセスを詳細に解説してください。`;
+    }
+
+    const finalPrompt = `
+${basePrompt}
+
+【対象データ（構造）】
+${JSON.stringify(sectionData, null, 2)}
+
+${specialInstruction ? `【ユーザーからの個別指示】\n${specialInstruction}\n` : ""}
+
+【出力要件】
+1. Markdown形式で記述すること。
+2. アスタリスク（*）記号は使用禁止。
+3. コードブロック（\`\`\`markdown）で囲まず、本文のみを出力すること。
+
+出力は解説本文（Markdown）のみを返してください。
+`;
+
+    const result = await withRetry(() => model.generateContent([
+      finalPrompt,
+      ...imageParts
+    ]));
+
+    const text = result.response.text();
+    return text.replace(/```markdown\n?|```\n?|```/g, '').trim();
+  } catch (error) {
+    console.error("Error generating section detailed analysis:", error);
     throw error;
   }
 };
