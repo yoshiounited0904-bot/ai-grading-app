@@ -8,9 +8,9 @@ const MODELS = {
 const ENGLISH_RULES = `
 【最重要前提】
  • 採点は AIが自動で行うこと を前提とする
- • 「総合判断」「感覚的評価」は禁止
- • 設問タイプごとに、配点が異なる理由を必ず言語化すること
- • 配点は 満点からの減点方式のみ を用いる
+  • 「総合判断」「感覚的評価」は禁止
+  • 配点理由は一切出力しないでください。純粋な数値データのみを生成してください。
+  • 配点は 満点からの減点方式のみ を用いる
 
 ⸻
 
@@ -159,7 +159,7 @@ E．論述問題（長）
 1-3. 論述問題の要素設計
 ・論述問題については、必ず：
 　- 模範回答を要素に分解
-　- 要素数と要素充足条件を "gradingCriteria" または "explanation" 内に明記する
+　- 要素数と要素充足条件を内部的に検討し、適切な配点を割り当てること（テキストとしての出力は不要）
 `;
 
 export const sanitizeJson = (jsonString) => {
@@ -313,6 +313,7 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     const genAI = new GoogleGenerativeAI(trimmedKey);
     const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
+    const maxScore = extraInfo?.maxScore || 100;
     const isEnglish = subjectType === 'english';
     const isSocial = subjectType === 'social';
 
@@ -320,20 +321,20 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     if (isEnglish) {
       subjectSpecificRules = ENGLISH_RULES + `
 ※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
-上記の【出力形式（厳守）】の要件に従った思考プロセス（分類、配点理由、要素分解、全体チェック）は、必ず最終JSON形式の「説明用フィールド」（例：detailedAnalysisやexplanationなど）に含めて出力してください。
-さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${extraInfo?.maxScore || '指定なし'}点）と完全に一致するように調整してください。
+思考プロセスや配点理由などのテキストは一切出力せず、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${maxScore}点）と完全に一致するように調整してください。
 `;
     } else if (isSocial) {
       subjectSpecificRules = SOCIAL_RULES + `
 ※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
-上記の【出力形式（厳守）】の要件に従った思考プロセス（分類、配点理由、要素分解、全体チェック）は、必ず最終JSON形式の「説明用フィールド」（例：detailedAnalysisやexplanationなど）に含めて出力してください。
-さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${extraInfo?.maxScore || '指定なし'}点）と完全に一致するように調整してください。
+思考プロセスや配点理由などのテキストは一切出力せず、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、計算されたすべての小問配点の合計가、入力として指定された満点（${maxScore}点）と完全に一致するように調整してください。
 `;
     } else {
       subjectSpecificRules = `
 一般的な科目として、設問の難易度や形式に応じて常識的な配点を行ってください。
 ただし、以下の条件を必ず守ること：
-1. 最終的な合計点は全体で指定された満点（maxScore）と一致するよう調整すること。
+1. 最終的な合計点は全体で指定された満点（${maxScore}）と一致するよう調整すること。
 2. 特定の1問に10点以上の異常に高い配点を割り振らないこと。極端な偏りを防ぎ、問題数に応じて自然に点数を分散させること。
 `;
     }
@@ -434,6 +435,8 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
       const sectionRaw = extractResult.response.text();
       try {
         const parsedSection = JSON.parse(sanitizeJson(sectionRaw));
+        // Ensure sectionAnalysis exists even if empty at first
+        if (!parsedSection.sectionAnalysis) parsedSection.sectionAnalysis = "";
         extractedSections.push(parsedSection);
       } catch (err) {
         console.error(`[AdminGeminiService] Failed to parse section ${sectionIndex}:`, err);
@@ -459,7 +462,9 @@ ${subjectSpecificRules}
 ${JSON.stringify(extractedSections, null, 2)}
 
 【出力要件】
-配点（points / allocatedPoints）を正しい数値で埋めた同じJSON構造の配列（リスト）のみを出力してください。
+1. 配点（points / allocatedPoints）を正しい数値で埋めた同じJSON構造の配列（リスト）のみを出力してください。
+2. これまでに抽出された id, label, type, options, correctAnswer 等の構造は一切変更してはいけません。
+3. 思考プロセスや配点理由などのテキスト解説は一切含めないでください。
 `;
 
     const pointsResult = await withRetry(() => model.generateContent({
@@ -494,7 +499,7 @@ ${JSON.stringify(extractedSections, null, 2)}
 
     // --- FINAL ASSEMBLY ---
     const finalJson = {
-      id: outputId,
+      id: extraInfo.id,
       university: extraInfo.university || '大学名',
       university_id: extraInfo.universityId || 0,
       faculty: extraInfo.faculty || '学部名',
@@ -949,6 +954,7 @@ ${JSON.stringify(currentStructure, null, 2)}
       const newSec = newStructure[secIdx] || origSec;
       return {
         ...origSec,
+        sectionAnalysis: newSec.sectionAnalysis || origSec.sectionAnalysis || "",
         questions: origSec.questions.map((origQ, qIdx) => {
           const newQ = newSec.questions ? newSec.questions[qIdx] : null;
           return {

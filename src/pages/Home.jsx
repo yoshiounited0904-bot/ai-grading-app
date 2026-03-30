@@ -5,6 +5,7 @@ import { getUniversities } from '../data/examRegistry';
 import { useAuth } from '../contexts/AuthContext';
 import { signOut } from '../services/authService';
 import RecruitmentBanner from '../components/RecruitmentBanner';
+import AdBanner from '../components/AdBanner';
 
 const Home = () => {
     const { user, loading } = useAuth();
@@ -93,6 +94,9 @@ const Home = () => {
                             大学を選択して開始
                         </button>
                     </div>
+
+                    {/* Banner Ad */}
+                    <AdBanner pageTarget="home" className="mt-12 max-w-4xl mx-auto" />
                 </div>
 
                 <div className="grid-responsive" style={{

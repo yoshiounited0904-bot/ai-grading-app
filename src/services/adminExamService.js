@@ -76,6 +76,28 @@ export const deleteAdminExam = async (id) => {
     return { error };
 };
 
+export const updateAdminComment = async (id, comment, unimplemented_items = null) => {
+    const updates = { updated_at: new Date().toISOString() };
+    if (comment !== null) updates.admin_comment = comment;
+    if (unimplemented_items !== null) updates.unimplemented_items = unimplemented_items;
+
+    const { data, error } = await supabase
+        .from('exams')
+        .update(updates)
+        .eq('id', id)
+        .select();
+    return { data, error };
+};
+
+export const updateAdminFields = async (id, updates) => {
+    const { data, error } = await supabase
+        .from('exams')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select();
+    return { data, error };
+};
+
 export const uploadExamPdf = async (file, examId) => {
     // Unique filename using examId and timestamp to prevent collisions
     const fileExt = file.name.split('.').pop().toLowerCase();

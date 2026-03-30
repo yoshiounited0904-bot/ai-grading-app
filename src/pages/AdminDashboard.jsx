@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getAdminExams, deleteAdminExam, importMockData } from '../services/adminExamService';
+import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData } from '../services/adminExamService';
 
 function AdminDashboard() {
     const [exams, setExams] = useState([]);
@@ -23,15 +23,41 @@ function AdminDashboard() {
         setLoading(false);
     };
 
-    const handleDelete = async (id) => {
-        if (window.confirm('本当にこの試験マスターデータを削除しますか？\n削除すると元に戻せません。')) {
-            const { error } = await deleteAdminExam(id);
+    const handleDelete = async (exam) => {
+        const confirmMsg = `本当に以下の試験データを削除しますか？\n削除すると元に戻せません。\n\n【対象】\n${exam.university} ${exam.year}年度 ${exam.subject}`;
+        if (window.confirm(confirmMsg)) {
+            const { error } = await deleteAdminExam(exam.id);
             if (error) {
                 console.error('Error deleting exam:', error);
                 alert('削除に失敗しました。');
             } else {
                 fetchExams();
             }
+        }
+    };
+
+    const handleCommentUpdate = async (id, comment) => {
+        const { error } = await updateAdminComment(id, comment);
+        if (error) {
+            console.error('Error updating comment:', error);
+            alert('メモの更新に失敗しました。');
+        } else {
+            setExams(prev => prev.map(e => e.id === id ? { ...e, admin_comment: comment } : e));
+        }
+    };
+
+    const handleToggleUnimplemented = async (examId, item, currentItems) => {
+        const items = Array.isArray(currentItems) ? currentItems : [];
+        const newItems = items.includes(item)
+            ? items.filter(i => i !== item)
+            : [...items, item];
+
+        const { error } = await updateAdminFields(examId, { unimplemented_items: newItems });
+        if (error) {
+            console.error('Error updating unimplemented items:', error);
+            alert('更新に失敗しました。SQLを実行してカラムを追加したか確認してください。');
+        } else {
+            setExams(prev => prev.map(e => e.id === examId ? { ...e, unimplemented_items: newItems } : e));
         }
     };
 
@@ -71,15 +97,28 @@ function AdminDashboard() {
     };
 
     return (
-        <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="min-h-screen bg-indigo-50/30 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-serif text-navy-blue">管理者ページ: 試験マスター管理</h1>
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+                    <div>
+                        <h1 className="text-3xl font-black text-navy-blue flex items-center gap-3">
+                            管理者ページ
+                            <span className="text-xs bg-navy-blue text-white px-2 py-1 rounded-full font-mono">v2.1</span>
+                        </h1>
+                        <div className="flex gap-6 mt-2 border-b border-gray-200">
+                            <button className="pb-2 px-1 border-b-2 border-navy-blue font-bold text-navy-blue">
+                                試験マスター管理
+                            </button>
+                            <Link to="/admin/banners" className="pb-2 px-1 text-gray-400 hover:text-navy-blue">
+                                広告運用管理 (CMS)
+                            </Link>
+                        </div>
+                    </div>
                     <Link
                         to="/admin/exam/new"
-                        className="bg-navy-blue hover:bg-navy-light text-white font-bold py-2 px-6 rounded shadow transition-colors"
+                        className="bg-navy-blue hover:bg-navy-light text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
                     >
-                        ＋ 新規作成
+                        <span className="text-xl">+</span> 新規試験作成
                     </Link>
                 </div>
 
@@ -103,45 +142,103 @@ function AdminDashboard() {
                         </div>
                     </div>
                 ) : (
-                    <div className="bg-white rounded-xl shadow-md overflow-hidden">
+                    <div className="mt-8 bg-white/50 backdrop-blur-sm rounded-2xl p-4 shadow-inner border-2 border-indigo-100/50">
                         <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-100">
-                                    <tr>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID / ファイル名</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">大学 / 学部</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">年度 / 科目</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">作成日</th>
-                                        <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                            <table className="min-w-full border-separate border-spacing-y-4">
+                                <thead>
+                                    <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
+                                        <th className="px-6 py-2 text-left">大学・学部 / ID</th>
+                                        <th className="px-6 py-2 text-left">年度・科目</th>
+                                        <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
+                                        <th className="px-6 py-2 text-left">共有メモ</th>
+                                        <th className="px-6 py-2 text-right">操作</th>
                                     </tr>
                                 </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
+                                <tbody>
                                     {exams.map((exam) => (
-                                        <tr key={exam.id} className="hover:bg-gray-50">
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm font-medium text-gray-900">{exam.id}</div>
+                                        <tr key={exam.id} className="group hover:-translate-y-0.5 transition-all duration-300">
+                                            {/* University & Faculty */}
+                                            <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <div className="flex flex-col">
+                                                    <span className="text-lg font-black text-navy-blue leading-tight">{exam.university}</span>
+                                                    <span className="text-sm font-bold text-gray-400">{exam.faculty}</span>
+                                                    <span className="text-[10px] font-mono mt-1 text-gray-300"># {exam.id}</span>
+                                                </div>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm font-bold text-navy-blue">{exam.university}</div>
-                                                <div className="text-sm text-gray-500">{exam.faculty}</div>
+
+                                            {/* Year & Subject */}
+                                            <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <div className="flex flex-col">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-black bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded">{exam.year}年度</span>
+                                                        {exam.pdf_path && (
+                                                            <a href={exam.pdf_path} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-green-600 hover:text-green-800 flex items-center gap-1 transition-colors">
+                                                                📄 PDF
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-base font-bold text-gray-700 mt-1">{exam.subject}</span>
+                                                </div>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm text-gray-900">{exam.year}年度</div>
-                                                <div className="text-sm text-gray-500">{exam.subject} ({exam.subject_en})</div>
+
+                                            {/* Unimplemented Status */}
+                                            <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <div className="flex flex-wrap gap-1 justify-center max-w-[150px] mx-auto">
+                                                    {[
+                                                        { id: 'detailed', label: '詳細' },
+                                                        { id: 'question', label: '小問' },
+                                                        { id: 'points', label: '配点' },
+                                                        { id: 'criteria', label: '基準' },
+                                                        { id: 'passing', label: '合格' },
+                                                        { id: 'other', label: '他' }
+                                                    ].map(item => {
+                                                        const isActive = (exam.unimplemented_items || []).includes(item.id);
+                                                        return (
+                                                            <button
+                                                                key={item.id}
+                                                                onClick={() => handleToggleUnimplemented(exam.id, item.id, exam.unimplemented_items)}
+                                                                className={`text-[9px] w-8 h-8 rounded-full border-2 transition-all duration-300 font-bold flex items-center justify-center ${isActive
+                                                                    ? 'bg-red-500 text-white border-red-500 shadow-md'
+                                                                    : 'bg-white text-gray-200 border-gray-100 hover:border-red-200 hover:text-red-400'
+                                                                    }`}
+                                                                title={item.label}
+                                                            >
+                                                                {item.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {new Date(exam.created_at).toLocaleDateString('ja-JP')}
+
+                                            {/* Admin Comment */}
+                                            <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <textarea
+                                                    defaultValue={exam.admin_comment || ''}
+                                                    onBlur={(e) => {
+                                                        if (e.target.value !== (exam.admin_comment || '')) {
+                                                            handleCommentUpdate(exam.id, e.target.value);
+                                                        }
+                                                    }}
+                                                    placeholder="共有メモ..."
+                                                    className="w-full text-[10px] p-2 bg-yellow-50/20 border-b border-yellow-200/50 focus:border-navy-blue focus:bg-white transition-all resize-none h-12"
+                                                />
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                <button onClick={() => handlePreview(exam)} className="text-green-600 hover:text-green-900 mr-4 font-bold">
-                                                    プレビュー
-                                                </button>
-                                                <Link to={`/admin/exam/${exam.id}`} className="text-indigo-600 hover:text-indigo-900 mr-4">
-                                                    編集
-                                                </Link>
-                                                <button onClick={() => handleDelete(exam.id)} className="text-red-600 hover:text-red-900">
-                                                    削除
-                                                </button>
+
+                                            {/* Actions */}
+                                            <td className="bg-white px-6 py-5 rounded-r-2xl border-y-2 border-r-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <div className="flex flex-col gap-1 w-24 ml-auto">
+                                                    <button onClick={() => handlePreview(exam)} className="w-full py-1 text-[10px] font-black bg-navy-blue text-white rounded shadow hover:bg-navy-light transition-colors">
+                                                        プレビュー
+                                                    </button>
+                                                    <div className="flex gap-1">
+                                                        <Link to={`/admin/exam/${exam.id}`} className="flex-1 py-1 text-[10px] font-bold bg-gray-50 text-gray-600 rounded border border-gray-100 hover:bg-gray-100 text-center">
+                                                            編集
+                                                        </Link>
+                                                        <button onClick={() => handleDelete(exam)} className="flex-1 py-1 text-[10px] font-bold bg-red-50 text-red-500 rounded border border-red-100 hover:bg-red-500 hover:text-white transition-colors">
+                                                            削
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

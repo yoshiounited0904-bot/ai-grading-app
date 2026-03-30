@@ -1,5 +1,6 @@
 import { chatWithGemini } from '../services/geminiService';
 import RecruitmentBanner from '../components/RecruitmentBanner';
+import AdBanner from '../components/AdBanner';
 import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -161,6 +162,9 @@ const ResultPage = () => {
                     </p>
                 </div>
             </div>
+
+            {/* Banner Ad */}
+            <AdBanner pageTarget="result" className="mb-8" />
 
             <div style={{ marginBottom: '2rem' }}>
                 <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem', textAlign: 'center' }}>成績分析</h2>

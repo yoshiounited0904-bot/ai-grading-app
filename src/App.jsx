@@ -13,6 +13,8 @@ import Navbar from './components/Navbar';
 import AdminRoute from './components/AdminRoute';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminExamEditor from './pages/AdminExamEditor';
+import AdminBannerDashboard from './pages/AdminBannerDashboard';
+import AdminBannerEditor from './pages/AdminBannerEditor';
 
 function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -40,6 +42,9 @@ function App() {
           <Route element={<AdminRoute />}>
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/exam/:id" element={<AdminExamEditor />} />
+            <Route path="/admin/banners" element={<AdminBannerDashboard />} />
+            <Route path="/admin/banners/new" element={<AdminBannerEditor />} />
+            <Route path="/admin/banners/:id" element={<AdminBannerEditor />} />
           </Route>
         </Routes>
         <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
