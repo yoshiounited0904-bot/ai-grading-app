@@ -15,6 +15,8 @@ function AdminExamEditor() {
     const [generatingSectionAnalysis, setGeneratingSectionAnalysis] = useState({});
     const [regeneratingPoints, setRegeneratingPoints] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [uploadingQuestion, setUploadingQuestion] = useState(false);
+    const [uploadingAnswers, setUploadingAnswers] = useState({});
 
     // Form states
     const [examId, setExamId] = useState('');
@@ -232,6 +234,9 @@ function AdminExamEditor() {
             return null;
         }
 
+        if (type === 'question') setUploadingQuestion(true);
+        else if (type === 'answer' && sectionNum) setUploadingAnswers(prev => ({ ...prev, [sectionNum]: true }));
+
         try {
             const { publicUrl, error } = await uploadExamPdf(file, examId);
             if (error) throw error;
@@ -256,6 +261,9 @@ function AdminExamEditor() {
             console.error("Immediate upload failed:", err);
             alert('アップロードに失敗しました: ' + err.message);
             return null;
+        } finally {
+            if (type === 'question') setUploadingQuestion(false);
+            else if (type === 'answer' && sectionNum) setUploadingAnswers(prev => ({ ...prev, [sectionNum]: false }));
         }
     };
 
@@ -920,6 +928,27 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                                     }}
                                     className="flex-1 text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-navy-blue file:text-white hover:file:bg-navy-light cursor-pointer"
                                 />
+                                {uploadingQuestion && (
+                                    <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100 animate-pulse flex items-center gap-2">
+                                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        アップロード中...
+                                    </span>
+                                )}
+                                {!uploadingQuestion && questionFiles[0] && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            const url = URL.createObjectURL(questionFiles[0]);
+                                            window.open(url, '_blank');
+                                        }}
+                                        className="text-[10px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-full border border-indigo-100 flex items-center gap-1 shadow-sm transition-colors"
+                                    >
+                                        👀 選択中のファイルを確認
+                                    </button>
+                                )}
                                 {examData?.pdf_path && (
                                     <a
                                         href={examData.pdf_path}
@@ -927,7 +956,7 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                                         rel="noopener noreferrer"
                                         className="text-[10px] font-black text-navy-blue bg-white hover:bg-gray-50 px-3 py-1.5 rounded-full border border-navy-blue/20 flex items-center gap-1 shadow-sm transition-colors"
                                     >
-                                        📄 ファイルを表示
+                                        📄 保存済みファイルを表示
                                     </a>
                                 )}
                             </div>
@@ -981,7 +1010,11 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                                                         <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">
                                                             解答/解説ファイル (第{num}問のみ)
                                                         </label>
-                                                        {sectionInStructure?.answer_pdf_path ? (
+                                                        {uploadingAnswers[num] ? (
+                                                            <span className="text-[10px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 animate-pulse flex items-center gap-1">
+                                                                アップロード中...
+                                                            </span>
+                                                        ) : sectionInStructure?.answer_pdf_path ? (
                                                             <a
                                                                 href={sectionInStructure.answer_pdf_path}
                                                                 target="_blank"
@@ -991,9 +1024,16 @@ CSVファイルをそのまま返してください（他の列は変更しな�
                                                                 📄 解答を表示
                                                             </a>
                                                         ) : answerFilesBySection[num]?.length > 0 ? (
-                                                            <span className="text-[10px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 animate-pulse">
-                                                                アップロード準備完了
-                                                            </span>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.preventDefault();
+                                                                    const url = URL.createObjectURL(answerFilesBySection[num][0]);
+                                                                    window.open(url, '_blank');
+                                                                }}
+                                                                className="text-[10px] font-black text-indigo-400 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 shadow-sm transition-colors"
+                                                            >
+                                                                👀 選択中を確認
+                                                            </button>
                                                         ) : null}
                                                     </div>
                                                     <input
