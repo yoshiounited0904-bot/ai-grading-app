@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
 import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis } from '../services/adminGeminiService';
 import { getUniversities } from '../data/examRegistry';
@@ -8,6 +8,8 @@ function AdminExamEditor() {
     const { id } = useParams();
     const navigate = useNavigate();
     const isNew = id === 'new';
+
+    const [universitiesData, setUniversitiesData] = useState([]);
 
     const [loading, setLoading] = useState(!isNew);
     const [generating, setGenerating] = useState(false);
@@ -47,7 +49,11 @@ function AdminExamEditor() {
     } : null);
 
 
-    const [universitiesData, setUniversitiesData] = useState([]);
+    const getGeminiApiKey = () => {
+        return import.meta.env.VITE_GEMINI_API_KEY_V2 ||
+            import.meta.env.VITE_GEMINI_API_KEY ||
+            window._GEMINI_API_KEY;
+    };
 
     useEffect(() => {
         getUniversities().then(data => setUniversitiesData(data || []));
@@ -132,10 +138,13 @@ function AdminExamEditor() {
 
         setGenerating(true);
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            // Use a more robust fallback for API key retrieval
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 ||
+                import.meta.env.VITE_GEMINI_API_KEY ||
+                window._GEMINI_API_KEY;
 
             if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-                alert('【エラー】Gemini APIキーが設定されていません。.env.localファイルに VITE_GEMINI_API_KEY が正しく設定されているか確認してください。設定後は、必ず開発サーバーを一度停止（Ctrl+C）してから再度起動（npm run dev）して環境変数を読み込ませてください。');
+                alert('【エラー】Gemini APIキーが見つかりません。.env.local設定またはVercelの環境変数を確認してください。');
                 setGenerating(false);
                 return;
             }
@@ -172,6 +181,7 @@ function AdminExamEditor() {
             }));
             alert('マスターデータの生成が完了しました！内容を確認・編集して保存してください。');
         } catch (error) {
+            console.error("AI Generation failed:", error);
             alert('生成中にエラーが発生しました。\n' + error.message);
         } finally {
             setGenerating(false);
@@ -394,7 +404,7 @@ function AdminExamEditor() {
         const oldExplanation = q.explanation;
         handleStructureChange(sIdx, qIdx, 'explanation', '🔄 AI生成中...');
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            const apiKey = getGeminiApiKey();
             const newExplanation = await regenerateQuestionExplanation(
                 apiKey,
                 q,
@@ -413,7 +423,7 @@ function AdminExamEditor() {
 
         setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: true }));
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            const apiKey = getGeminiApiKey();
             const newAnalysis = await generateSectionDetailedAnalysis(
                 apiKey,
                 subjectEn,
@@ -442,7 +452,7 @@ function AdminExamEditor() {
 
         setGeneratingDetailed(true);
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            const apiKey = getGeminiApiKey();
 
             if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
                 alert('【エラー】Gemini APIキーが設定されていません。');
@@ -476,7 +486,7 @@ function AdminExamEditor() {
 
         setRegeneratingPoints(true);
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY;
+            const apiKey = getGeminiApiKey();
 
             if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
                 alert('【エラー】Gemini APIキーが設定されていません。');
@@ -660,613 +670,548 @@ function AdminExamEditor() {
     if (loading) return <div className="p-8 text-center text-gray-500">読み込み中...</div>;
 
     return (
-        <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 pb-48">
-            <div className="max-w-6xl mx-auto space-y-8">
-
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-                    <div className="flex items-center gap-4">
-                        <button onClick={() => navigate('/admin')} className="text-gray-500 hover:text-gray-900 bg-gray-100 rounded-full w-8 h-8 flex items-center justify-center font-bold">
-                            ←
-                        </button>
-                        <div>
-                            <h1 className="text-2xl font-serif text-navy-blue">
-                                {isNew ? '新規マスターデータ作成' : 'マスターデータ編集'}
-                            </h1>
-                            {examData && (
-                                <div className={`text-xs font-bold mt-1 ${totalAllocatedPoints !== parseInt(examData?.max_score) ? 'text-red-600' : 'text-green-600'}`}>
-                                    満点: {examData?.max_score} 点 / 現在の割当: {totalAllocatedPoints} 点
-                                </div>
-                            )}
+        <div className="min-h-screen bg-indigo-50/20 py-12 px-4 sm:px-6 lg:px-8 pb-32">
+            <div className="max-w-7xl mx-auto">
+                {/* Header Navigation Section */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
+                    <div className="flex flex-col gap-2">
+                        <Link
+                            to="/admin"
+                            className="text-navy-blue/60 hover:text-navy-blue font-black text-[10px] uppercase tracking-[0.2em] flex items-center gap-2 transition-colors mb-2"
+                        >
+                            <span className="w-5 h-5 rounded-full bg-navy-blue/5 flex items-center justify-center text-[10px] pb-0.5">←</span>
+                            ダッシュボードに戻る
+                        </Link>
+                        <h1 className="text-4xl font-black text-navy-blue leading-tight">
+                            {isNew ? '新規試験データの作成' : '試験内容の編集'}
+                            <span className="ml-3 text-xs bg-navy-blue text-white px-3 py-1 rounded-full font-mono align-middle">
+                                エディター v2.2
+                            </span>
+                        </h1>
+                        <div className="flex gap-6 mt-4 border-b border-gray-200">
+                            <span className="pb-3 px-1 border-b-2 border-navy-blue font-bold text-navy-blue text-sm">
+                                試験マスター編集
+                            </span>
+                            <Link to="/admin/banners" className="pb-3 px-1 text-gray-400 hover:text-navy-blue font-medium text-sm transition-colors">
+                                広告運用管理 (CMS)
+                            </Link>
                         </div>
                     </div>
-                    {examData && (
-                        <div className="flex gap-2 mt-4 md:mt-0">
-                            <button onClick={handleSaveAndPreview} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors disabled:opacity-50 text-sm">
-                                {saving ? '保存中...' : '保存してプレビュー'}
-                            </button>
-                            <button onClick={handleSave} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors disabled:opacity-50 text-sm">
-                                {saving ? '保存中...' : 'DBに保存'}
-                            </button>
-                        </div>
-                    )}
+
+                    <div className="flex flex-wrap gap-3">
+                        {examData && (
+                            <>
+                                <button onClick={handleSaveAndPreview} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50 text-sm flex items-center gap-2">
+                                    {saving ? '保存中...' : '保存してプレビュー'}
+                                </button>
+                                <button onClick={handleSave} disabled={saving} className="bg-white hover:bg-gray-50 text-navy-blue font-bold py-3 px-6 rounded-xl shadow-sm border border-navy-blue/10 transition-all active:scale-95 disabled:opacity-50 text-sm">
+                                    {saving ? '保存中...' : 'DBに保存のみ'}
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
 
 
 
-                {/* Explanation Generation Panel */}
-                {examData && (
-                    <div className="space-y-6 mb-8 mt-6">
-                        {/* CSV Import/Export Panel (Fallback) */}
-                        <details className="bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-sm group">
-                            <summary className="text-sm font-bold text-gray-700 cursor-pointer select-none flex items-center gap-2 list-none">
-                                <span className="group-open:rotate-90 transition-transform">▶</span>
-                                <span className="text-xl">🛠️</span> 外部AI（ChatGPT等）を使って解説を作る場合（CSVファイル）
-                            </summary>
-                            <div className="mt-4 border-t pt-4">
-                                <div className="text-xs text-gray-600 mb-4 space-y-4">
-                                    <div>
-                                        <p className="font-semibold mb-1">【使い方】</p>
-                                        <ol className="list-decimal list-inside space-y-1 ml-1">
-                                            <li>下の「CSVをエクスポート」でファイルをダウンロード</li>
-                                            <li>ChatGPT等にPDFとCSVをアップロードし、以下のプロンプトを投げる</li>
-                                            <li>AIが返したCSVを下の「解説入りCSVをインポート」からアップロード</li>
-                                            <li>最後に必ず「保存」ボタンをクリック</li>
-                                        </ol>
+                {/* Main Content Area */}
+                <div className="grid grid-cols-1 gap-10">
+                    {/* Explanation Generation Panel */}
+                    {examData && (
+                        <div className="space-y-6">
+                            {/* CSV Import/Export Panel (Fallback) */}
+                            <details className="bg-white/50 backdrop-blur-sm border border-white rounded-3xl p-6 shadow-sm group transition-all">
+                                <summary className="text-sm font-black text-navy-blue/60 cursor-pointer select-none flex items-center gap-3 list-none">
+                                    <span className="group-open:rotate-90 transition-transform bg-navy-blue/5 w-6 h-6 rounded-full flex items-center justify-center text-[10px]">▶</span>
+                                    <span className="text-xl">🛠️</span> 外部AI（ChatGPT等）を使って解説を作る場合（CSV連携）
+                                </summary>
+                                <div className="mt-6 pt-6 border-t border-navy-blue/5 space-y-6">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                        <div className="text-xs text-gray-500 space-y-4">
+                                            <p className="font-black text-navy-blue uppercase tracking-widest text-[10px]">Workflow</p>
+                                            <ol className="space-y-3">
+                                                <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">1</span> 「CSVをエクスポート」で構造データを取得</li>
+                                                <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">2</span> AIにPDFとCSVを渡し、右のプロンプトで解説生成を依頼</li>
+                                                <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">3</span> AIが返したCSVを「インポート」して保存</li>
+                                            </ol>
+                                            <div className="flex gap-3 pt-2">
+                                                <button onClick={handleCsvExport} className="px-5 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-lg shadow-navy-blue/20 hover:bg-navy-light transition-all">
+                                                    📤 CSVをエクスポート
+                                                </button>
+                                                <label className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-lg shadow-green-200 hover:bg-green-700 transition-all cursor-pointer">
+                                                    📥 解説入りCSVをインポート
+                                                    <input type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div className="bg-navy-blue/5 p-5 rounded-2xl border border-navy-blue/10 relative group/prompt">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.preventDefault();
+                                                    const promptText = `添付した2つのファイルを使ってください。\n・PDFファイル：大学入試の問題と解答\n・CSVファイル：各小問の構造データ\n\nCSVの「explanation」列を、以下の条件で埋めてください：\n1. 2〜3文で簡潔に書くこと\n2. 本文の根拠を1文で明示すること\n3. 選択問題は誤答の理由も1文明示すること\n4. 日本語で書き、装飾記号は使わないこと\n\nCSVファイルを修正せず、そのままの形式で返してください。`;
+                                                    navigator.clipboard.writeText(promptText);
+                                                    alert('プロンプトをコピーしました！');
+                                                }}
+                                                className="absolute top-4 right-4 px-3 py-1.5 bg-white text-navy-blue rounded-lg text-[10px] font-black shadow-sm opacity-0 group-hover/prompt:opacity-100 transition-all hover:bg-navy-blue hover:text-white"
+                                            >
+                                                📋 プロンプトをコピー
+                                            </button>
+                                            <p className="font-black text-navy-blue/40 text-[10px] uppercase tracking-widest mb-3">AIコピペ用プロンプト</p>
+                                            <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80">
+                                                添付した2つのファイルを使ってください。... (PDFとCSVを読み込ませて解説を生成させる指示)
+                                            </pre>
+                                        </div>
                                     </div>
-                                    <div className="bg-white p-3 rounded-lg border border-gray-200 relative">
+                                </div>
+                            </details>
+                        </div>
+                    )}
+
+                    {/* Basic Info Panel */}
+                    <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
+                        <div className="flex items-center justify-between mb-8">
+                            <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
+                                <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">A</span>
+                                基本情報の設定
+                            </h2>
+                            <div className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-black border border-indigo-100">
+                                ID: {examId || '(未生成)'}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">大学名</label>
+                                <input type="text" list="uni-list" value={university} onChange={handleUniversityChange} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-bold" placeholder="例: 明治大学" />
+                                <datalist id="uni-list">
+                                    {universitiesData.map(u => <option key={u.id} value={u.name} />)}
+                                </datalist>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">学部名</label>
+                                <input type="text" list="fac-list" value={faculty} onChange={handleFacultyChange} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-bold" placeholder="例: 法学部" />
+                                <datalist id="fac-list">
+                                    {universitiesData.find(u => u.name === university)?.faculties.map(f => <option key={f.id} value={f.name} />)}
+                                </datalist>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">年度</label>
+                                <input type="number" value={year} onChange={e => setYear(e.target.value)} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-bold" />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">表示用科目名</label>
+                                <input type="text" value={subject} onChange={e => setSubject(e.target.value)} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-bold" placeholder="例: 英語" />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">科目ID（内部用）</label>
+                                <select value={subjectEn} onChange={e => setSubjectEn(e.target.value)} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-black appearance-none">
+                                    <option value="english">英語 (english)</option>
+                                    <option value="social">社会 (social)</option>
+                                    <option value="math">数学 (math)</option>
+                                    <option value="japanese">国語 (japanese)</option>
+                                    <option value="science">理科 (science)</option>
+                                </select>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">満点（合計）</label>
+                                <input
+                                    type="number"
+                                    value={examData?.max_score || 100}
+                                    onChange={e => {
+                                        const newMax = parseInt(e.target.value) || 100;
+                                        setExamData(prev => ({
+                                            ...prev,
+                                            max_score: newMax,
+                                            passing_lines: {
+                                                A: Math.round(newMax * 0.8),
+                                                B: Math.round(newMax * 0.7),
+                                                C: Math.round(newMax * 0.6),
+                                                D: Math.round(newMax * 0.4)
+                                            }
+                                        }));
+                                    }}
+                                    className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-black text-indigo-600"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="mt-10 pt-10 border-t border-gray-50 space-y-6">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-black text-navy-blue tracking-tight">合格判定ボーダーライン設定</h3>
+                                <button
+                                    onClick={() => {
+                                        const max = examData?.max_score || 100;
+                                        setExamData(prev => ({
+                                            ...prev,
+                                            passing_lines: {
+                                                A: Math.round(max * 0.8), B: Math.round(max * 0.7), C: Math.round(max * 0.6), D: Math.round(max * 0.4)
+                                            }
+                                        }));
+                                    }}
+                                    className="text-[9px] font-black bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white px-3 py-1.5 rounded-lg border border-indigo-100 transition-all uppercase tracking-widest"
+                                >
+                                    満点から自動計算
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                                {['A', 'B', 'C', 'D'].map(grade => (
+                                    <div key={grade} className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+                                        <label className="block text-[10px] font-black text-gray-400 mb-2">{grade} 判定 (以上)</label>
+                                        <input
+                                            type="number"
+                                            value={examData?.passing_lines?.[grade] ?? ''}
+                                            onChange={e => setExamData(prev => ({
+                                                ...prev,
+                                                passing_lines: {
+                                                    ...(prev?.passing_lines || { A: 80, B: 70, C: 60, D: 40 }),
+                                                    [grade]: parseInt(e.target.value) || 0
+                                                }
+                                            }))}
+                                            className="w-full bg-transparent text-lg font-black text-navy-blue border-none p-0 focus:ring-0"
+                                            placeholder="0"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+
+                    {/* AI Generation Section */}
+                    <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-amber-100 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-full -mr-16 -mt-16 opacity-50"></div>
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 relative z-10">
+                            <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
+                                <span className="bg-accent-gold text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-amber-200">B</span>
+                                AI構造解析・自動生成
+                            </h2>
+                            <button
+                                onClick={handleAddGenerationSection}
+                                className="bg-navy-blue hover:bg-navy-light text-white font-black py-2.5 px-6 rounded-xl shadow-lg transition-all text-xs flex items-center gap-2"
+                            >
+                                <span className="text-lg leading-none">+</span> 大問を追加
+                            </button>
+                        </div>
+
+                        <div className="space-y-8 relative z-10">
+                            {/* Step 1: Main PDF */}
+                            <div className="bg-indigo-50/30 p-8 rounded-3xl border border-indigo-100">
+                                <label className="block text-[10px] font-black text-navy-blue/40 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 bg-navy-blue rounded-full"></span>
+                                    Step 1: 全体PDFアップロード
+                                </label>
+                                <div className="flex flex-col md:flex-row items-center gap-4 bg-white p-5 rounded-2xl border-2 border-dashed border-indigo-200 hover:border-indigo-400 transition-all group">
+                                    <input
+                                        type="file"
+                                        accept="application/pdf,image/*"
+                                        onChange={async (e) => {
+                                            const files = Array.from(e.target.files);
+                                            setQuestionFiles(files);
+                                            if (files[0]) {
+                                                const url = await handleImmediateUpload(files[0], 'question');
+                                                if (url) setTimeout(() => handleSave(false), 500);
+                                            }
+                                        }}
+                                        className="flex-1 text-xs text-gray-500 file:mr-4 file:py-2.5 file:px-6 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:bg-navy-blue file:text-white hover:file:bg-navy-light cursor-pointer"
+                                    />
+                                    {uploadingQuestion && (
+                                        <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100 animate-pulse">
+                                            <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                            <span className="text-[10px] font-black text-indigo-500">保存中...</span>
+                                        </div>
+                                    )}
+                                    {questionFiles[0] && (
                                         <button
                                             onClick={(e) => {
                                                 e.preventDefault();
-                                                const promptText = `添付した2つのファイルを使ってください。
-・PDFファイル：大学入試の問題と解答
-・CSVファイル：各小問の構造データ（正解・配点が入っています）
-
-CSVの「explanation」列を、以下の条件で埋めてください：
-
-1. 2〜3文で簡潔に書くこと
-2. なぜその正解になるのか、本文の根拠を1文で明示すること
-3. 選択問題は、他の選択肢が間違っている理由を1文加えること
-4. アスタリスク（*）は使わない
-5. 日本語で書くこと
-
-CSVファイルをそのまま返してください（他の列は変更しないこと）。`;
-                                                navigator.clipboard.writeText(promptText);
-                                                alert('プロンプトをコピーしました！ChatGPTなどに貼り付けてご利用ください。');
+                                                window.open(URL.createObjectURL(questionFiles[0]), '_blank');
                                             }}
-                                            className="absolute top-2 right-2 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded text-[10px] font-bold transition-colors"
+                                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-[10px] font-black transition-all"
                                         >
-                                            📋 コピー
+                                            👀 選択中のファイルを確認
                                         </button>
-                                        <p className="font-semibold text-gray-700 mb-2 border-b pb-1">AI用コピープロンプト</p>
-                                        <pre className="whitespace-pre-wrap font-sans text-[11px] leading-snug">
-                                            添付した2つのファイルを使ってください。{"\n"}
-                                            ・PDFファイル：大学入試の問題と解答{"\n"}
-                                            ・CSVファイル：各小問の構造データ（正解・配点が入っています）{"\n"}
-                                            {"\n"}
-                                            CSVの「explanation」列を、以下の条件で埋めてください：{"\n"}
-                                            {"\n"}
-                                            1. 2〜3文で簡潔に書くこと{"\n"}
-                                            2. なぜその正解になるのか、本文の根拠を1文で明示すること{"\n"}
-                                            3. 選択問題は、他の選択肢が間違っている理由を1文加えること{"\n"}
-                                            4. アスタリスク（*）は使わない{"\n"}
-                                            5. 日本語で書くこと{"\n"}
-                                            {"\n"}
-                                            CSVファイルをそのまま返してください（他の列は変更しないこと）。
-                                        </pre>
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-3">
-                                    <button onClick={handleCsvExport} className="px-4 py-2 bg-gray-600 text-white rounded-lg text-xs font-medium hover:bg-gray-700 transition-colors">
-                                        📤 CSVをエクスポート
-                                    </button>
-                                    <label className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors cursor-pointer">
-                                        📥 解説入りCSVをインポート
-                                        <input type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
-                                    </label>
+                                    )}
+                                    {examData?.pdf_path && (
+                                        <a
+                                            href={examData.pdf_path}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="px-4 py-2 bg-navy-blue/5 text-navy-blue hover:bg-navy-blue/10 rounded-xl text-[10px] font-black border border-navy-blue/10 transition-all"
+                                        >
+                                            📄 保存済みファイルを表示
+                                        </a>
+                                    )}
                                 </div>
                             </div>
-                        </details>
+
+                            {/* Section Uploads */}
+                            <div className="space-y-6">
+                                {[...Array(sectionCount)].map((_, i) => {
+                                    const num = i + 1;
+                                    const sectionInStructure = examData?.structure?.[i];
+                                    return (
+                                        <div key={num} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                            <div className="bg-gray-50/50 px-8 py-4 flex justify-between items-center border-b border-gray-100/50">
+                                                <h3 className="text-xs font-black text-navy-blue flex items-center gap-3">
+                                                    <span className="bg-navy-blue text-white w-6 h-6 rounded-lg flex items-center justify-center text-[10px]">
+                                                        {num}
+                                                    </span>
+                                                    大問 {num} の解析用データ
+                                                </h3>
+                                                {sectionCount > 1 && (
+                                                    <button onClick={() => handleDeleteGenerationSection(num)} className="text-[10px] font-black text-red-300 hover:text-red-500 transition-colors">
+                                                        削除
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className="p-8 space-y-8">
+                                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                                                    {/* Q Files */}
+                                                    <div className="space-y-3">
+                                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex justify-between">
+                                                            大問 {num} の問題PDF/画像
+                                                            {questionFilesBySection[num]?.length > 0 && <span className="text-navy-blue bg-navy-blue/5 px-2 rounded">選択中</span>}
+                                                        </label>
+                                                        <div className="flex gap-2">
+                                                            <input
+                                                                type="file" multiple accept="application/pdf,image/*"
+                                                                onChange={(e) => setQuestionFilesBySection(prev => ({ ...prev, [num]: Array.from(e.target.files) }))}
+                                                                className="flex-1 text-[10px] text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-50 file:text-[10px] file:font-black file:text-gray-500 hover:file:bg-gray-100 transition-all"
+                                                            />
+                                                            {questionFilesBySection[num]?.[0] && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.preventDefault();
+                                                                        window.open(URL.createObjectURL(questionFilesBySection[num][0]), '_blank');
+                                                                    }}
+                                                                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-[9px] font-black transition-all"
+                                                                >
+                                                                    👀 プレビュー
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    {/* A Files */}
+                                                    <div className="space-y-3">
+                                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex justify-between">
+                                                            大問 {num} の解答PDF/画像
+                                                            {uploadingAnswers[num] ? <span className="text-indigo-500 animate-pulse">保存中...</span> : sectionInStructure?.answer_pdf_path ? <span className="text-green-600">保存済み</span> : null}
+                                                        </label>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <input
+                                                                type="file" multiple accept="application/pdf,image/*"
+                                                                onChange={async (e) => {
+                                                                    const files = Array.from(e.target.files);
+                                                                    setAnswerFilesBySection(prev => ({ ...prev, [num]: files }));
+                                                                    if (files[0]) {
+                                                                        const url = await handleImmediateUpload(files[0], 'answer', num);
+                                                                        if (url) setTimeout(() => handleSave(false), 500);
+                                                                    }
+                                                                }}
+                                                                className="flex-1 text-[10px] text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gray-50 file:text-[10px] file:font-black file:text-gray-500 hover:file:bg-gray-100 transition-all"
+                                                            />
+                                                            {answerFilesBySection[num]?.[0] && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.preventDefault();
+                                                                        window.open(URL.createObjectURL(answerFilesBySection[num][0]), '_blank');
+                                                                    }}
+                                                                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-[9px] font-black transition-all"
+                                                                >
+                                                                    👀 プレビュー
+                                                                </button>
+                                                            )}
+                                                            {sectionInStructure?.answer_pdf_path && (
+                                                                <a href={sectionInStructure.answer_pdf_path} target="_blank" rel="noopener noreferrer" className="px-3 py-2 bg-green-50 text-green-600 rounded-lg text-[9px] font-black border border-green-100">
+                                                                    📄 保存済み
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="pt-6 border-t border-gray-50">
+                                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">AI解析用の追加指示（オプション）</label>
+                                                    <textarea
+                                                        value={sectionInstructionsBySection[num] || ''}
+                                                        onChange={e => setSectionInstructionsBySection(prev => ({ ...prev, [num]: e.target.value }))}
+                                                        placeholder="例: この大問は会話文なので、状況設定も含めて解説してください。"
+                                                        className="w-full p-4 rounded-2xl border border-gray-100 text-xs bg-gray-50/30 focus:bg-white focus:border-indigo-100 transition-all outline-none min-h-[60px]"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="pt-10 flex flex-col items-center">
+                                <button
+                                    onClick={handleGenerate}
+                                    disabled={generating}
+                                    className="group relative bg-navy-blue hover:bg-navy-light text-white font-black py-6 px-16 rounded-[2rem] shadow-2xl shadow-navy-blue/30 transition-all active:scale-[0.98] disabled:opacity-50 text-xl flex items-center gap-4 overflow-hidden"
+                                >
+                                    {generating ? (
+                                        <>
+                                            <div className="w-5 h-5 border-3 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                            <span>AI生成中...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span>AIでマスター構成を生成</span>
+                                            <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+                                        </>
+                                    )}
+                                </button>
+                                <p className="mt-6 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-accent-gold rounded-full animate-pulse"></span>
+                                    Gemini 2.0 Flashによる高速生成
+                                </p>
+                            </div>
+                        </div>
                     </div>
-                )}
 
-                {/* 基本情報フォーム */}
-                <div className="bg-white rounded-xl shadow p-6">
-                    <h2 className="text-xl font-bold border-b pb-2 mb-4">基本情報</h2>
+                    {/* Question Editor Section */}
+                    <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100" id="editor-main">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+                            <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
+                                <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">C</span>
+                                設問内容・配点の編集
+                            </h2>
+                            <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
+                                <div className="px-4 py-2">
+                                    <span className="text-[10px] font-black text-gray-400 uppercase block leading-none mb-1">合計配点</span>
+                                    <span className={`text-sm font-black ${totalAllocatedPoints !== (parseInt(examData?.max_score) || 100) ? 'text-red-500' : 'text-navy-blue'}`}>
+                                        {totalAllocatedPoints} / {examData?.max_score || 100} 点
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={handleRegeneratePoints}
+                                    disabled={regeneratingPoints}
+                                    className="bg-navy-blue text-white hover:bg-navy-light font-black py-3 px-6 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50"
+                                >
+                                    {regeneratingPoints ? '再計算中...' : '🤖 配点自動調整'}
+                                </button>
+                            </div>
+                        </div>
 
-                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6 rounded shadow-sm text-sm text-blue-800">
-                        <p><strong>💡 ヒント:</strong> 大学名や学部名を入力すると、過去の登録データから自動的にIDが紐付けられます。</p>
-                        <p>ID（URLの一部）は、選択された情報に基づいて裏側で自動生成されます。</p>
-                        {isNew && <p className="mt-1 font-mono text-xs text-blue-600">現在の生成ID: {examId}</p>}
+                        <div className="space-y-12">
+                            {examData?.structure?.map((section, sIdx) => (
+                                <div key={sIdx} className="bg-gray-50/30 rounded-[2rem] border border-gray-100 p-8 hover:bg-gray-50/50 transition-all">
+                                    <div className="flex items-center justify-between mb-8">
+                                        <div className="flex flex-1 items-center gap-5">
+                                            <div className="bg-navy-blue text-white w-12 h-12 rounded-2xl flex items-center justify-center font-black shadow-xl shadow-navy-blue/10 text-lg">
+                                                {section.id}
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={section.label}
+                                                onChange={e => handleStructureChange(sIdx, null, 'label', e.target.value)}
+                                                className="flex-1 bg-transparent text-xl font-black text-navy-blue border-b border-transparent focus:border-navy-blue/10 outline-none pb-1 transition-all"
+                                                placeholder="大問ラベル"
+                                            />
+                                        </div>
+                                        <button onClick={() => handleDeleteSection(sIdx)} className="text-[10px] font-black text-red-200 hover:text-red-500 transition-colors">大問を削除</button>
+                                    </div>
+
+                                    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="bg-gray-50/50 border-b border-gray-50">
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ID</th>
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ラベル</th>
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">形式</th>
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">配点</th>
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">正解</th>
+                                                    <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">解説・採点基準</th>
+                                                    <th className="px-6 py-4 w-10"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-50">
+                                                {section.questions.map((q, qIdx) => (
+                                                    <tr key={qIdx} className="hover:bg-indigo-50/20 transition-colors">
+                                                        <td className="px-6 py-4"><input type="text" value={q.id} onChange={e => handleStructureChange(sIdx, qIdx, 'id', e.target.value)} className="w-12 p-3 rounded-xl border border-gray-100 text-xs font-black bg-gray-50/30" /></td>
+                                                        <td className="px-6 py-4"><input type="text" value={q.label} onChange={e => handleStructureChange(sIdx, qIdx, 'label', e.target.value)} className="w-16 p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
+                                                        <td className="px-6 py-4">
+                                                            <select value={q.type || 'text'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="p-3 rounded-xl border border-gray-100 text-xs font-bold bg-white outline-none focus:border-navy-blue/30">
+                                                                <option value="text">記述</option>
+                                                                <option value="selection">選択</option>
+                                                                <option value="unordered">順不同</option>
+                                                            </select>
+                                                        </td>
+                                                        <td className="px-6 py-4"><input type="number" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value) || 0)} className="w-14 p-3 rounded-xl border border-gray-100 text-xs font-black text-indigo-600 bg-indigo-50/30" /></td>
+                                                        <td className="px-6 py-4"><input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[120px] p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
+                                                        <td className="px-6 py-4 space-y-4">
+                                                            <div className="space-y-2">
+                                                                <div className="flex justify-between">
+                                                                    <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">解説</span>
+                                                                    <button onClick={() => handleRegenerateExplanation(sIdx, qIdx, q)} className="text-[9px] font-black text-indigo-400 hover:text-indigo-600 transition-colors">AIで再生成</button>
+                                                                </div>
+                                                                <textarea value={q.explanation || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'explanation', e.target.value)} className="w-full p-4 rounded-xl border border-gray-100 text-[11px] leading-relaxed min-h-[60px] focus:bg-gray-50/30 outline-none transition-all" />
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                                <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">採点基準・指示</span>
+                                                                <textarea value={q.gradingInstruction || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'gradingInstruction', e.target.value)} placeholder="例: 部分点5点とする基準..." className="w-full p-4 rounded-xl border border-navy-blue/5 text-[10px] leading-relaxed min-h-[40px] bg-navy-blue/5 outline-none" />
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-center"><button onClick={() => handleDeleteQuestion(sIdx, qIdx)} className="text-gray-200 hover:text-red-400 transition-colors text-lg">×</button></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div className="flex flex-col lg:flex-row gap-8 items-start">
+                                        <div className="flex-1 w-full">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <label className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em]">大問全体の分析 (AI用)</label>
+                                                <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[9px] font-black text-purple-400 hover:text-purple-600 disabled:opacity-50 transition-all">
+                                                    {generatingSectionAnalysis[sIdx] ? '再生成中...' : 'AIで再分析'}
+                                                </button>
+                                            </div>
+                                            <textarea value={section.sectionAnalysis || ''} onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)} className="w-full p-5 rounded-2xl border border-gray-100 text-xs bg-white focus:bg-gray-50/30 outline-none transition-all min-h-[100px]" placeholder="この大問全体の読解ポイント..." />
+                                        </div>
+                                        <button onClick={() => handleAddQuestion(sIdx)} className="w-full lg:w-auto px-8 py-4 bg-white hover:bg-navy-blue hover:text-white text-navy-blue font-black rounded-2xl border-2 border-navy-blue/10 transition-all text-xs whitespace-nowrap">＋ 小問を追加</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="mt-12">
+                            <button onClick={handleAddSection} className="w-full py-8 bg-gray-50/50 hover:bg-gray-50 text-gray-400 hover:text-navy-blue font-black rounded-[2rem] border-2 border-dashed border-gray-200 hover:border-navy-blue/30 transition-all text-sm tracking-[0.3em] uppercase">
+                                ＋ 大問を追加
+                            </button>
+                        </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">大学名</label>
-                            <input type="text" list="uni-list" value={university} onChange={handleUniversityChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" placeholder="例: 明治大学" />
-                            <datalist id="uni-list">
-                                {universitiesData.map(u => <option key={u.id} value={u.name} />)}
-                            </datalist>
+                    {/* Full Analysis Section */}
+                    <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
+                        <div className="flex justify-between items-center mb-10">
+                            <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
+                                <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">D</span>
+                                合計詳細解説（マークダウン）
+                            </h2>
+                            <button
+                                onClick={handleRegenerateDetailedAnalysis}
+                                disabled={generatingDetailed}
+                                className="bg-navy-blue hover:bg-navy-light text-white font-black py-4 px-10 rounded-2xl shadow-xl shadow-navy-blue/20 transition-all active:scale-[0.98] disabled:opacity-50 text-xs flex items-center gap-2"
+                            >
+                                {generatingDetailed ? '生成中...' : '🤖 全体解説を一括生成'}
+                            </button>
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">学部名</label>
-                            <input type="text" list="fac-list" value={faculty} onChange={handleFacultyChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" placeholder="例: 法学部" />
-                            <datalist id="fac-list">
-                                {universitiesData.find(u => u.name === university)?.faculties.map(f => <option key={f.id} value={f.name} />)}
-                            </datalist>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">年度</label>
-                            <input type="number" value={year} onChange={e => setYear(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">科目名 (表示用)</label>
-                            <input type="text" value={subject} onChange={e => setSubject(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border" />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">科目ID (english, social...)</label>
-                            <select value={subjectEn} onChange={e => setSubjectEn(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border">
-                                <option value="english">英語 (english)</option>
-                                <option value="social">社会 (social)</option>
-                                <option value="math">数学 (math)</option>
-                                <option value="japanese">国語 (japanese)</option>
-                                <option value="science">理科 (science)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">満点 (合計配点)</label>
-                            <input
-                                type="number"
-                                value={examData?.max_score || 100}
-                                onChange={e => {
-                                    const newMax = parseInt(e.target.value) || 100;
-                                    setExamData(prev => ({
-                                        ...prev,
-                                        max_score: newMax,
-                                        // Auto-generate temporary passing lines
-                                        passing_lines: {
-                                            A: Math.round(newMax * 0.8),
-                                            B: Math.round(newMax * 0.7),
-                                            C: Math.round(newMax * 0.6),
-                                            D: Math.round(newMax * 0.4)
-                                        }
-                                    }));
-                                }}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border"
+                        <div className="bg-navy-blue/[0.02] rounded-[2rem] p-8 border border-navy-blue/5">
+                            <textarea
+                                value={examData?.detailed_analysis}
+                                onChange={e => setExamData({ ...examData, detailed_analysis: e.target.value })}
+                                className="w-full bg-transparent font-mono text-[13px] leading-relaxed text-navy-blue/80 min-h-[800px] outline-none resize-y"
+                                placeholder="# 全体解説を入力..."
                             />
                         </div>
                     </div>
 
-                    <div className="mt-6 border-t pt-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-md font-bold text-gray-700">合格判定ライン（最低得点）</h3>
-                            <button
-                                onClick={() => {
-                                    const max = examData?.max_score || 100;
-                                    setExamData(prev => ({
-                                        ...prev,
-                                        passing_lines: {
-                                            A: Math.round(max * 0.8),
-                                            B: Math.round(max * 0.7),
-                                            C: Math.round(max * 0.6),
-                                            D: Math.round(max * 0.4)
-                                        }
-                                    }));
-                                }}
-                                className="text-[10px] bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-2 py-1 rounded border border-indigo-200 font-bold"
-                            >
-                                満点から合格ラインを一括生成
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            {['A', 'B', 'C', 'D'].map(grade => (
-                                <div key={grade}>
-                                    <label className="block text-sm font-medium text-gray-700">{grade}判定</label>
-                                    <input
-                                        type="number"
-                                        value={examData?.passing_lines?.[grade] ?? ''}
-                                        onChange={e => setExamData(prev => ({
-                                            ...prev,
-                                            passing_lines: {
-                                                ...(prev?.passing_lines || { A: 80, B: 70, C: 60, D: 40 }),
-                                                [grade]: parseInt(e.target.value) || 0
-                                            }
-                                        }))}
-                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-navy-blue focus:ring-navy-blue sm:text-sm p-2 border"
-                                        placeholder={`${grade}判定の点数`}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                        <p className="text-sm text-gray-500 mt-2">※ ここで設定した点数未満の場合、自動的に一つ下の判定になります（D判定未満はE判定）。デフォルトは8割でA判定などの割合計算です。</p>
-                    </div>
-                </div>
-
-                {/* PDF生成 (新規時または再生成時) */}
-                <div className="bg-white rounded-xl shadow p-6 border border-accent-gold mt-8">
-                    <h2 className="text-xl font-bold border-b pb-2 mb-4 text-accent-gold">AIによる自動生成</h2>
-                    <p className="text-sm text-gray-600 mb-4">問題ファイルの全体と、大問ごとの解答ファイル (PDF または 画像) をアップロードして、配点・解答・解説を自動生成します。</p>
-
-                    <div className="mb-4 flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
-                        <div>
-                            <label className="block text-sm font-bold text-gray-700">大問の設定 (現在: {sectionCount}個)</label>
-                            <p className="text-xs font-bold text-red-600 bg-red-50 p-2 rounded border border-red-200 mt-2">
-                                【ヒント】問題・解答は大問ごとに分割してアップロードすることを強く推奨します。精度が大幅に向上します。
-                                <br />
-                                便利な分割ツール: <a href="https://tools.pdf24.org/ja/split-pdf" target="_blank" rel="noopener noreferrer" className="text-blue-700 underline font-black">PDF24 ( https://tools.pdf24.org/ja/split-pdf )</a>
-                            </p>
-                        </div>
-                        <button
-                            onClick={handleAddGenerationSection}
-                            className="bg-navy-blue text-white hover:bg-opacity-90 font-bold py-1.5 px-4 rounded shadow-sm text-sm transition-colors flex items-center gap-1"
-                        >
-                            <span className="text-lg leading-none">+</span> 大問を追加
-                        </button>
-                    </div>
-
-                    <div className="flex flex-col gap-6 items-start border-t border-gray-100 pt-4">
-                        {/* Step 1: Main Question */}
-                        <div className="w-full bg-blue-50/30 p-6 rounded-2xl border border-blue-100">
-                            <label className="block text-sm font-black text-navy-blue mb-4 uppercase tracking-widest flex items-center gap-2">
-                                <span className="bg-navy-blue text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
-                                問題・解答用紙 PDF (全体・閲覧用)
-                            </label>
-                            <div className="flex flex-col md:flex-row items-center gap-4 bg-white p-4 rounded-xl border-2 border-dashed border-navy-blue/10 hover:border-navy-blue/30 transition-all">
-                                <input
-                                    type="file"
-                                    multiple
-                                    accept="application/pdf,image/*"
-                                    onChange={async (e) => {
-                                        const files = Array.from(e.target.files);
-                                        setQuestionFiles(files);
-                                        if (files[0]) {
-                                            const url = await handleImmediateUpload(files[0], 'question');
-                                            if (url) {
-                                                console.log("Auto-saving main PDF...");
-                                                setTimeout(() => handleSave(false), 500);
-                                            }
-                                        }
-                                    }}
-                                    className="flex-1 text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-black file:bg-navy-blue file:text-white hover:file:bg-navy-light cursor-pointer"
-                                />
-                                {uploadingQuestion && (
-                                    <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100 animate-pulse flex items-center gap-2">
-                                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        アップロード中...
-                                    </span>
-                                )}
-                                {!uploadingQuestion && questionFiles[0] && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.preventDefault();
-                                            const url = URL.createObjectURL(questionFiles[0]);
-                                            window.open(url, '_blank');
-                                        }}
-                                        className="text-[10px] font-black text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-full border border-indigo-100 flex items-center gap-1 shadow-sm transition-colors"
-                                    >
-                                        👀 選択中のファイルを確認
-                                    </button>
-                                )}
-                                {examData?.pdf_path && (
-                                    <a
-                                        href={examData.pdf_path}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-[10px] font-black text-navy-blue bg-white hover:bg-gray-50 px-3 py-1.5 rounded-full border border-navy-blue/20 flex items-center gap-1 shadow-sm transition-colors"
-                                    >
-                                        📄 保存済みファイルを表示
-                                    </a>
-                                )}
-                            </div>
-                            <p className="mt-2 text-[10px] text-gray-400 font-medium">※ 生徒画面のプレビューに使用されます。1ファイルに結合されたものを推奨します。</p>
-                        </div>
-
-                        {/* Step 2 & 3: Sections */}
-                        <div className="w-full space-y-8">
-                            {[...Array(sectionCount)].map((_, i) => {
-                                const num = i + 1;
-                                const sectionInStructure = examData?.structure?.[i];
-                                return (
-                                    <div key={num} className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                                        <div className="bg-indigo-50/50 px-8 py-4 flex justify-between items-center border-b border-indigo-100/50">
-                                            <h3 className="text-sm font-black text-indigo-900 flex items-center gap-2">
-                                                <span className="bg-accent-gold text-white w-6 h-6 rounded-full flex items-center justify-center text-[10px]">
-                                                    {num}
-                                                </span>
-                                                大問 {num} の解析用データ設定
-                                            </h3>
-                                            {sectionCount > 1 && (
-                                                <button onClick={() => handleDeleteGenerationSection(num)} className="text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors bg-white px-3 py-1 rounded-full border border-red-100">
-                                                    削除
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="p-8 space-y-6">
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                                {/* Questions per Section */}
-                                                <div className="space-y-4">
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                                                            問題ファイル (第{num}問のみ)
-                                                        </label>
-                                                        {questionFilesBySection[num]?.length > 0 && (
-                                                            <span className="text-[10px] font-black text-navy-blue bg-navy-blue/5 px-2 py-0.5 rounded border border-navy-blue/10">
-                                                                選択中: {questionFilesBySection[num][0].name}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <input
-                                                        type="file" multiple accept="application/pdf,image/*"
-                                                        onChange={(e) => setQuestionFilesBySection(prev => ({ ...prev, [num]: Array.from(e.target.files) }))}
-                                                        className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:bg-gray-100 file:text-gray-600 hover:file:bg-gray-200 cursor-pointer"
-                                                    />
-                                                </div>
-
-                                                {/* Answers per Section */}
-                                                <div className="space-y-4">
-                                                    <div className="flex justify-between items-center">
-                                                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                                                            解答/解説ファイル (第{num}問のみ)
-                                                        </label>
-                                                        {uploadingAnswers[num] ? (
-                                                            <span className="text-[10px] font-black text-indigo-400 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 animate-pulse flex items-center gap-1">
-                                                                アップロード中...
-                                                            </span>
-                                                        ) : sectionInStructure?.answer_pdf_path ? (
-                                                            <a
-                                                                href={sectionInStructure.answer_pdf_path}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="text-[10px] font-black text-green-600 bg-green-50 hover:bg-green-100 px-3 py-1 rounded border border-green-100 flex items-center gap-1 shadow-sm transition-colors"
-                                                            >
-                                                                📄 解答を表示
-                                                            </a>
-                                                        ) : answerFilesBySection[num]?.length > 0 ? (
-                                                            <button
-                                                                onClick={(e) => {
-                                                                    e.preventDefault();
-                                                                    const url = URL.createObjectURL(answerFilesBySection[num][0]);
-                                                                    window.open(url, '_blank');
-                                                                }}
-                                                                className="text-[10px] font-black text-indigo-400 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 shadow-sm transition-colors"
-                                                            >
-                                                                👀 選択中を確認
-                                                            </button>
-                                                        ) : null}
-                                                    </div>
-                                                    <input
-                                                        type="file" multiple accept="application/pdf,image/*"
-                                                        onChange={async (e) => {
-                                                            const files = Array.from(e.target.files);
-                                                            setAnswerFilesBySection(prev => ({ ...prev, [num]: files }));
-                                                            if (files[0]) {
-                                                                const url = await handleImmediateUpload(files[0], 'answer', num);
-                                                                if (url) {
-                                                                    console.log(`Auto-saving section ${num} answer PDF...`);
-                                                                    setTimeout(() => handleSave(false), 500);
-                                                                }
-                                                            }
-                                                        }}
-                                                        className="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:bg-gray-100 file:text-gray-600 hover:file:bg-gray-200 cursor-pointer"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            {/* Instructions per Section */}
-                                            <div className="pt-4 border-t border-gray-50">
-                                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">
-                                                    AIへの補足指示 (任意)
-                                                </label>
-                                                <textarea
-                                                    value={sectionInstructionsBySection[num] || ''}
-                                                    onChange={e => setSectionInstructionsBySection(prev => ({ ...prev, [num]: e.target.value }))}
-                                                    placeholder="例: この大問は会話文なので、状況設定も含めて解説してください。"
-                                                    className="w-full p-4 border border-gray-100 rounded-2xl text-xs bg-gray-50/50 focus:bg-white focus:border-indigo-200 transition-all outline-none"
-                                                    rows="2"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    <div className="mt-12 flex flex-col items-center justify-center border-t border-accent-gold/20 pt-10">
-                        <button
-                            onClick={handleGenerate}
-                            disabled={generating}
-                            className="group relative bg-accent-gold hover:bg-yellow-600 text-white font-black py-5 px-12 rounded-2xl shadow-2xl shadow-accent-gold/30 transition-all disabled:opacity-50 text-xl flex items-center gap-4 overflow-hidden"
-                        >
-                            <span className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></span>
-                            {generating ? (
-                                <>
-                                    <svg className="animate-spin h-6 w-6 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    <span>AI解析・構造構築中...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <span>マスター構成案を自動生成</span>
-                                    <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
-                                </>
-                            )}
-                        </button>
-                        <p className="text-[11px] text-gray-400 mt-6 font-bold flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 bg-accent-gold rounded-full animate-pulse"></span>
-                            AIが画像から配点・正解・大問構造を読み取ります
-                        </p>
-                    </div>
-                </div>
-
-                {/* 設問エディタ */}
-                <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 mt-8">
-                    <div className="bg-green-50/50 border-l-4 border-green-500 p-6 mb-8 rounded-2xl">
-                        <h3 className="text-sm font-black text-green-900 flex items-center gap-2 mb-2">
-                            <span className="text-xl">✅</span> PDFの自動保存機能が有効です
-                        </h3>
-                        <p className="text-xs text-green-700 font-medium leading-relaxed">
-                            ファイルを選択すると即座にクラウドへ保存され、このエディタで詳細を編集できるようになります。
-                        </p>
-                    </div>
-
-                    <div className="mb-8 pb-4 flex items-center justify-between border-b border-gray-100">
-                        <div className="flex flex-col">
-                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">SCORE STATUS</span>
-                            <span className={`text-sm font-black ${totalAllocatedPoints !== parseInt(examData?.max_score) ? 'text-red-500' : 'text-navy-blue'}`}>
-                                満点: {examData?.max_score} 点 / 現在の計: {totalAllocatedPoints} 点
-                            </span>
-                        </div>
-                        <button
-                            onClick={handleRegeneratePoints}
-                            disabled={regeneratingPoints}
-                            className="bg-navy-blue text-white hover:bg-navy-light font-black py-2 px-6 rounded-xl shadow-lg shadow-navy-blue/10 text-xs transition-all disabled:opacity-50 flex items-center gap-2"
-                        >
-                            {regeneratingPoints ? '配点再生成中...' : '🤖 配点をAIで微調整'}
-                        </button>
-                    </div>
-
-                    <div className="space-y-12">
-                        {examData?.structure?.map((section, sIdx) => (
-                            <div key={sIdx} className="bg-gray-50/50 rounded-3xl border border-gray-200/50 p-8">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex flex-1 items-center gap-4">
-                                        <div className="bg-navy-blue text-white w-10 h-10 rounded-2xl flex items-center justify-center font-black shadow-lg shadow-navy-blue/20">
-                                            {section.id}
-                                        </div>
-                                        <input
-                                            type="text"
-                                            value={section.label}
-                                            onChange={e => handleStructureChange(sIdx, null, 'label', e.target.value)}
-                                            className="flex-1 bg-transparent text-lg font-black text-navy-blue border-b-2 border-transparent hover:border-gray-300 focus:border-navy-blue outline-none py-1 transition-all"
-                                            placeholder="大問ラベル"
-                                        />
-                                    </div>
-                                    <button
-                                        onClick={() => handleDeleteSection(sIdx)}
-                                        className="text-[10px] font-black text-gray-400 hover:text-red-500 uppercase tracking-widest transition-colors"
-                                    >
-                                        大問を削除
-                                    </button>
-                                </div>
-
-                                <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white">
-                                    <table className="min-w-full text-sm">
-                                        <thead className="bg-gray-50 border-b border-gray-200">
-                                            <tr>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">ID</th>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">LABEL</th>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">TYPE</th>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">PTS</th>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">ANSWER</th>
-                                                <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">EXPLANATION</th>
-                                                <th className="px-4 py-4 text-center w-12 text-gray-400"></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
-                                            {section.questions.map((q, qIdx) => (
-                                                <tr key={qIdx} className="hover:bg-blue-50/30 transition-colors">
-                                                    <td className="px-4 py-3">
-                                                        <input type="text" value={q.id} onChange={e => handleStructureChange(sIdx, qIdx, 'id', e.target.value)} className="w-12 p-2 rounded-lg border border-gray-100 text-xs font-bold" />
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <input type="text" value={q.label} onChange={e => handleStructureChange(sIdx, qIdx, 'label', e.target.value)} className="w-16 p-2 rounded-lg border border-gray-100 text-xs font-bold" />
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <select value={q.type || 'text'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="p-2 rounded-lg border border-gray-100 text-xs font-bold bg-white">
-                                                            <option value="text">記述</option>
-                                                            <option value="selection">選択</option>
-                                                            <option value="unordered">順不同</option>
-                                                        </select>
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <input type="number" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value))} className="w-12 p-2 rounded-lg border border-gray-100 text-xs font-black text-navy-blue" />
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[100px] p-2 rounded-lg border border-gray-100 text-xs font-bold" />
-                                                    </td>
-                                                    <td className="px-4 py-3">
-                                                        <div className="space-y-2">
-                                                            <textarea value={q.explanation || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'explanation', e.target.value)} className="w-full p-2 rounded-lg border border-gray-100 text-[11px] h-12 leading-relaxed" />
-                                                            <button onClick={() => handleRegenerateExplanation(sIdx, qIdx, q)} className="text-[9px] font-black text-blue-500 hover:text-blue-700 uppercase tracking-tighter">AI解説を再生成</button>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-center">
-                                                        <button onClick={() => handleDeleteQuestion(sIdx, qIdx)} className="text-gray-300 hover:text-red-500 transition-colors">×</button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                <div className="mt-6 flex justify-between items-start">
-                                    <div className="flex-1 mr-8">
-                                        <div className="flex items-center justify-between mb-3">
-                                            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Section Insight (AI Generated)</label>
-                                            <button
-                                                onClick={() => handleRegenerateSectionAnalysis(sIdx, section)}
-                                                disabled={generatingSectionAnalysis[sIdx]}
-                                                className="text-[9px] font-black text-purple-600 hover:text-purple-800 uppercase tracking-tighter disabled:opacity-50"
-                                            >
-                                                {generatingSectionAnalysis[sIdx] ? '🔄 生成中...' : '大問解析を再生成'}
-                                            </button>
-                                        </div>
-                                        <textarea
-                                            value={section.sectionAnalysis || ''}
-                                            onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)}
-                                            className="w-full p-4 rounded-2xl border border-gray-200 text-xs h-24 bg-white"
-                                            placeholder="大問全体の読解プロセス..."
-                                        />
-                                    </div>
-                                    <button
-                                        onClick={() => handleAddQuestion(sIdx)}
-                                        className="bg-white text-navy-blue hover:bg-navy-blue hover:text-white font-black py-3 px-6 rounded-xl border-2 border-navy-blue/10 transition-all text-xs"
-                                    >
-                                        ＋ 小問追加
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="mt-12 flex justify-center">
-                        <button
-                            onClick={handleAddSection}
-                            className="w-full bg-white text-navy-blue hover:bg-navy-blue/5 font-black py-6 rounded-3xl border-2 border-dashed border-gray-200 transition-all text-sm uppercase tracking-widest"
-                        >
-                            ＋ 大問を新規追加
-                        </button>
-                    </div>
-                </div>
-
-                {/* 詳細解説 */}
-                <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-8 mt-8">
-                    <div className="flex justify-between items-center mb-8">
-                        <div className="flex flex-col">
-                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">MARKDOWN EDITOR</span>
-                            <span className="text-xl font-black text-navy-blue">全体詳細解説</span>
-                        </div>
-                        <button
-                            onClick={handleRegenerateDetailedAnalysis}
-                            disabled={generatingDetailed}
-                            className="bg-navy-blue text-white hover:bg-navy-light font-black py-3 px-8 rounded-2xl shadow-xl shadow-navy-blue/20 transition-all disabled:opacity-50 text-sm flex items-center gap-2"
-                        >
-                            {generatingDetailed ? '生成中...' : '🤖 AIで解説全文を生成'}
-                        </button>
-                    </div>
-                    <textarea
-                        value={examData?.detailed_analysis}
-                        onChange={e => setExamData({ ...examData, detailed_analysis: e.target.value })}
-                        className="w-full p-8 border border-gray-100 rounded-3xl font-mono text-sm leading-relaxed bg-gray-50/30 focus:bg-white transition-all min-h-[800px] outline-none"
-                    />
                 </div>
             </div>
-        </div >
+        </div>
     );
 }
 
