@@ -61,6 +61,16 @@ function AdminDashboard() {
         }
     };
 
+    const handleToggleCompleted = async (examId, currentStatus) => {
+        const { error } = await updateAdminFields(examId, { is_completed: !currentStatus });
+        if (error) {
+            console.error('Error updating completion status:', error);
+            alert('更新に失敗しました。「is_completed」(boolean) カラムをデータベース(Supabase)の exams テーブルに追加してください。');
+        } else {
+            setExams(prev => prev.map(e => e.id === examId ? { ...e, is_completed: !currentStatus } : e));
+        }
+    };
+
     const handlePreview = (rawExam) => {
         const formattedExam = {
             id: rawExam.id,
@@ -149,6 +159,7 @@ function AdminDashboard() {
                                     <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
                                         <th className="px-6 py-2 text-left">大学・学部 / ID</th>
                                         <th className="px-6 py-2 text-left">年度・科目</th>
+                                        <th className="px-6 py-2 text-center whitespace-nowrap">ステータス</th>
                                         <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
                                         <th className="px-6 py-2 text-left">共有メモ</th>
                                         <th className="px-6 py-2 text-right">操作</th>
@@ -156,7 +167,7 @@ function AdminDashboard() {
                                 </thead>
                                 <tbody>
                                     {exams.map((exam) => (
-                                        <tr key={exam.id} className="group hover:-translate-y-0.5 transition-all duration-300">
+                                        <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''}`}>
                                             {/* University & Faculty */}
                                             <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
                                                 <div className="flex flex-col">
@@ -179,6 +190,20 @@ function AdminDashboard() {
                                                     </div>
                                                     <span className="text-base font-bold text-gray-700 mt-1">{exam.subject}</span>
                                                 </div>
+                                            </td>
+                                            
+                                            {/* Status / Completed Mark */}
+                                            <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                                <button
+                                                    onClick={() => handleToggleCompleted(exam.id, exam.is_completed)}
+                                                    className={`px-3 py-1.5 text-[10px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 ${
+                                                        exam.is_completed 
+                                                        ? 'bg-green-50 text-green-600 border-green-200 hover:bg-green-100 hover:border-green-300' 
+                                                        : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100 hover:text-gray-500'
+                                                    }`}
+                                                >
+                                                    {exam.is_completed ? <><span className="text-[12px]">✨</span>完成</> : <><span className="text-[12px]">✏️</span>作業中</>}
+                                                </button>
                                             </td>
 
                                             {/* Unimplemented Status */}
@@ -220,7 +245,7 @@ function AdminDashboard() {
                                                         }
                                                     }}
                                                     placeholder="共有メモ..."
-                                                    className="w-full text-[10px] p-2 bg-yellow-50/20 border-b border-yellow-200/50 focus:border-navy-blue focus:bg-white transition-all resize-none h-12"
+                                                    className="w-full text-[10px] p-2 bg-yellow-50/20 border-b border-yellow-200/50 focus:border-navy-blue focus:bg-white transition-all resize-none h-12 outline-none"
                                                 />
                                             </td>
 

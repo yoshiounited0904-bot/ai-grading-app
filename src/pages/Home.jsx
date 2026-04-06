@@ -58,7 +58,7 @@ const Home = () => {
                     <br />
                     <h1 className="animate-slide-up hero-title" style={{
                         color: 'var(--color-accent-primary)',
-                        marginBottom: '1rem',
+                        marginBottom: '0.5rem',
                         fontWeight: '900',
                         letterSpacing: '0.05em',
                         fontFamily: 'var(--font-heading)',
@@ -66,20 +66,29 @@ const Home = () => {
                         display: 'inline-block',
                         paddingBottom: '0.5rem'
                     }}>
-                        AI入試採点
+                        スマサイ
                     </h1>
+                    <div className="animate-slide-up delay-100" style={{ 
+                        fontSize: '0.9rem', 
+                        color: 'var(--color-text-secondary)', 
+                        fontWeight: '700', 
+                        letterSpacing: '0.05em',
+                        marginBottom: '1.5rem' 
+                    }}>
+                        — 「スマートに採点」で、あなたの学習を加速する —
+                    </div>
                     <p className="animate-slide-up delay-100" style={{
                         color: 'var(--color-text-secondary)',
-                        fontSize: '1.1rem',
+                        fontSize: '1.05rem',
                         marginBottom: '2.5rem',
                         maxWidth: '800px',
                         marginLeft: 'auto',
                         marginRight: 'auto',
-                        lineHeight: '1.7',
+                        lineHeight: '1.8',
                         padding: '0 1rem'
                     }}>
-                        志望校の過去問をAIが即座に採点・分析。<br className="hide-on-mobile" />
-                        あなたの専属コーチとして、合格への最短ルートをサポートします。
+                        志望校の過去問をAIが数秒で正確に採点、圧倒的な時短を実現します。<br className="hide-on-mobile" />
+                        一人ひとりの弱点に寄り添う詳細なフィードバックで、合格への最短ルートをサポート。
                     </p>
 
                     <div className="animate-slide-up delay-200" style={{ display: 'flex', justifyContent: 'center', gap: '1rem', padding: '0 1rem' }}>

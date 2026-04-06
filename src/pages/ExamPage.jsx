@@ -7,7 +7,7 @@ const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
     let { exam, universityName, universityId } = location.state || {};
-    
+
     // Check localStorage if coming from Admin "Save & Preview" new tab
     if (!exam) {
         try {
@@ -36,9 +36,11 @@ const ExamPage = () => {
     const [examData, setExamData] = useState(exam || null);
 
     // Timer states
+    const examDuration = (exam?.duration_minutes || 60) * 60; // seconds
     const [timerStarted, setTimerStarted] = useState(false);
-    const [timeRemaining, setTimeRemaining] = useState(60 * 60); // 60 minutes in seconds
+    const [timeRemaining, setTimeRemaining] = useState(examDuration);
     const [timerExpired, setTimerExpired] = useState(false);
+
 
     // Mobile Tab State (pdf or answer)
     const [activeTab, setActiveTab] = useState('pdf');
@@ -77,9 +79,10 @@ const ExamPage = () => {
     // Start timer function
     const startTimer = () => {
         setTimerStarted(true);
-        setTimeRemaining(60 * 60); // Reset to 60 minutes
+        setTimeRemaining(examDuration); // Use exam-specific duration
         setTimerExpired(false);
     };
+
 
     // Removed useEffect fetching logic to restore stability
     // We now rely solely on the structure defined in mockData.js
@@ -105,8 +108,8 @@ const ExamPage = () => {
     };
 
     const handleSubmit = async () => {
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-        if (!apiKey) {
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY || window._GEMINI_API_KEY;
+        if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
             alert('APIキーが設定されていません。');
             return;
         }
@@ -158,6 +161,8 @@ const ExamPage = () => {
                     result,
                     universityName,
                     examSubject: exam.subject,
+                    examStructure: examData?.structure || [], // Pass section-level master data
+                    answers: formattedAnswers,
                     isNewResult: true // Flag to indicate this is a new result that needs saving
                 }
             });
@@ -370,7 +375,7 @@ const ExamPage = () => {
                                     <ul style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: '1.8', paddingLeft: '1.2rem', margin: 0 }}>
                                         <li>筆記用具の準備</li>
                                         <li>静かな環境の確保</li>
-                                        <li>制限時間は60分です</li>
+                                        <li>制限時間は{exam?.duration_minutes || 60}分です</li>
                                         <li>途中で中断できません</li>
                                     </ul>
                                 </div>

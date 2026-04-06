@@ -300,7 +300,7 @@ const fileToBase64 = (file) => {
   });
 };
 
-export const generateExamMasterData = async (apiKey, subjectType, questionFiles, questionFilesBySection, answerFilesBySection, sectionInstructionsBySection, extraInfo) => {
+export const generateExamMasterData = async (apiKey, subjectType, questionFiles, questionFilesBySection, answerFilesBySection, sectionInstructionsBySection, sectionPointsBySection, extraInfo) => {
   try {
     const trimmedKey = apiKey?.trim();
     console.log("[AdminGeminiService] Using model:", MODELS.PRIMARY);
@@ -454,8 +454,12 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 科目別の厳格なルールに基づいて、各大問(allocatedPoints)および各小問(points)に適切な点数を割り当ててください。
 
 【配点条件】
-1. 小問の \`points\` の合計が \`allocatedPoints\` になり、全大問の \`allocatedPoints\` の合計が必ず **${maxScore}** 点になること。
-2. これまでに抽出された id, label, type, options, correctAnswer 等の構造は**一切変更してはいけません**。配点数値のみを更新してください。
+${sectionPointsBySection && Object.keys(sectionPointsBySection).some(k => sectionPointsBySection[k]) ? 
+  "【大問の目標配点（絶対遵守）】\n各大問の `allocatedPoints` を以下の通り固定し、小問の `points` 合計がぴったりその値になるように割り振ってください。\n" + 
+  Object.entries(sectionPointsBySection).filter(([k,v]) => v).map(([k,v]) => `・第${k}問: ${v}点`).join("\n") + "\n"
+: ""}1. 小問の \`points\` の合計が \`allocatedPoints\` になり、全大問の \`allocatedPoints\` の合計が必ず **${maxScore}** 点になること。
+2. すべての \`points\` と \`allocatedPoints\` は、必ず1以上の自然数（1, 2, 3...）にすること。小数点や「0点」は絶対に使用しないこと。
+3. これまでに抽出された id, label, type, options, correctAnswer 等の構造は**一切変更してはいけません**。配点数値のみを更新してください。
 ${subjectSpecificRules}
 
 【対象データ】
@@ -567,17 +571,17 @@ ${JSON.stringify(questionData, null, 2)}
 【要件】
 1. なぜその答えになるのか、根拠（本文の該当箇所など）を1文で示すこと。
 2. 選択問題の場合、誤りの選択肢が間違っている理由を1〜2文で簡潔に加えること。
-3. アスタリスク（*）記号は使用禁止。マークダウンは使ってよい。
+3. アスタリスク（*）記号は一切使用禁止。見出しや強調も含め ** や * は使わないこと。
 4. 长すぎる解説は不要。受験生が「なるほど」と思える最小限の説明で十分。
+5. 必ず日本語で記述すること。
 
-出力は解説本文のみ（マークダウン）。
+出力は解説本文のみ（プレーンテキスト）。
 `;
 
-    // Use non-streaming for better error reporting and to avoid stream parsing issues
-    const result = await withRetry(() => model.generateContent([
-      prompt,
-      ...imageParts
-    ]));
+    const result = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
+      generationConfig: { maxOutputTokens: 8192 }
+    }));
 
     const text = result.response.text();
     console.log("[AdminGeminiService] Raw Explanation Response:", text.substring(0, 500) + "...");
@@ -758,24 +762,25 @@ G. この時点で解ける設問があれば、
 以上のルールに従い、すべてMarkdownで記述し、コードブロック(\`\`\`markdown など)で全体を囲まず、直接本文のみを出力してください。
 `;
     } else {
-      prompt = `あなたは大学入試の専門講師です。提供された問題と解答のファイル、および抽出された構造データをもとに、試験の「全体詳細解説（Markdown形式）」を作成してください。
+      prompt = `あなたは大学入試の専門講師です。提供された問題と解答のファイル、および抽出された構造データをもとに、試験の「全体詳細解説」を作成してください。
 
 【試験データ構造】
 ${JSON.stringify({ maxScore: examData.max_score, structure: examData.structure }, null, 2)}
 
 【要件】
 1. 受験生が復習する際に役立つよう、大問ごとに丁寧な解説を記述すること。
-2. マークダウン形式（見出し、箇条書き、太字等）を用いて読みやすく構造化すること。
+2. アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。代わりに「①②③」「【】」などの記号を使うこと。
 3. コードブロック表記（\`\`\`markdown など）で全体を囲まないこと。本文のみを出力すること。
+4. **必ず日本語で記述すること。**
 
-出力は解説本文（Markdown）のみを返してください。
+出力は解説本文のみを返してください。
 `;
     }
 
-    const result = await withRetry(() => model.generateContent([
-      prompt,
-      ...imageParts
-    ]));
+    const result = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
+      generationConfig: { maxOutputTokens: 65536 }
+    }));
 
     const text = result.response.text();
     console.log("[AdminGeminiService] Raw Detailed Analysis length:", text.length);
@@ -871,7 +876,8 @@ export const regeneratePointsAllocation = async (apiKey, subjectType, examData, 
 【厳格ルール】
 ${subjectSpecificRules}
 3. 再計算後のすべての大問・小問の \`points\` の合計が、必ず指定された満点（${maxScore}点）と完全に一致するように調整してください。
-4. JSONのみを出力してください。Markdownのコードブロック（\`\`\`json など）は除外し、純粋なJSON文字列だけにすること。
+4. すべての小問の \`points\` および大問の \`allocatedPoints\` は、必ず1以上の自然数（1, 2, 3...）にすること。小数点や「0点」は絶対に使用しないでください。
+5. JSONのみを出力してください。Markdownのコードブロック（\`\`\`json など）は除外し、純粋なJSON文字列だけにすること。
 
 【現在の構造データ（修正前）】
 ${JSON.stringify(currentStructure, null, 2)}
@@ -990,22 +996,172 @@ export const generateSectionDetailedAnalysis = async (apiKey, subjectType, secti
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
+    const questionType = sectionData.questionType || 'default';
+    
     let basePrompt = "";
     if (subjectType === 'english') {
-      basePrompt = `あなたは難関大学入試の英語講師です。第${sectionData.id}問（${sectionData.label}）の英語長文について、受験生の頭の中での思考プロセスを再現した詳細な解説を作成してください。
-【ルール】
-1. 英文を引用し、一文ごとに読解のポイントを説明すること。
-2. 設問の根拠が本文のどこにあるかを明示すること。
-3. 文法事項だけでなく、論理構成（逆接、抽象→具体など）を言語化すること。
+      if (questionType === 'grammar') {
+        basePrompt = `あなたは、大学受験レベル（MARCH〜早慶）の英文法問題を解くプロ講師である。
+目的は「正解を出すこと」ではなく、受験生が同じ思考を再現できるレベルで第${sectionData.id}問（${sectionData.label}）の解法を言語化することである。
+
+【最重要前提】
+・常に生徒目線で説明する
+・解法は「再現可能」でなければならない
+・必ず選択肢から先に見る
+・正解理由だけでなく「誤答の削り方」を同時に扱う
+・知識の説明ではなく「使い方」を説明する
+
+【思考プロセス（内部実行ルール：必ず実行・出力に反映）】
+① 選択肢分析（最初に必ずやる）
+問題文を見る前に、選択肢を確認し、以下を判断する：
+・何が問われているか（品詞／文型／時制／語法／語彙など）
+・選択肢の違いはどこか（意味／形／用法）
+・どの知識で切れそうか（例：自動詞/他動詞、前置詞、語法）
+※この時点では答えを決めない
+※「解き方の方針」を立てるだけ
+
+② 問題文処理（文脈＋文構造）
+問題文を読みながら、以下を処理する：
+・文構造（主語・動詞・目的語・修飾）
+・空所の役割（品詞・意味）
+・文脈（前後関係・論理）
+重要：
+・「ここには何が入るべきか」を先に言語化する
+・その後に選択肢と照合する
+
+③ 選択肢処理（消去法中心）
+各選択肢について必ず以下を行う：
+・正しいかどうかの判断
+・誤りの場合 → 「なぜダメか」を明確に言語化
+誤りの分類：
+・文法違反（形が違う）
+・語法違反（使い方が違う）
+・意味不一致（文脈に合わない）
+・ニュアンス不適切（ズレている）
+
+【出力順（厳守）】
+① 正解
+・記号 or 語句のみ
+・理由は書かない
+
+② 選択肢分析（解き方の設計）
+・この問題は何を問う問題か
+・選択肢の違いはどこにあるか
+・どういう観点で判断するか
+
+③ 問題文の思考プロセス
+・文構造を明確にする
+・空所に求められる条件を言語化
+・「この時点ではこう考える」という形で説明
+
+④ 選択肢の検討（最重要）
+各選択肢について：
+・正誤判断
+・誤りの理由を明確化
+・本文とのズレを具体的に説明
+※必ず「なぜ切れるか」を書く
+※正解だけ説明するのは禁止
+
+⑤ 最終整理（再現性の言語化）
+・この問題の本質（何を見抜く問題か）
+・同じタイプの問題の解き方
+・判断基準の一般化
+
+【禁止事項】
+・正解だけ説明する
+・「なんとなく」「感覚的に」などの曖昧表現
+・知識の羅列だけで終わる説明
+・選択肢を見ずに解くこと
+・誤答の理由を省略すること
+・アスタリスク（*）記号は一切使用しないこと（太字等はHTMLタグや他の記号で代用するか使用を控える）
+
+【出力スタイル】
+・生徒が「次も解ける」ように説明する
+・思考の流れを文章でつなぐ
+・断定と仮説を区別する（例：「この時点では〜と考える」）
 `;
+      } else if (questionType === 'writing') {
+        basePrompt = `あなたは難関大学入試の英語講師です。第${sectionData.id}問（${sectionData.label}）の英作文（和文英訳・自由英作文）問題について、解答のプロセスと思考法を解説してください。
+【ルール】
+1. 考え方のプロセスや、求められている構文・表現の意図を解説すること。
+2. よくあるミスや、汎用性の高い表現を紹介すること。
+3. アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。
+`;
+      } else if (questionType === 'conversation') {
+        basePrompt = `あなたは難関大学入試の英語講師です。第${sectionData.id}問（${sectionData.label}）の会話文問題について、詳細な解説を作成してください。
+【ルール】
+1. 会話の状況設定や、登場人物の関係性を踏まえた解説を行うこと。
+2. 口語表現や特有のイディオムがあれば明示し、前後の文脈からどのように正解を絞り込むかを言語化すること。
+3. アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。
+`;
+      } else {
+        basePrompt = `あなたは、難関大学入試（早稲田・慶應レベル）の英語長文問題を解く専門家である。
+目的は「答え」ではなく、受験生が同じやり方を再現できるレベルで、第${sectionData.id}問（${sectionData.label}）の設問準備・読解・解答の思考プロセスを口語体でなく文語体で完全に言語化することである。
+
+────────────────
+【最重要前提】
+・設問準備 → 読解 → 設問処理は分離されていない
+・解説は「実際に問題を解いている時系列」で書く
+・本文解説では、必ず英文を引用しながら進める
+・日本語の解説は、必ず直前に引用した英文に対応させる
+・箇条書き・矢印・処理ログ風の書き方は禁止
+・受験生が「英文 ↔ 解説」を往復できる文章にする
+
+────────────────
+【1. 内部実行ルール（※出力しないが必ず実行）】
+
+### 1-1. 設問準備（読む前）
+本文を読む前に、全設問を確認し、各設問について次のみを行う：
+・設問タイプの把握（傍線部説明／定義／NOT／比喩／理由 など）
+・「どの段落まで読めば解けるか」の見通し
+・読解中に意識すべき観点（But／抽象→具体／評価語 など）
+重要：この段階では答えを作らない。やるのは「読み方の設計」だけ。
+
+### 1-2. 読解（解きながら読む）
+各段落について、必ず以下の流れで処理する：
+A. 段落に入る前に、今どの設問を意識しているかを確認
+B. 英文を **一文ずつ引用** する
+C. その英文を読んだ瞬間に頭の中で行っている判断を、日本語の文章で説明する
+D. 次の英文で、理解がどう修正・更新されたかを書く
+E. But／疑問文／言い換え／抽象↔具体が出た場合は、必ず意味づけを言語化する
+F. 段落を読み終えた時点で、段落の趣旨と本文全体における役割を文章でまとめる
+G. この時点で解ける設問があれば、「ここまで読めばこの設問に必要な情報はそろっている」と自然な日本語で示す
+重要：いきなり段落要約から入らない。必ず「英文 → 思考 → 英文 → 思考」の流れを守る。
+
+### 1-3. 選択肢処理
+選択肢問題は、正解探しではなく「誤りの言語化」で処理する。
+・各誤選択肢について、本文のどこがズレているか、ズレの種類（言い過ぎ／範囲ズレ／主語述語ズレ／抽象化しすぎ等）を短い文章で明確に説明する。
+
+────────────────
+【2. 出力順（絶対厳守）】
+以下の順番を必ず守る。
+① 解答一覧
+② 設問準備フェーズ（文章で）
+③ 読みながら解くプロセス（段落ごと・英文引用必須）
+④ 設問ごとの解答プロセス
+⑤ 本文全文和訳
+⑥ 完全解説（①〜④を統合した時系列の最終版）
+
+────────────────
+【3. 禁止事項】
+・箇条書き中心の解説、処理ログ風の羅列
+・英文を示さずに日本語だけで説明すること
+・参考書的なまとめ先行の解説
+・「なんとなく」「感覚的に」などの曖昧表現
+・アスタリスク（*）記号は一切使用しないこと（太字等はHTMLタグや他の記号で代用するか使用を控える）
+`;
+      }
     } else if (subjectType === 'social') {
       basePrompt = `あなたは大学入試の社会科（日本史・世界史・地理）の専門講師です。第${sectionData.id}問（${sectionData.label}）について、各小問の背景知識や、資料・図表の読み方のポイントを詳細に解説してください。
 【ルール】
 1. 単なる正解の提示ではなく、なぜその知識が必要なのか、どう考えれば正解に辿りつくかを記述すること。
 2. 誤選択肢がなぜ間違っているのか、歴史的事実に基づいて解説すること。
+3. アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。
 `;
     } else {
-      basePrompt = `あなたは大学入試の専門講師です。第${sectionData.id}問（${sectionData.label}）について、各小問の解き方や考え方のプロセスを詳細に解説してください。`;
+      basePrompt = `あなたは大学入試の専門講師です。第${sectionData.id}問（${sectionData.label}）について、各小問の解き方や考え方のプロセスを詳細に解説してください。
+【ルール】
+アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。`;
     }
 
     const finalPrompt = `
@@ -1020,19 +1176,124 @@ ${specialInstruction ? `【ユーザーからの個別指示】\n${specialInstru
 1. Markdown形式で記述すること。
 2. アスタリスク（*）記号は使用禁止。
 3. コードブロック（\`\`\`markdown）で囲まず、本文のみを出力すること。
+4. **必ず日本語で記述すること。**
 
 出力は解説本文（Markdown）のみを返してください。
 `;
 
-    const result = await withRetry(() => model.generateContent([
-      finalPrompt,
-      ...imageParts
-    ]));
+    const result = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: finalPrompt }, ...imageParts] }],
+      generationConfig: { maxOutputTokens: 65536 }
+    }));
 
     const text = result.response.text();
     return text.replace(/```markdown\n?|```\n?|```/g, '').trim();
   } catch (error) {
     console.error("Error generating section detailed analysis:", error);
+    throw error;
+  }
+};
+
+export const generateSingleSectionData = async (apiKey, subjectType, sectionIndex, questionFiles, answerFiles, instruction, targetPoints) => {
+  try {
+    const trimmedKey = apiKey?.trim();
+    if (!trimmedKey) throw new Error("Gemini API Key is not set.");
+    console.log(`[AdminGeminiService] Generating section ${sectionIndex} data...`);
+
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
+
+    const isEnglish = subjectType === 'english';
+    const isSocial = subjectType === 'social';
+
+    let subjectSpecificRules = "";
+    if (isEnglish) {
+      subjectSpecificRules = ENGLISH_RULES;
+    } else if (isSocial) {
+      subjectSpecificRules = SOCIAL_RULES;
+    }
+
+    // OCR Answer
+    let answerText = "";
+    if (answerFiles && answerFiles.length > 0) {
+      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+      const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
+      const aOcrResult = await withRetry(() => model.generateContent({
+        contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
+        generationConfig: { maxOutputTokens: 2048 }
+      }));
+      answerText = aOcrResult.response.text();
+    }
+
+    // OCR Question
+    let questionText = "";
+    if (questionFiles && questionFiles.length > 0) {
+      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+      const qOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
+      const qOcrResult = await withRetry(() => model.generateContent({
+        contents: [{ role: 'user', parts: [...qInlineData, { text: qOcrPrompt }] }],
+        generationConfig: { maxOutputTokens: 8192 }
+      }));
+      questionText = qOcrResult.response.text();
+    }
+
+    const targetPointsRule = targetPoints ? `\n【重要：目標配点】\nこの大問の小問群の \`points\` の合計がぴったり **${targetPoints}** 点 になるように必ず割り振ってください。（各小問の配点は1以上の自然数であること）\n` : `\n【配点ルール】\n問題数や難易度に合わせて自然な点数（1以上の自然数）を割り振ってください。\n`;
+
+    const extractPrompt = `
+以下の試験素材を分析し、**第${sectionIndex}問**に関する設問データ（構造、正解、配点、詳細解説）を一斉に生成してください。
+
+【第${sectionIndex}問 問題テキスト】
+${questionText || "（なし）"}
+
+【第${sectionIndex}問 解答テキスト】
+${answerText || "（なし）"}
+
+${instruction ? `【個別指示】\n${instruction}\n` : ""}
+${subjectSpecificRules}
+${targetPointsRule}
+
+【抽出条件と厳格ルール】
+1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
+2. アスタリスク（*）記号を絶対に使用しないでください。
+3. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
+4. 各小問の \`explanation\` および大問の \`sectionAnalysis\` は、**必ず日本語で** 記述してください。正解を導くための論理的で丁寧な解説と、誤答の理由を含めること。
+5. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
+
+【出力構造】
+{
+  "id": "${sectionIndex}",
+  "label": "第${sectionIndex}問",
+  "allocatedPoints": ${targetPoints || 0},
+  "sectionAnalysis": "",
+  "questions": [
+    {
+      "id": "小問ID",
+      "label": "小問ラベル",
+      "type": "selection",
+      "options": ["a", "b", "c", "d"],
+      "correctAnswer": "正解",
+      "points": 5,
+      "explanation": "なぜこれが正解なのかの解説"
+    }
+  ]
+}
+`;
+
+    const result = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
+    }), 5, 5000);
+
+    const sectionRaw = result.response.text();
+    const parsedSection = JSON.parse(sanitizeJson(sectionRaw));
+    if (!parsedSection.sectionAnalysis) parsedSection.sectionAnalysis = "";
+    
+    return parsedSection;
+
+  } catch (error) {
+    console.error(`[AdminGeminiService] Failed to generate section ${sectionIndex}:`, error);
     throw error;
   }
 };

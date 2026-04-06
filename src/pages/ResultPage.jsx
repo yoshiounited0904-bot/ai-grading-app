@@ -10,7 +10,7 @@ import { reportGradingError } from '../services/reportService';
 const ResultPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { result, universityName, examSubject, answers, isNewResult } = location.state || {};
+    const { result, universityName, examSubject, answers, examStructure, isNewResult } = location.state || {};
     const { user } = useAuth();
 
     console.log("ResultPage State:", { result, universityName, examSubject, isNewResult });
@@ -86,7 +86,7 @@ const ResultPage = () => {
         setIsChatting(true);
 
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY || window._GEMINI_API_KEY;
             const response = await chatWithGemini(apiKey, userMsg, chatHistory, result);
             setChatHistory(prev => [...prev, { role: 'ai', text: response }]);
         } catch (err) {
@@ -133,7 +133,7 @@ const ResultPage = () => {
 
 
     return (
-        <div className="container" style={{ maxWidth: '800px', paddingBottom: '4rem' }}>
+        <div className="container" style={{ maxWidth: '1400px', paddingBottom: '4rem' }}>
             <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
                 <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>採点結果</h1>
                 <p style={{ color: 'var(--color-text-secondary)' }}>{universityName} - {examSubject}</p>
@@ -260,54 +260,116 @@ const ResultPage = () => {
             </div>
 
             <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>詳細フィードバック</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {result.questionFeedback && result.questionFeedback.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
+                {examStructure && examStructure.length > 0 ? (
+                    examStructure.map((section) => {
+                        const sectionId = section.id;
+                        const sectionQuestionIds = section.questions?.map(q => q.id) || [];
+                        const sectionFeedback = (result.questionFeedback || []).filter(item =>
+                            sectionQuestionIds.includes(item.id) || (item.id && sectionQuestionIds.length === 0 && String(item.id).startsWith(String(sectionId) + '-'))
+                        );
+                        return (
+                            <div key={sectionId} className="glass-panel" style={{ padding: '1.5rem' }}>
+                                {/* Section Header */}
+                                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1.25rem', color: 'var(--color-text-primary)', borderBottom: '2px solid var(--color-accent-primary)', paddingBottom: '0.5rem' }}>
+                                    {section.label || section.title || `大問 ${sectionId}`}
+                                    {section.totalPoints && (
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '500', color: '#64748b', marginLeft: '0.75rem' }}>
+                                            （配点 {section.totalPoints}点）
+                                        </span>
+                                    )}
+                                </h3>
+
+                                {/* 2-column layout */}
+                                <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
+
+                                    {/* LEFT: Individual Question Feedback */}
+                                    <div style={{ flex: '1 1 0', minWidth: 0 }}>
+                                        {sectionFeedback.length > 0 ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                {sectionFeedback.map((item) => (
+                                                    <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${item.correct ? '#10b981' : '#ef4444'}`, background: item.correct ? 'rgba(16,185,129,0.03)' : 'rgba(239,68,68,0.03)', borderRadius: '0 8px 8px 0' }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                                            <span style={{ fontWeight: '600', fontSize: '0.9rem' }}>{item.id}</span>
+                                                            <span style={{ color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600', background: item.correct ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '0.15rem 0.6rem', borderRadius: '20px', fontSize: '0.75rem' }}>
+                                                                {item.correct ? '正解' : '不正解'}
+                                                            </span>
+                                                        </div>
+                                                        <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
+                                                            <span style={{ fontWeight: '600' }}>あなたの解答:</span>
+                                                            <span style={{ marginLeft: '0.5rem', color: '#1e293b', fontWeight: '600' }}>{item.userAnswer || '(無回答)'}</span>
+                                                            <span style={{ margin: '0 0.5rem', color: '#cbd5e1' }}>→</span>
+                                                            <span style={{ fontWeight: '600' }}>正解:</span>
+                                                            <span style={{ marginLeft: '0.5rem', color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600' }}>{item.correctAnswer}</span>
+                                                        </div>
+                                                        {item.explanation && (
+                                                            <p style={{ fontSize: '0.85rem', lineHeight: '1.5', color: 'var(--color-text-secondary)', margin: '0.5rem 0 0' }}>
+                                                                {item.explanation}
+                                                            </p>
+                                                        )}
+                                                        <div style={{ textAlign: 'right', marginTop: '0.5rem' }}>
+                                                            <button onClick={() => setReportingItem(item)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>
+                                                                採点ミスを報告
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>この大問の個別フィードバックはありません。</p>
+                                        )}
+                                    </div>
+
+                                    {/* RIGHT: Section-level Explanation (sticky + scrollable) */}
+                                    {section.sectionAnalysis && (
+                                        <div style={{
+                                            flex: '1 1 0',
+                                            minWidth: 0,
+                                            position: 'sticky',
+                                            top: '1rem',
+                                            alignSelf: 'flex-start',
+                                            maxHeight: '70vh',
+                                            overflowY: 'auto',
+                                            background: 'rgba(99,102,241,0.04)',
+                                            border: '1px solid rgba(99,102,241,0.15)',
+                                            borderRadius: '12px',
+                                            padding: '1rem',
+                                        }}>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6366f1', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                <span>📝</span> 大問全体の詳細解説
+                                            </p>
+                                            <p style={{ fontSize: '0.875rem', lineHeight: '1.8', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', margin: 0 }}>
+                                                {section.sectionAnalysis}
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })
+                ) : result.questionFeedback && result.questionFeedback.length > 0 ? (
+                    // Fallback if no examStructure: flat list
                     result.questionFeedback.map((item) => (
                         <div key={item.id || Math.random()} className="glass-panel" style={{ padding: '1.5rem', borderLeft: `4px solid ${item.correct ? '#10b981' : '#ef4444'}` }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                                 <span style={{ fontWeight: '600' }}>{item.id}</span>
-                                <span style={{
-                                    color: item.correct ? '#10b981' : '#ef4444',
-                                    fontWeight: '600',
-                                    background: item.correct ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                    padding: '0.25rem 0.75rem',
-                                    borderRadius: '20px',
-                                    fontSize: '0.8rem'
-                                }}>
-                                    {item.correct ? '正解' : '不正解'}
+                                <span style={{ color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600', background: item.correct ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', padding: '0.25rem 0.75rem', borderRadius: '20px', fontSize: '0.8rem' }}>
+                                    {item.correct ? '\u6b63\u89e3' : '\u4e0d\u6b63\u89e3'}
                                 </span>
                             </div>
                             <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f8fafc', borderRadius: '8px' }}>
                                 <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
                                     <span style={{ fontWeight: '600' }}>あなたの解答:</span>
-                                    <span style={{ marginLeft: '0.5rem', fontSize: '1rem', color: '#1e293b', fontWeight: '600' }}>
-                                        {item.userAnswer || '(無回答)'}
-                                    </span>
+                                    <span style={{ marginLeft: '0.5rem', fontSize: '1rem', color: '#1e293b', fontWeight: '600' }}>{item.userAnswer || '(無回答)'}</span>
                                 </div>
                                 <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
                                     <span style={{ fontWeight: '600' }}>正解:</span>
-                                    <span style={{ marginLeft: '0.5rem', fontSize: '1rem', color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600' }}>
-                                        {item.correctAnswer}
-                                    </span>
+                                    <span style={{ marginLeft: '0.5rem', fontSize: '1rem', color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600' }}>{item.correctAnswer}</span>
                                 </div>
                             </div>
-                            <p style={{ fontSize: '0.95rem', lineHeight: '1.5', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>
-                                {item.explanation}
-                            </p>
+                            <p style={{ fontSize: '0.95rem', lineHeight: '1.5', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>{item.explanation}</p>
                             <div style={{ textAlign: 'right' }}>
-                                <button
-                                    onClick={() => setReportingItem(item)}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: '#94a3b8',
-                                        fontSize: '0.8rem',
-                                        cursor: 'pointer',
-                                        textDecoration: 'underline'
-                                    }}
-                                >
-                                    採点ミスを報告
-                                </button>
+                                <button onClick={() => setReportingItem(item)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}>採点ミスを報告</button>
                             </div>
                         </div>
                     ))

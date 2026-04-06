@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS exams (
     type TEXT NOT NULL,
     pdf_path TEXT,
     max_score INTEGER NOT NULL,
+    duration_minutes INTEGER DEFAULT 60,
     detailed_analysis TEXT,
     structure JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,

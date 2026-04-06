@@ -184,6 +184,7 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         1. Social Studies (types D, E): Use "Element-Based Grading". Score proportionally to the number of elements satisfied.
         2. English: Grade based on accuracy and keywords.
         3. Output MUST be Japanese.
+        4. CRITICAL: You MUST evaluate strictly EVERY SINGLE question listed in the "User Answers" array. Do not combine, skip, or invent question IDs.
         
         Return JSON format:
         {
@@ -207,6 +208,8 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
                 if (aiItem) {
                     totalScore += aiItem.score;
                     return { ...f, score: aiItem.score, correct: aiItem.correct, explanation: aiItem.explanation };
+                } else {
+                    return { ...f, score: 0, correct: false, explanation: "【採点エラー】AIがこの問題の評価結果を出力しませんでした。" };
                 }
             }
             return f;
