@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getUniversities } from '../data/examRegistry';
+import { getExamsForUniversity } from '../data/examRegistry';
 
 const UniversityPage = () => {
     const { universityId } = useParams();
@@ -10,9 +10,9 @@ const UniversityPage = () => {
 
     useEffect(() => {
         const fetchUniversity = async () => {
-            const data = await getUniversities();
-            const found = data.find(u => u.id.toString() === universityId);
-            setUniversity(found || null);
+            if (!universityId) return;
+            const data = await getExamsForUniversity(universityId);
+            setUniversity(data);
             setLoading(false);
         };
         fetchUniversity();

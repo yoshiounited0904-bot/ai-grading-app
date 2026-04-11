@@ -160,8 +160,10 @@ const ExamPage = () => {
                 state: {
                     result,
                     universityName,
+                    examId: exam.id,
                     examSubject: exam.subject,
                     examStructure: examData?.structure || [], // Pass section-level master data
+                    customLayout: examData?.custom_layout || exam?.custom_layout || [],
                     answers: formattedAnswers,
                     isNewResult: true // Flag to indicate this is a new result that needs saving
                 }

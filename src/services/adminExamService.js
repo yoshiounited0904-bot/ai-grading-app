@@ -41,9 +41,28 @@ export const importMockData = async () => {
 };
 
 export const getAdminExams = async () => {
+    // Optimization: Select only metadata columns needed for the list view.
+    // Exclude heavy columns: 'detailed_analysis', 'weakness_analysis', 'structure'
     const { data, error } = await supabase
         .from('exams')
-        .select('*')
+        .select(`
+            id, 
+            university, 
+            university_id, 
+            faculty, 
+            faculty_id, 
+            year, 
+            subject, 
+            subject_en, 
+            type, 
+            pdf_path, 
+            max_score, 
+            is_completed, 
+            unimplemented_items, 
+            admin_comment,
+            created_at,
+            updated_at
+        `)
         .order('created_at', { ascending: false });
     return { data, error };
 };
@@ -96,6 +115,32 @@ export const updateAdminFields = async (id, updates) => {
         .eq('id', id)
         .select();
     return { data, error };
+};
+
+export const uploadAnalysisImage = async (file, examId) => {
+    const fileExt = file.name.split('.').pop().toLowerCase();
+    const sanitizedId = String(examId || 'unknown')
+        .normalize('NFKC')
+        .replace(/[^\w\-]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
+    const fileName = `analysis_${sanitizedId}_${Date.now()}.${fileExt}`;
+    const filePath = `analysis/${fileName}`;
+
+    const { data, error } = await supabase.storage
+        .from('exam-images')
+        .upload(filePath, file, { upsert: true });
+
+    if (error) {
+        console.error("Storage upload error:", error);
+        return { error };
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+        .from('exam-images')
+        .getPublicUrl(filePath);
+
+    return { publicUrl };
 };
 
 export const uploadExamPdf = async (file, examId) => {

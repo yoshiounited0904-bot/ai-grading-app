@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData } from '../services/adminGeminiService';
-import { getUniversities } from '../data/examRegistry';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations } from '../services/adminGeminiService';
+import { getUniversityList } from '../data/examRegistry';
+import { getAdminBanners } from '../services/adminBannerService';
 
 function AdminExamEditor() {
     const { id } = useParams();
@@ -18,12 +19,28 @@ function AdminExamEditor() {
     const [generatingSectionAnalysis, setGeneratingSectionAnalysis] = useState({});
     const [regeneratingPoints, setRegeneratingPoints] = useState(false);
     const [bulkGenerating, setBulkGenerating] = useState(false);
+    const [banners, setBanners] = useState([]);
+    
+    useEffect(() => {
+        const fetchBanners = async () => {
+            try {
+                const data = await getAdminBanners();
+                setBanners(data || []);
+            } catch (err) {
+                console.error("Failed to fetch banners:", err);
+            }
+        };
+        fetchBanners();
+    }, []);
     const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
     const [isBulkGeneratingSections, setIsBulkGeneratingSections] = useState(false);
     const [bulkSectionsProgress, setBulkSectionsProgress] = useState({ current: 0, total: 0 });
     const [saving, setSaving] = useState(false);
     const [uploadingQuestion, setUploadingQuestion] = useState(false);
     const [uploadingAnswers, setUploadingAnswers] = useState({});
+    const [generatingExplanationsOnly, setGeneratingExplanationsOnly] = useState({});
+    const [activeTab, setActiveTab] = useState('master');
+    const [customLayout, setCustomLayout] = useState([]);
 
     // Form states
     const [examId, setExamId] = useState('');
@@ -40,11 +57,11 @@ function AdminExamEditor() {
 
     // PDF/Image files
     const [questionFiles, setQuestionFiles] = useState([]);
-    const [sectionCount, setSectionCount] = useState(1);
-    const [questionFilesBySection, setQuestionFilesBySection] = useState({ 1: [] });
-    const [answerFilesBySection, setAnswerFilesBySection] = useState({ 1: [] });
-    const [sectionInstructionsBySection, setSectionInstructionsBySection] = useState({ 1: '' });
-    const [sectionPointsBySection, setSectionPointsBySection] = useState({ 1: '' });
+    const [sectionCount, setSectionCount] = useState(3);
+    const [questionFilesBySection, setQuestionFilesBySection] = useState({ 1: [], 2: [], 3: [] });
+    const [answerFilesBySection, setAnswerFilesBySection] = useState({ 1: [], 2: [], 3: [] });
+    const [sectionInstructionsBySection, setSectionInstructionsBySection] = useState({ 1: '', 2: '', 3: '' });
+    const [sectionPointsBySection, setSectionPointsBySection] = useState({ 1: '', 2: '', 3: '' });
 
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
@@ -64,7 +81,7 @@ function AdminExamEditor() {
     };
 
     useEffect(() => {
-        getUniversities().then(data => setUniversitiesData(data || []));
+        getUniversityList().then(data => setUniversitiesData(data || []));
         if (!isNew) {
             fetchExam();
         }
@@ -122,20 +139,27 @@ function AdminExamEditor() {
                 pdf_path: data.pdf_path,
                 passing_lines: data.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
             });
+            setCustomLayout(data.custom_layout || []);
             if (data.structure && data.structure.length > 0) {
-                setSectionCount(data.structure.length);
+                // Ensure at least 3 sections are shown or the stored count, whichever is higher
+                const displayCount = Math.max(3, data.structure.length);
+                setSectionCount(displayCount);
+
                 // Also initialize the file and instruction maps for each section to avoid blanks
                 const qMap = {};
                 const aMap = {};
                 const iMap = {};
                 const pMap = {};
-                data.structure.forEach((sec, idx) => {
-                    const n = idx + 1;
+
+                // Initialize all slots up to displayCount
+                for (let n = 1; n <= displayCount; n++) {
+                    const sec = data.structure[n - 1];
                     qMap[n] = [];
                     aMap[n] = [];
-                    iMap[n] = sec.instruction || '';
-                    pMap[n] = sec.allocatedPoints || '';
-                });
+                    iMap[n] = sec?.instruction || '';
+                    pMap[n] = sec?.allocatedPoints || '';
+                }
+
                 setQuestionFilesBySection(qMap);
                 setAnswerFilesBySection(aMap);
                 setSectionInstructionsBySection(iMap);
@@ -222,6 +246,68 @@ function AdminExamEditor() {
             return false;
         } finally {
             setGeneratingSectionData(prev => ({ ...prev, [sectionNum]: false }));
+        }
+    };
+
+    const handleGenerateOnlyExplanations = async (sectionNum) => {
+        const apiKey = getGeminiApiKey();
+        if (!apiKey) {
+            alert('Gemini API Keyが見つかりません。');
+            return;
+        }
+
+        const sIdx = sectionNum - 1;
+        const sectionData = examData?.structure?.[sIdx];
+        if (!sectionData) {
+            alert('大問の構成データが見つかりません。先にStep 1を実行するか、手動で構成を作成してください。');
+            return;
+        }
+
+        setGeneratingExplanationsOnly(prev => ({ ...prev, [sectionNum]: true }));
+        try {
+            const qFiles = questionFilesBySection[sectionNum] || [];
+            const aFiles = answerFilesBySection[sectionNum] || [];
+
+            const result = await generateSectionQuestionsExplanations(
+                apiKey,
+                subjectEn,
+                sectionData,
+                qFiles,
+                aFiles
+            );
+
+            // Merge the result back into the structure, ensuring we don't overwrite user-fixed values
+            setExamData(prev => {
+                const newStructure = [...(prev?.structure || [])];
+                const currentSec = newStructure[sIdx];
+                
+                // Update questions (match by ID)
+                const mergedQuestions = currentSec.questions.map(origQ => {
+                    const match = result.questions?.find(newQ => newQ.id === origQ.id);
+                    return {
+                        ...origQ,
+                        explanation: match ? match.explanation : origQ.explanation
+                    };
+                });
+
+                newStructure[sIdx] = {
+                    ...currentSec,
+                    sectionAnalysis: result.sectionAnalysis || currentSec.sectionAnalysis,
+                    questions: mergedQuestions
+                };
+
+                return { ...prev, structure: newStructure };
+            });
+
+            alert(`大問 ${sectionNum} の小問解説の生成が完了しました！`);
+            // Trigger automatic save
+            setTimeout(() => handleSave(false), 500);
+
+        } catch (err) {
+            console.error(err);
+            alert(`生成中にエラーが発生しました: ${err.message}`);
+        } finally {
+            setGeneratingExplanationsOnly(prev => ({ ...prev, [sectionNum]: false }));
         }
     };
 
@@ -389,7 +475,8 @@ function AdminExamEditor() {
             max_score: parseInt(examData?.max_score || 100),
             detailed_analysis: examData?.detailed_analysis || '',
             structure: structureOverride || examData?.structure || [],
-            passing_lines: examData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
+            passing_lines: examData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
+            custom_layout: customLayout
         };
 
         const { error } = await saveAdminExam(payload);
@@ -978,8 +1065,28 @@ function AdminExamEditor() {
 
 
 
+            {/* Tab Navigation */}
+            <div className="flex flex-wrap gap-4 mb-10 sticky top-4 z-[40]">
+                <button 
+                    onClick={() => setActiveTab('master')}
+                    className={`px-8 py-4 rounded-3xl font-black transition-all text-sm flex items-center gap-3 ${activeTab === 'master' ? 'bg-navy-blue text-white shadow-2xl shadow-navy-blue/30 scale-105' : 'bg-white/80 backdrop-blur-md text-gray-400 hover:text-navy-blue border border-white hover:bg-white shadow-sm'}`}
+                >
+                    <span className="text-xl">🛠️</span>
+                    マスター設定・AI生成
+                </button>
+                <button 
+                    onClick={() => setActiveTab('design')}
+                    className={`px-8 py-4 rounded-3xl font-black transition-all text-sm flex items-center gap-3 ${activeTab === 'design' ? 'bg-navy-blue text-white shadow-2xl shadow-navy-blue/30 scale-105' : 'bg-white/80 backdrop-blur-md text-gray-400 hover:text-navy-blue border border-white hover:bg-white shadow-sm'}`}
+                >
+                    <span className="text-xl">🎨</span>
+                    解説ページのデザイン編集
+                    <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full animate-pulse">β</span>
+                </button>
+            </div>
+
             {/* Main Content Area */}
-            <div className="grid grid-cols-1 gap-10">
+            {activeTab === 'master' ? (
+                <div className="grid grid-cols-1 gap-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* Explanation Generation Panel */}
                 {examData && (
                     <div className="space-y-6">
@@ -1364,6 +1471,23 @@ function AdminExamEditor() {
                                                         </>
                                                     )}
                                                 </button>
+                                                <button
+                                                    onClick={() => handleGenerateOnlyExplanations(num)}
+                                                    disabled={generatingExplanationsOnly[num] || generating}
+                                                    className="w-full mt-3 bg-white text-indigo-600 hover:bg-indigo-50 border-2 border-indigo-200 font-black py-4 px-6 rounded-xl transition-all text-sm flex items-center justify-center gap-3 disabled:opacity-50"
+                                                >
+                                                    {generatingExplanationsOnly[num] ? (
+                                                        <>
+                                                            <div className="w-5 h-5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin"></div>
+                                                            <span>（大問 {num}）解説のみを生成中...</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-xl">✍️</span>
+                                                            「小問解説のみ」を一括生成する（構造は維持）
+                                                        </>
+                                                    )}
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -1577,9 +1701,285 @@ function AdminExamEditor() {
                     </div>
                 </div>
 
-            </div>
+                </div>
+            ) : (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <BlockDesigner 
+                        layout={customLayout} 
+                        setLayout={setCustomLayout} 
+                        examData={examData}
+                        onSave={() => handleSave(true)}
+                    />
+                </div>
+            )}
         </div>
     );
 }
+
+const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
+    const importFromMaster = () => {
+        if (!examData) return;
+        const blocks = [];
+        
+        // Add Hero
+        blocks.push({ id: 'hero-' + Date.now(), type: 'hero', content: {} });
+        
+        // Add detailed analysis
+        if (examData.detailed_analysis) {
+            blocks.push({ id: 'text-' + Date.now(), type: 'text', content: examData.detailed_analysis });
+        }
+        
+        // Add sections
+        examData.structure?.forEach((sec, idx) => {
+            blocks.push({ id: `sec-title-${idx}-${Date.now()}`, type: 'section_analysis', content: { sectionId: sec.id, label: sec.label, text: sec.sectionAnalysis || '' } });
+            blocks.push({ id: `q-list-${idx}-${Date.now()}`, type: 'question_list', content: { sectionId: sec.id } });
+        });
+        
+        setLayout(blocks);
+    };
+
+    const addBlock = (type) => {
+        const newBlock = { 
+            id: type + '-' + Date.now(), 
+            type, 
+            content: type === 'text' ? '新しいテキストを入力...' : 
+                     type === 'image' ? { url: '', alt: '' } :
+                     type === 'ad' ? { pageTarget: 'result' } : {} 
+        };
+        setLayout([...layout, newBlock]);
+    };
+
+    const updateBlock = (index, newContent) => {
+        const newLayout = [...layout];
+        newLayout[index] = { ...newLayout[index], content: newContent };
+        setLayout(newLayout);
+    };
+
+    const removeBlock = (index) => {
+        if (!confirm('このブロックを削除してもよろしいですか？')) return;
+        setLayout(layout.filter((_, i) => i !== index));
+    };
+
+    const moveBlock = (index, direction) => {
+        const newLayout = [...layout];
+        const target = index + direction;
+        if (target < 0 || target >= layout.length) return;
+        [newLayout[index], newLayout[target]] = [newLayout[target], newLayout[index]];
+        setLayout(newLayout);
+    };
+
+    return (
+        <div className="space-y-8">
+            <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl shadow-indigo-100/50 border border-gray-100">
+                <div className="flex justify-between items-center mb-10">
+                    <div>
+                        <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
+                            <span className="text-3xl">🎨</span> ページデザイナー
+                        </h2>
+                        <p className="text-xs text-gray-400 font-bold mt-2 uppercase tracking-widest ml-1">実際の解説画面と同じ構成でブロックを配置・編集できます</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button onClick={importFromMaster} className="px-6 py-3 bg-gray-50 hover:bg-gray-100 text-gray-600 rounded-2xl text-xs font-black transition-all border border-gray-200">
+                            🔄 マスターから初期配置を生成
+                        </button>
+                        <button onClick={onSave} className="px-8 py-3 bg-navy-blue text-white rounded-2xl text-xs font-black shadow-xl shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2">
+                            <span>💾</span> 保存する
+                        </button>
+                    </div>
+                </div>
+
+                {layout.length === 0 ? (
+                    <div className="py-20 text-center border-4 border-dashed border-gray-100 rounded-[3rem] bg-gray-50/30">
+                        <span className="text-4xl block mb-4">✨</span>
+                        <p className="text-gray-400 font-black text-sm">レイアウトが空です。「マスターから初期配置を生成」を押すか、<br/>下のボタンからブロックを追加してください。</p>
+                    </div>
+                ) : (
+                    <div className="space-y-6 max-w-4xl mx-auto">
+                        {layout.map((block, idx) => (
+                            <div key={block.id || idx} className="group relative bg-white border-2 border-transparent hover:border-indigo-200 rounded-3xl transition-all shadow-sm hover:shadow-xl hover:shadow-indigo-100/50">
+                                {/* Block Toolbar */}
+                                <div className="absolute -left-12 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all scale-90 group-hover:scale-100 z-10">
+                                    <button onClick={() => moveBlock(idx, -1)} className="p-2 bg-white shadow-lg rounded-xl text-gray-400 hover:text-navy-blue border border-gray-100 transition-colors">▲</button>
+                                    <button onClick={() => moveBlock(idx, 1)} className="p-2 bg-white shadow-lg rounded-xl text-gray-400 hover:text-navy-blue border border-gray-100 transition-colors">▼</button>
+                                    <button onClick={() => removeBlock(idx)} className="p-2 bg-white shadow-lg rounded-xl text-red-100 hover:bg-red-500 hover:text-white border border-gray-100 transition-colors">✕</button>
+                                </div>
+
+                                <div className="p-2">
+                                    <div className="bg-gray-50/50 rounded-2xl p-6">
+                                        <div className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                            <span className="bg-white w-5 h-5 rounded-md flex items-center justify-center shadow-sm text-xs">
+                                                {block.type === 'text' ? 'T' : block.type === 'hero' ? '⭐' : block.type === 'section_analysis' ? '📄' : block.type === 'question_list' ? '📋' : block.type === 'image' ? '🖼️' : '📢'}
+                                            </span>
+                                            {block.type} Block
+                                        </div>
+                                        
+                                        {block.type === 'text' && (
+                                            <div 
+                                                contentEditable 
+                                                suppressContentEditableWarning
+                                                onBlur={(e) => updateBlock(idx, e.target.innerText)}
+                                                className="outline-none focus:ring-4 focus:ring-indigo-500/10 rounded-xl p-4 bg-white text-sm leading-relaxed whitespace-pre-wrap font-bold text-navy-blue border border-transparent focus:border-indigo-200 transition-all"
+                                            >
+                                                {block.content}
+                                            </div>
+                                        )}
+                                        
+                                        {block.type === 'hero' && (
+                                            <div className="bg-gradient-to-r from-indigo-600 to-navy-blue h-24 rounded-2xl flex items-center justify-center text-white font-black text-xs gap-3 shadow-inner">
+                                                <span className="text-2xl">🏆</span> 
+                                                <div className="text-center">
+                                                    <div className="opacity-60 text-[8px] uppercase tracking-tighter mb-1">Preview Component</div>
+                                                    <div>スコア・合格判定ヘッダー</div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {block.type === 'section_analysis' && (
+                                            <div className="space-y-4">
+                                                <div className="flex items-center gap-3">
+                                                    <input 
+                                                        type="text"
+                                                        value={block.content.label}
+                                                        onChange={(e) => updateBlock(idx, { ...block.content, label: e.target.value })}
+                                                        className="bg-white border border-gray-100 rounded-lg px-3 py-1 text-xs font-black text-navy-blue shadow-sm outline-none focus:border-indigo-500 w-32"
+                                                    />
+                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">の解説</span>
+                                                </div>
+                                                <textarea 
+                                                    value={block.content.text}
+                                                    onChange={(e) => updateBlock(idx, { ...block.content, text: e.target.value })}
+                                                    className="w-full text-xs p-5 bg-white border border-gray-100 rounded-2xl min-h-[120px] outline-none font-bold text-gray-600 shadow-sm focus:border-indigo-500 transition-all"
+                                                    placeholder="解説の内容を入力してください..."
+                                                />
+                                            </div>
+                                        )}
+
+                                        {block.type === 'question_list' && (
+                                            <div className="bg-navy-blue/10 border-2 border-navy-blue/5 text-navy-blue p-6 rounded-2xl text-center">
+                                                <div className="text-[10px] font-black uppercase tracking-widest opacity-50 mb-2">設問リストを表示します</div>
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <span className="text-xs font-black bg-white px-3 py-1 rounded-full shadow-sm">Section ID: {block.content.sectionId}</span>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {block.type === 'image' && (
+                                            <div className="space-y-4">
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">画像URL</label>
+                                                        <input 
+                                                            type="text"
+                                                            value={block.content.url}
+                                                            onChange={(e) => updateBlock(idx, { ...block.content, url: e.target.value })}
+                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold text-navy-blue outline-none focus:border-indigo-500"
+                                                            placeholder="https://example.com/image.jpg"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">代替テキスト (alt)</label>
+                                                        <input 
+                                                            type="text"
+                                                            value={block.content.alt}
+                                                            onChange={(e) => updateBlock(idx, { ...block.content, alt: e.target.value })}
+                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-bold text-navy-blue outline-none focus:border-indigo-500"
+                                                            placeholder="画像の説明"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                {block.content.url && (
+                                                    <div className="mt-4 border-2 border-dashed border-gray-100 rounded-2xl overflow-hidden bg-white max-h-48 flex items-center justify-center">
+                                                        <img src={block.content.url} alt={block.content.alt} className="max-w-full max-h-48 object-contain" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {block.type === 'ad' && (
+                                            <div className="bg-gray-100/50 p-4 rounded-2xl border border-gray-200">
+                                                <div className="grid grid-cols-2 gap-6">
+                                                    <div>
+                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">① 広告配信ターゲット (自動)</div>
+                                                        <select 
+                                                            value={block.content.pageTarget || 'result_inline'}
+                                                            onChange={(e) => updateBlock(idx, { ...block.content, pageTarget: e.target.value, bannerId: null })}
+                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-black text-navy-blue outline-none focus:border-indigo-500"
+                                                        >
+                                                            <option value="all">すべて</option>
+                                                            <option value="result_inline">結果画面 (インライン)</option>
+                                                            <option value="result">結果画面 (全体)</option>
+                                                            <option value="home">ホーム画面</option>
+                                                            <option value="exam">試験画面</option>
+                                                        </select>
+                                                        <p className="text-[9px] text-gray-400 mt-2 italic">※特定の広告を選択した場合は無効になります</p>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">② 特定の広告を指定 (手動)</div>
+                                                        <select 
+                                                            value={block.content.bannerId || ''}
+                                                            onChange={(e) => {
+                                                                const val = e.target.value;
+                                                                updateBlock(idx, { ...block.content, bannerId: val || null });
+                                                            }}
+                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-black text-indigo-600 outline-none focus:border-indigo-500 font-mono"
+                                                        >
+                                                            <option value="">-- 指定なし (配信ターゲット優先) --</option>
+                                                            {banners.map(b => (
+                                                                <option key={b.id} value={b.id}>
+                                                                    {b.is_active ? '✅' : '❌'} {b.title} ({b.id.substring(0,6)})
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        {block.content.bannerId && (
+                                                            <div className="mt-2 text-right">
+                                                                <button 
+                                                                    onClick={() => updateBlock(idx, { ...block.content, bannerId: null })}
+                                                                    className="text-red-400 hover:text-red-500 text-[10px] font-bold"
+                                                                >
+                                                                    × 指定を解除
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Add Block Menu */}
+                <div className="mt-16 pt-12 border-t border-indigo-50">
+                    <div className="text-center mb-8">
+                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em]">新しいブロックを追加</span>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-4">
+                        <button onClick={() => addBlock('text')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">✍️</span> 文章
+                        </button>
+                        <button onClick={() => addBlock('hero')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">⭐</span> 判定ヘッダー
+                        </button>
+                        <button onClick={() => addBlock('section_analysis')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">📄</span> 大問解説
+                        </button>
+                        <button onClick={() => addBlock('question_list')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">📋</span> 設問リスト
+                        </button>
+                        <button onClick={() => addBlock('image')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">🖼️</span> 画像
+                        </button>
+                        <button onClick={() => addBlock('ad')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                            <span className="text-2xl group-hover:scale-125 transition-transform">📢</span> 広告
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 export default AdminExamEditor;

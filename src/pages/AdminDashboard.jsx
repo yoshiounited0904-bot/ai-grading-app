@@ -40,7 +40,7 @@ function AdminDashboard() {
         const { error } = await updateAdminComment(id, comment);
         if (error) {
             console.error('Error updating comment:', error);
-            alert('メモの更新に失敗しました。');
+            alert('メモの更新に失敗しました。管理者メモ用の「admin_comment」カラムをデータベース(Supabase)の exams テーブルに追加したか確認してください。');
         } else {
             setExams(prev => prev.map(e => e.id === id ? { ...e, admin_comment: comment } : e));
         }
@@ -97,6 +97,55 @@ function AdminDashboard() {
         });
     };
 
+    const handleEditLayout = (exam) => {
+        // Generate dummy question feedback based on real master data from structure
+        const dummyFeedback = [];
+        if (Array.isArray(exam.structure)) {
+            exam.structure.forEach(section => {
+                if (Array.isArray(section.questions)) {
+                    section.questions.forEach(q => {
+                        dummyFeedback.push({
+                            id: String(q.id || `${section.id}-${Math.floor(Math.random() * 10)}`),
+                            correct: false, // Default to incorrect since userAnswer is empty
+                            userAnswer: "", 
+                            correctAnswer: q.correctAnswer || q.answer || "未設定",
+                            explanation: q.explanation || "マスターデータに解説が設定されていません。"
+                        });
+                    });
+                } else if (section.totalPoints) {
+                    // Fallback for sections without explicit questions but have points
+                    dummyFeedback.push({
+                        id: `${section.id}-1`,
+                        correct: false,
+                        userAnswer: "",
+                        correctAnswer: "未設定",
+                        explanation: "マスターデータに解説が設定されていません。"
+                    });
+                }
+            });
+        }
+
+        // Jump directly to ResultPage in Design Mode with dummy data
+        navigate('/result', {
+            state: {
+                examId: exam.id,
+                universityName: exam.university,
+                examSubject: `${exam.year}年度 ${exam.subject}`,
+                isDesignMode: true,
+                result: {
+                    score: 0,
+                    maxScore: exam.max_score,
+                    passProbability: "---",
+                    detailedAnalysis: exam.detailed_analysis,
+                    weaknessAnalysis: exam.weakness_analysis || "",
+                    questionFeedback: dummyFeedback
+                },
+                examStructure: exam.structure,
+                isNewResult: false
+            }
+        });
+    };
+
     const handleImport = async () => {
         if (window.confirm('ダミーデータをSupabaseに一括登録します。よろしいですか？')) {
             setLoading(true);
@@ -116,12 +165,18 @@ function AdminDashboard() {
                             <span className="text-xs bg-navy-blue text-white px-2 py-1 rounded-full font-mono">v2.1</span>
                         </h1>
                         <div className="flex gap-6 mt-2 border-b border-gray-200">
-                            <button className="pb-2 px-1 border-b-2 border-navy-blue font-bold text-navy-blue">
-                                試験マスター管理
-                            </button>
-                            <Link to="/admin/banners" className="pb-2 px-1 text-gray-400 hover:text-navy-blue">
-                                広告運用管理 (CMS)
-                            </Link>
+                        <button className="pb-2 px-1 border-b-2 border-navy-blue font-bold text-navy-blue">
+                            試験マスター管理
+                        </button>
+                        <button 
+                            onClick={() => {
+                                console.log("Navigating to Banners...");
+                                navigate('/admin/banners');
+                            }}
+                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue"
+                        >
+                            広告運用管理 (CMS)
+                        </button>
                         </div>
                     </div>
                     <Link
@@ -254,6 +309,9 @@ function AdminDashboard() {
                                                 <div className="flex flex-col gap-1 w-24 ml-auto">
                                                     <button onClick={() => handlePreview(exam)} className="w-full py-1 text-[10px] font-black bg-navy-blue text-white rounded shadow hover:bg-navy-light transition-colors">
                                                         プレビュー
+                                                    </button>
+                                                    <button onClick={() => handleEditLayout(exam)} className="w-full py-1 text-[10px] font-black bg-indigo-500 text-white rounded shadow hover:bg-indigo-600 transition-colors">
+                                                        🎨 レイアウト編集
                                                     </button>
                                                     <div className="flex gap-1">
                                                         <Link to={`/admin/exam/${exam.id}`} className="flex-1 py-1 text-[10px] font-bold bg-gray-50 text-gray-600 rounded border border-gray-100 hover:bg-gray-100 text-center">

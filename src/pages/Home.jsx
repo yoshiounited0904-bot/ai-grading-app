@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import UniversityCard from '../components/UniversityCard';
-import { getUniversities } from '../data/examRegistry';
+import { getUniversityList } from '../data/examRegistry';
+import UniversitySkeleton from '../components/UniversitySkeleton';
 import { useAuth } from '../contexts/AuthContext';
 import { signOut } from '../services/authService';
 import RecruitmentBanner from '../components/RecruitmentBanner';
@@ -15,7 +16,7 @@ const Home = () => {
 
     useEffect(() => {
         const fetchUniversities = async () => {
-            const data = await getUniversities();
+            const data = await getUniversityList();
             setUniversities(data);
             setLoadingUniversities(false);
         };
@@ -187,9 +188,9 @@ const Home = () => {
                 paddingBottom: '350px' // Spacer to prevent sticky banner from covering bottom content
             }}>
                 {loadingUniversities ? (
-                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: '#888' }}>
-                        読み込み中...
-                    </div>
+                    Array.from({ length: 6 }).map((_, i) => (
+                        <UniversitySkeleton key={i} />
+                    ))
                 ) : universities.length === 0 ? (
                     <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: '#888' }}>
                         大学データが見つかりません。

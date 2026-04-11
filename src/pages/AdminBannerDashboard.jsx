@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { getAdminBanners, updateBanner, deleteBanner } from '../services/adminBannerService';
 
 const AdminBannerDashboard = () => {
+    const navigate = useNavigate();
     const [banners, setBanners] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -51,9 +52,15 @@ const AdminBannerDashboard = () => {
                 <div>
                     <h1 className="text-3xl font-serif text-navy-blue">管理者ページ</h1>
                     <div className="flex gap-6 mt-2 border-b border-gray-200">
-                        <Link to="/admin" className="pb-2 px-1 text-gray-400 hover:text-navy-blue">
+                        <button 
+                            onClick={() => {
+                                console.log("Navigating to Exam Master...");
+                                navigate('/admin');
+                            }}
+                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue"
+                        >
                             試験マスター管理
-                        </Link>
+                        </button>
                         <button className="pb-2 px-1 border-b-2 border-navy-blue font-bold text-navy-blue">
                             広告運用管理 (CMS)
                         </button>
@@ -95,9 +102,9 @@ const AdminBannerDashboard = () => {
                             banners.map((banner) => (
                                 <tr key={banner.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="w-24 h-12 bg-gray-100 rounded overflow-hidden flex items-center justify-center border border-gray-200">
+                                        <div className="w-24 h-12 bg-gray-100 rounded overflow-hidden flex items-center justify-center border border-gray-200" style={{ width: '120px', height: '60px' }}>
                                             {banner.image_url ? (
-                                                <img src={banner.image_url} alt={banner.title} className="w-full h-full object-cover" />
+                                                <img src={banner.image_url} alt={banner.title} className="admin-banner-preview" />
                                             ) : (
                                                 <span className="text-[10px] text-gray-400">No Image</span>
                                             )}
@@ -110,7 +117,7 @@ const AdminBannerDashboard = () => {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold">
+                                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold" style={{ backgroundColor: '#e0e7ff', color: '#4338ca', padding: '0.125rem 0.5rem', borderRadius: '9999px' }}>
                                             {banner.page_target === 'all' ? '全画面' : banner.page_target}
                                         </span>
                                         <div className="text-[10px] text-gray-400 mt-1 uppercase">{banner.layout_type}</div>
@@ -119,7 +126,7 @@ const AdminBannerDashboard = () => {
                                         <div className="text-xs font-medium text-gray-700">
                                             {banner.impression_count} / {banner.click_count}
                                         </div>
-                                        <div className="text-[10px] text-accent-gold font-bold">
+                                        <div className="text-[10px] font-bold" style={{ color: '#d97706' }}>
                                             CTR: {banner.impression_count > 0 ? ((banner.click_count / banner.impression_count) * 100).toFixed(1) : 0}%
                                         </div>
                                     </td>
@@ -127,13 +134,39 @@ const AdminBannerDashboard = () => {
                                         <button
                                             onClick={() => handleToggleActive(banner.id, banner.is_active)}
                                             className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${banner.is_active ? 'bg-green-500' : 'bg-gray-200'}`}
+                                            style={{ 
+                                                width: '44px', 
+                                                height: '24px', 
+                                                backgroundColor: banner.is_active ? '#22c55e' : '#e5e7eb',
+                                                borderRadius: '9999px',
+                                                border: 'none',
+                                                position: 'relative'
+                                            }}
                                         >
-                                            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${banner.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
+                                            <span 
+                                                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${banner.is_active ? 'translate-x-5' : 'translate-x-0'}`} 
+                                                style={{
+                                                    display: 'block',
+                                                    width: '20px',
+                                                    height: '200px',
+                                                    height: '20px',
+                                                    backgroundColor: 'white',
+                                                    borderRadius: '50%',
+                                                    transform: banner.is_active ? 'translateX(20px)' : 'translateX(0)',
+                                                    transition: '0.2s'
+                                                }}
+                                            />
                                         </button>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <Link to={`/admin/banners/${banner.id}`} className="text-navy-blue hover:text-indigo-900 mr-4 font-bold">編集</Link>
-                                        <button onClick={() => handleDelete(banner.id)} className="text-red-600 hover:text-red-900 font-bold">削除</button>
+                                        <Link to={`/admin/banners/${banner.id}`} className="text-navy-blue hover:text-indigo-900 mr-4 font-bold" style={{ marginRight: '1rem' }}>編集</Link>
+                                        <button 
+                                            onClick={() => handleDelete(banner.id)} 
+                                            className="text-red-600 hover:text-red-900 font-bold"
+                                            style={{ color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
+                                        >
+                                            削除
+                                        </button>
                                     </td>
                                 </tr>
                             ))

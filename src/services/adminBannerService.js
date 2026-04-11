@@ -14,6 +14,20 @@ export const getAdminBanners = async () => {
 };
 
 /**
+ * Get a specific banner by ID
+ */
+export const getBannerById = async (id) => {
+    const { data, error } = await supabase
+        .from('banner_ads')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+    if (error) throw error;
+    return data;
+};
+
+/**
  * Get active banners for a specific page target
  */
 export const getActiveBanners = async (pageTarget = 'all') => {
@@ -69,12 +83,40 @@ export const updateBanner = async (id, updates) => {
  * Delete a banner
  */
 export const deleteBanner = async (id) => {
-    const { error } = await supabase
+    // 1. Get banner data first to find image URL
+    const { data: banner, error: fetchError } = await supabase
+        .from('banner_ads')
+        .select('image_url')
+        .eq('id', id)
+        .single();
+
+    if (fetchError) {
+        console.error("Error fetching banner for deletion:", fetchError);
+    }
+
+    // 2. Delete database record
+    const { error: dbError } = await supabase
         .from('banner_ads')
         .delete()
         .eq('id', id);
 
-    if (error) throw error;
+    if (dbError) throw dbError;
+
+    // 3. Delete image from storage if it exists and is a Supabase storage URL
+    if (banner?.image_url && banner.image_url.includes('/storage/v1/object/public/banners/')) {
+        try {
+            const fileName = banner.image_url.split('/').pop();
+            const { error: storageError } = await supabase.storage
+                .from('banners')
+                .remove([fileName]);
+            
+            if (storageError) {
+                console.warn("Could not delete image from usage storage:", storageError);
+            }
+        } catch (err) {
+            console.warn("Storage cleanup failed (non-critical):", err);
+        }
+    }
 };
 
 /**
@@ -117,12 +159,24 @@ export const incrementClick = async (id) => {
 };
 
 /**
- * Increment impression counts (Internal)
+ * Increment impression counts (Optimized via RPC)
  */
 const incrementImpressions = async (ids) => {
-    // Ideally use an RPC for batch update
-    for (const id of ids) {
-        const { data } = await supabase.from('banner_ads').select('impression_count').eq('id', id).single();
-        await supabase.from('banner_ads').update({ impression_count: (data?.impression_count || 0) + 1 }).eq('id', id);
+    if (!ids || ids.length === 0) return;
+    
+    try {
+        // Use RPC for atomic batch update to prevent network hammering
+        const { error } = await supabase.rpc('increment_banner_impressions', { banner_ids: ids });
+        
+        if (error) {
+            console.warn("RPC increment_banner_impressions failed, falling back to legacy mode:", error);
+            // Legacy fallback (Inefficient, but works if RPC is missing)
+            for (const id of ids) {
+                const { data } = await supabase.from('banner_ads').select('impression_count').eq('id', id).single();
+                await supabase.from('banner_ads').update({ impression_count: (data?.impression_count || 0) + 1 }).eq('id', id);
+            }
+        }
+    } catch (err) {
+        console.error("Impression update failed:", err);
     }
 };

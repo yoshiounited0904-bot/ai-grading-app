@@ -1297,3 +1297,59 @@ ${targetPointsRule}
     throw error;
   }
 };
+
+/**
+ * Generates ONLY the 'explanation' fields for all questions in a section,
+ * preserving the existing IDs, types, answers, and points.
+ */
+export const generateSectionQuestionsExplanations = async (apiKey, subjectType, sectionData, questionFiles = [], answerFiles = []) => {
+  try {
+    const trimmedKey = apiKey?.trim();
+    if (!trimmedKey) throw new Error("Gemini API Key is not set.");
+
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
+
+    const imageParts = [];
+    if (questionFiles && questionFiles.length > 0) {
+      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    }
+    if (answerFiles && answerFiles.length > 0) {
+      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    }
+
+    const prompt = `あなたは大学入試の専門講師です。
+以下の画像（問題・解答）を分析し、提供された「設問構造（JSON）」の各小問に対応する **解説(explanation)のみ** を生成してください。
+また、大問全体の読解ポイント(sectionAnalysis)も併せて作成してください。
+
+【厳格ルール】
+1. **既存の id, label, type, options, correctAnswer, points は絶対に書き換えないこと。** 
+2. 渡された JSON の各要素にある \`explanation\` フィールドを、論理的で丁寧な解説（本文の根拠、誤答の理由）で埋めてください。
+3. 日本語で記述すること。
+4. アスタリスク（*）記号は一切使用禁止。
+5. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
+
+【対象の設問構造（現在のデータ）】
+${JSON.stringify(sectionData, null, 2)}
+
+【出力要件】
+- JSONオブジェクト1つのみ
+- 既存の構造を維持
+`;
+
+    const result = await withRetry(() => model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
+    }), 5, 5000);
+
+    const sectionRaw = result.response.text();
+    const parsed = JSON.parse(sanitizeJson(sectionRaw));
+    
+    return parsed;
+  } catch (error) {
+    console.error(`[AdminGeminiService] Failed to generate explanations for section:`, error);
+    throw error;
+  }
+};

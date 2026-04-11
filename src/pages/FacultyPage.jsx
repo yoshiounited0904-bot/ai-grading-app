@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getUniversities } from '../data/examRegistry';
+import { getExamsForUniversity } from '../data/examRegistry';
 
 const FacultyPage = () => {
     const { universityId, facultyId } = useParams();
@@ -11,8 +11,8 @@ const FacultyPage = () => {
 
     useEffect(() => {
         const fetchFaculty = async () => {
-            const data = await getUniversities();
-            const u = data.find(u => u.id.toString() === universityId);
+            if (!universityId) return;
+            const u = await getExamsForUniversity(universityId);
             const f = u?.faculties?.find(fac => fac.id === facultyId);
 
             setUniversity(u || null);

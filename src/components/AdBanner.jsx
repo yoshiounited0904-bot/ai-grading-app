@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { getActiveBanners, incrementClick } from '../services/adminBannerService';
+import { getActiveBanners, incrementClick, getBannerById } from '../services/adminBannerService';
 
-const AdBanner = ({ pageTarget = 'all', className = '' }) => {
+const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
     const [banners, setBanners] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchBanners = async () => {
             try {
-                const data = await getActiveBanners(pageTarget);
-                // If multiple banners, maybe pick one randomly or show all?
-                // For now, let's pick the latest one.
-                setBanners(data);
+                if (bannerId) {
+                    const data = await getBannerById(bannerId);
+                    setBanners([data]);
+                } else {
+                    const data = await getActiveBanners(pageTarget);
+                    // If multiple banners, maybe pick one randomly or show all?
+                    // For now, let's pick the latest one.
+                    setBanners(data);
+                }
             } catch (err) {
                 console.error("AdBanner error:", err);
             } finally {
@@ -20,7 +25,7 @@ const AdBanner = ({ pageTarget = 'all', className = '' }) => {
         };
 
         fetchBanners();
-    }, [pageTarget]);
+    }, [pageTarget, bannerId]);
 
     const handleClick = async (id) => {
         try {
