@@ -57,7 +57,7 @@ export const getAdminExams = async () => {
             type, 
             pdf_path, 
             max_score, 
-            is_completed, 
+            master_status, 
             unimplemented_items, 
             admin_comment,
             created_at,
@@ -169,4 +169,29 @@ export const uploadExamPdf = async (file, examId) => {
         .getPublicUrl(filePath);
 
     return { publicUrl };
+};
+
+export const duplicateAdminExam = async (examId) => {
+    // 1. Get full source data
+    const { data: source, error: fetchError } = await getAdminExamById(examId);
+    if (fetchError) return { error: fetchError };
+
+    // 2. Prepare new data (clone and modify)
+    // We remove id and created_at to let Supabase generate new ones
+    const { id, created_at, updated_at, ...cleanData } = source;
+    
+    const duplicateData = {
+        ...cleanData,
+        subject: `${cleanData.subject}(コピー)`,
+        master_status: 'working', // Reset status for the copy
+        id: `copy_${Date.now()}_${Math.floor(Math.random() * 1000)}` // Temporary unique string if needed, or let DB handle if ID is BIGINT
+    };
+
+    // 3. Insert as new record
+    const { data, error } = await supabase
+        .from('exams')
+        .insert([duplicateData])
+        .select();
+
+    return { data, error };
 };

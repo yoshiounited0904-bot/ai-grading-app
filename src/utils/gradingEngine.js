@@ -19,20 +19,23 @@ export const gradeObjectively = (examData, userAnswers) => {
             maxScore += q.points || 0;
 
             // Only process objective types here
-            // mixed and correction are always treated as subjective to allow AI evaluation of reasons/corrections
             const hasInstruction = (q.gradingInstruction && q.gradingInstruction.trim() !== '') || (q.gradingCriteria && q.gradingCriteria.trim() !== '');
-            const isObjective = ['selection', 'complete', 'unordered'].includes(q.type) && !hasInstruction;
+            const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type, q.alternativeAnswers);
+            
+            // Standard objective types
+            const isStandardObjective = ['selection', 'selection_multi', 'complete', 'unordered'].includes(q.type) && !hasInstruction;
+            // Descriptive match (auto-pass if answer matches exactly)
+            const isDescriptiveMatch = q.type === 'descriptive' && !hasInstruction && isCorrect;
 
-            if (isObjective) {
-                const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type);
-
+            if (isStandardObjective || isDescriptiveMatch) {
                 const feedbackItem = {
                     id: q.id,
                     userAnswer: Array.isArray(userAnswer) ? userAnswer.join(', ') : userAnswer,
                     correctAnswer: correctAnswer,
                     correct: isCorrect,
                     explanation: q.explanation || (isCorrect ? "正解です。" : "不正解です。正解を確認しましょう。"),
-                    isSubjective: false
+                    isSubjective: false,
+                    points: q.points || 0 // Store points for possible group sum
                 };
 
                 if (q.completeGroupId && q.completeGroupId.trim() !== '') {
@@ -56,15 +59,18 @@ export const gradeObjectively = (examData, userAnswers) => {
                     questionFeedback.push(feedbackItem);
                 }
             } else {
-                // Mark for AI processing
-                questionFeedback.push({
+                // Mark for AI processing (subjective)
+                const feedbackItem = {
                     id: q.id,
                     userAnswer: userAnswer,
                     correctAnswer: correctAnswer,
-                    points: q.points,
+                    alternativeAnswers: q.alternativeAnswers || [],
+                    points: q.points || 0,
                     gradingInstruction: q.gradingInstruction || q.gradingCriteria || "",
-                    isSubjective: true
-                });
+                    isSubjective: true,
+                    completeGroupId: q.completeGroupId // Pass group ID
+                };
+                questionFeedback.push(feedbackItem);
             }
         });
     });
@@ -75,13 +81,14 @@ export const gradeObjectively = (examData, userAnswers) => {
         if (group.allCorrect) {
             score += group.totalPoints;
             group.questions.forEach(fq => {
+                fq.explanation = `【完答正解! グループ合計 ${group.totalPoints}点】\n` + (fq.explanation || "");
                 questionFeedback.push(fq);
             });
         } else {
-            // Failed group: Mark all as incorrect
+            // Failed group: All questions in group get 0 score
             group.questions.forEach(fq => {
-                fq.correct = false;
-                fq.explanation = "【完答問題: グループ内で不正解が含まれるため不正解扱いとなります】\n" + (fq.explanation || "");
+                fq.correct = false; // Force incorrect
+                fq.explanation = "【完答問題: グループ内で不正解が含まれるため、この問題の得点は0点となります】\n" + (fq.explanation || "");
                 questionFeedback.push(fq);
             });
         }
@@ -95,7 +102,7 @@ export const gradeObjectively = (examData, userAnswers) => {
     };
 };
 
-const checkCorrectness = (userAnswer, correctAnswer, type) => {
+const checkCorrectness = (userAnswer, correctAnswer, type, alternativeAnswers = []) => {
     if (!userAnswer || !correctAnswer) return false;
 
     // Normalize for comparison
@@ -117,7 +124,7 @@ const checkCorrectness = (userAnswer, correctAnswer, type) => {
 
         if (correctParts.length !== userParts.length) return false;
 
-        if (type === 'unordered') {
+        if (type === 'unordered' || type === 'selection_multi') {
             // Order does not matter
             return correctParts.every(p => userParts.includes(p));
         } else {
@@ -126,5 +133,12 @@ const checkCorrectness = (userAnswer, correctAnswer, type) => {
         }
     }
 
-    return normUser === normCorrect;
+    if (normUser === normCorrect) return true;
+
+    // Check alternative answers for descriptive (OR match)
+    if (type === 'descriptive' && Array.isArray(alternativeAnswers)) {
+        return alternativeAnswers.some(alt => normalize(alt) === normUser);
+    }
+
+    return false;
 };

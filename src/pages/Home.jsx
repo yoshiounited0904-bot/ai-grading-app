@@ -105,8 +105,8 @@ const Home = () => {
                         </button>
                     </div>
 
-                    {/* Banner Ad */}
-                    <AdBanner pageTarget="home" className="mt-12 max-w-4xl mx-auto" />
+                    {/* Banner Ad - Reduced margin on mobile */}
+                    <AdBanner pageTarget="home" className="mt-6 md:mt-12 max-w-4xl mx-auto" />
                 </div>
 
                 <div className="grid-responsive" style={{

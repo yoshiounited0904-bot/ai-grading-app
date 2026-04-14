@@ -5,6 +5,7 @@ export const saveExamResult = async (userId, resultData) => {
     const insertData = {
         user_id: userId,
         university_name: resultData.universityName,
+        faculty_name: resultData.facultyName,
         exam_subject: resultData.examSubject,
         exam_year: resultData.examYear || 2025,
         score: resultData.score,

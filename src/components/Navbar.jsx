@@ -59,7 +59,7 @@ const Navbar = () => {
                         color: 'var(--color-accent-primary)',
                         letterSpacing: '0.05em'
                     }}>
-                        AI Grading
+                        スマサイ
                     </span>
                 </Link>
 

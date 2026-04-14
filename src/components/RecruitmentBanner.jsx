@@ -40,23 +40,44 @@ const RecruitmentBanner = ({ sticky = false }) => {
               from { transform: translateY(100%); opacity: 0; }
               to { transform: translateY(0); opacity: 1; }
             }
-            @media (max-width: 900px) {
+            @media (max-width: 600px) {
               .recruitment-banner {
-                flex-direction: column !important;
-                padding: 1.5rem !important;
-                gap: 1.5rem !important;
-                text-align: center !important;
-              }
-              .banner-content {
+                flex-direction: row !important;
+                padding: 0.6rem 1rem !important;
+                gap: 0.8rem !important;
+                height: 64px !important;
                 align-items: center !important;
               }
+              .banner-content h3 {
+                font-size: 0.9rem !important;
+              }
+              .banner-content .banner-logo-text {
+                display: none !important;
+              }
+              .banner-content .banner-sub-text {
+                display: none !important;
+              }
               .line-section {
-                width: 100% !important;
-                justify-content: center !important;
+                padding: 0 !important;
+                background: none !important;
+                border: none !important;
+                box-shadow: none !important;
+                flex: 1 !important;
+                justify-content: flex-end !important;
+              }
+              .line-icon-wrapper {
+                display: none !important;
+              }
+              .line-text-wrapper {
+                display: none !important;
+              }
+              .line-btn {
+                padding: 0.5rem 1rem !important;
+                font-size: 0.75rem !important;
+                border-radius: 8px !important;
               }
               .cta-section {
-                width: 100% !important;
-                justify-content: center !important;
+                display: none !important;
               }
             }
           `}
@@ -90,7 +111,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     flex: 'none', // Changed from sticky ? '1.5' : 'none' to 'none'
                     minWidth: 'fit-content'
                 }}>
-                    <div style={{
+                    <div className="banner-logo-text" style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: '0.8rem',
@@ -125,7 +146,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                         早慶GMARCH合格率 <span style={{ color: '#fbbf24', textShadow: '0 0 20px rgba(251, 191, 36, 0.3)' }}>140%</span>
                     </h3>
 
-                    <div style={{
+                    <div className="banner-sub-text" style={{
                         fontSize: sticky ? '1.1rem' : '1.4rem', // Increased font size
                         color: '#fbbf24',
                         fontWeight: '800',
@@ -156,7 +177,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     transition: 'all 0.3s ease',
                     boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
                 }}>
-                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <div className="line-icon-wrapper" style={{ position: 'relative', flexShrink: 0 }}>
                         <img
                             src="/images/line-icon.png"
                             alt="LINE Icon"
@@ -181,7 +202,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', flexGrow: 1 }}>
-                        <div style={{
+                        <div className="line-text-wrapper" style={{
                             fontSize: sticky ? '1rem' : '1.3rem',
                             fontWeight: '800',
                             color: '#fff',
@@ -191,6 +212,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                             無料LINE合格戦略相談
                         </div>
                         <button
+                            className="line-btn"
                             style={{
                                 background: 'linear-gradient(135deg, #06c755 0%, #05b34c 100%)',
                                 color: 'white',

@@ -6,7 +6,7 @@ import { gradeExamWithGemini } from '../services/geminiService';
 const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    let { exam, universityName, universityId } = location.state || {};
+    let { exam, universityName, universityId, selectedSectionIds, facultyName } = location.state || {};
 
     // Check localStorage if coming from Admin "Save & Preview" new tab
     if (!exam) {
@@ -32,11 +32,19 @@ const ExamPage = () => {
     const [gradingProgress, setGradingProgress] = useState('');
     const [logs, setLogs] = useState([]);
     // Initialize directly from the passed exam object
-    // This restores the behavior to the "first version" where we relied on mock data
-    const [examData, setExamData] = useState(exam || null);
+    // Filter structure if selectedSectionIds is provided
+    const [examData, setExamData] = useState(() => {
+        if (!exam) return null;
+        if (!selectedSectionIds) return exam;
+        
+        return {
+            ...exam,
+            structure: exam.structure.filter(section => selectedSectionIds.includes(section.id))
+        };
+    });
 
     // Timer states
-    const examDuration = (exam?.duration_minutes || 60) * 60; // seconds
+    const examDuration = ((exam?.duration_minutes || exam?.durationMinutes || 60) * 60); // seconds
     const [timerStarted, setTimerStarted] = useState(false);
     const [timeRemaining, setTimeRemaining] = useState(examDuration);
     const [timerExpired, setTimerExpired] = useState(false);
@@ -44,6 +52,10 @@ const ExamPage = () => {
 
     // Mobile Tab State (pdf or answer)
     const [activeTab, setActiveTab] = useState('pdf');
+    const [isMobile, setIsMobile] = useState(false);
+    const [pdfImages, setPdfImages] = useState([]);
+    const [loadingPdf, setLoadingPdf] = useState(false);
+
     // Submission Confirmation
     const [showConfirmModal, setShowConfirmModal] = useState(false);
 
@@ -75,6 +87,35 @@ const ExamPage = () => {
         const secs = seconds % 60;
         return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
+
+    // Detect mobile and load PDF as images if needed
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth <= 768);
+        };
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+
+        const loadPdfForMobile = async () => {
+            if (window.innerWidth <= 768 && exam?.type === 'pdf' && exam.pdfPath) {
+                setLoadingPdf(true);
+                try {
+                    const { convertPdfToImages } = await import('../utils/pdfUtils');
+                    const images = await convertPdfToImages(exam.pdfPath, (msg) => {
+                        console.log("PDF Viewer Load:", msg);
+                    });
+                    setPdfImages(images.map(img => `data:image/jpeg;base64,${img.inlineData.data}`));
+                } catch (err) {
+                    console.error("Failed to load PDF images for viewer:", err);
+                } finally {
+                    setLoadingPdf(false);
+                }
+            }
+        };
+
+        loadPdfForMobile();
+        return () => window.removeEventListener('resize', checkMobile);
+    }, [exam]);
 
     // Start timer function
     const startTimer = () => {
@@ -139,10 +180,17 @@ const ExamPage = () => {
                 return acc;
             }, {});
 
+            // Calculate the total points of the FULL exam (for proportional passing score)
+            const fullMaxScore = exam.structure?.reduce((acc, section) => {
+                return acc + (section.questions?.reduce((qAcc, q) => qAcc + (q.points || 0), 0) || 0);
+            }, 0) || examData.maxScore || 100;
+
             let result;
             try {
                 // Pass the loaded examData (with structure/answers) to the grading service
-                result = await gradeExamWithGemini(apiKey, examData, formattedAnswers, images);
+                // Including fullMaxScore for proportional border calculation
+                const { gradeExamWithGemini } = await import('../services/geminiService');
+                result = await gradeExamWithGemini(apiKey, examData, formattedAnswers, images, fullMaxScore);
                 console.log("Grading Result Raw:", result);
             } catch (apiError) {
                 console.error("API Error:", apiError);
@@ -160,11 +208,13 @@ const ExamPage = () => {
                 state: {
                     result,
                     universityName,
+                    facultyName,
                     examId: exam.id,
                     examSubject: exam.subject,
                     examStructure: examData?.structure || [], // Pass section-level master data
                     customLayout: examData?.custom_layout || exam?.custom_layout || [],
                     answers: formattedAnswers,
+                    pdfPath: exam.pdfPath, // Added to allow viewing PDF from ResultPage
                     isNewResult: true // Flag to indicate this is a new result that needs saving
                 }
             });
@@ -208,10 +258,10 @@ const ExamPage = () => {
                     </button>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <h2 style={{ fontSize: '0.95rem', color: 'var(--color-accent-primary)', lineHeight: 1.2, margin: 0 }}>
-                            {universityName || '大学'}
+                            {universityName || exam?.university || '大学'}
                         </h2>
                         <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
-                            {exam.year}年 {exam.subject}
+                            {exam?.year || ''}年 {exam?.subject || ''}
                         </div>
                     </div>
                 </div>
@@ -242,17 +292,41 @@ const ExamPage = () => {
                         終了
                     </button>
                     {timerStarted && !grading && (
-                        <button
-                            className="btn btn-primary"
-                            style={{
-                                padding: '0.4rem 0.8rem',
-                                fontSize: '0.8rem',
-                                boxShadow: 'none'
-                            }}
-                            onClick={confirmSubmit}
-                        >
-                            採点
-                        </button>
+                        <>
+                            <button
+                                className="btn btn-secondary shadow-none"
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    fontSize: '0.8rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.3rem'
+                                }}
+                                onClick={() => {
+                                    if (exam?.pdfPath || exam?.pdf_path) {
+                                        window.open(exam.pdfPath || exam.pdf_path, '_blank');
+                                    } else {
+                                        alert("PDFのパスが見つかりません。");
+                                    }
+                                }}
+                                title="原本PDFを新しいタブで開いて印刷・保存します"
+                            >
+                                <span style={{ fontSize: '1rem' }}>📥</span>
+                                <span className="hide-on-mobile">PDF印刷/保存</span>
+                                <span className="show-on-mobile" style={{ display: 'none' }}>PDF</span>
+                            </button>
+                            <button
+                                className="btn btn-primary"
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    fontSize: '0.8rem',
+                                    boxShadow: 'none'
+                                }}
+                                onClick={confirmSubmit}
+                            >
+                                採点
+                            </button>
+                        </>
                     )}
                 </div>
             </div>
@@ -319,14 +393,39 @@ const ExamPage = () => {
                     flex: 1,
                     borderRight: 'var(--border-glass)',
                     background: '#525659',
-                    display: activeTab === 'pdf' ? 'block' : 'none'
+                    display: activeTab === 'pdf' ? 'block' : 'none',
+                    overflowY: isMobile ? 'auto' : 'hidden'
                 }} className="pdf-container">
-                    {exam.type === 'pdf' ? (
-                        <iframe
-                            src={exam.pdfPath}
-                            style={{ width: '100%', height: '100%', border: 'none' }}
-                            title="Exam PDF"
-                        />
+                    {(exam?.type === 'pdf' || (exam?.pdfPath || exam?.pdf_path)) ? (
+                        isMobile ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0px', width: '100%' }}>
+                                {loadingPdf ? (
+                                    <div style={{ padding: '40vh 0', textAlign: 'center', color: 'white' }}>
+                                        <div className="spinner" style={{ margin: '0 auto 1rem' }}></div>
+                                        <p style={{ fontSize: '0.9rem' }}>問題を読み込み中...</p>
+                                    </div>
+                                ) : pdfImages.length > 0 ? (
+                                    pdfImages.map((src, idx) => (
+                                        <img 
+                                            key={idx} 
+                                            src={src} 
+                                            alt={`Page ${idx + 1}`} 
+                                            style={{ width: '100%', display: 'block' }} 
+                                        />
+                                    ))
+                                ) : (
+                                    <div style={{ padding: '2rem', color: 'white', textAlign: 'center' }}>
+                                        問題の読み込みに失敗しました。
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <iframe
+                                src={exam?.pdfPath || exam?.pdf_path}
+                                style={{ width: '100%', height: '100%', border: 'none' }}
+                                title="Exam PDF"
+                            />
+                        )
                     ) : (
                         <div style={{ padding: '2rem', color: 'white', textAlign: 'center' }}>
                             PDF not available for this exam type.

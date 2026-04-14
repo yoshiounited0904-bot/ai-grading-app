@@ -13,7 +13,7 @@ import { getAdminBanners } from '../services/adminBannerService';
 const ResultPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { result: initialResult, universityName, examId, examSubject, answers, examStructure: initialStructure, customLayout: initialCustomLayout, isNewResult, isDesignMode: incomingDesignMode } = location.state || {};
+    const { result: initialResult, universityName, facultyName, examId, examSubject, answers, examStructure: initialStructure, customLayout: initialCustomLayout, isNewResult, isDesignMode: incomingDesignMode } = location.state || {};
     const { user, profile } = useAuth();
     const isAdmin = user && (isAdminEmail(user.email) || profile?.role === 'admin');
 
@@ -77,8 +77,14 @@ const ResultPage = () => {
                     // Sync with latest DB data to ensure persistence across reloads/navigation
                     setResultData(prev => {
                         const next = { ...prev };
-                        if (data.detailed_analysis) next.detailedAnalysis = data.detailed_analysis;
-                        if (data.weakness_analysis) next.weaknessAnalysis = data.weakness_analysis;
+                        // Only sync master analysis fields if we're in design mode or if they are currently empty
+                        // This prevents student-specific results from being overwritten by master templates
+                        if (isDesignMode || !prev?.detailedAnalysis) {
+                            if (data.detailed_analysis) next.detailedAnalysis = data.detailed_analysis;
+                        }
+                        if (isDesignMode || !prev?.weaknessAnalysis) {
+                            if (data.weakness_analysis) next.weaknessAnalysis = data.weakness_analysis;
+                        }
                         
                         // If we are in design mode and have no questionFeedback, try to re-map from structure
                         if (prev && (!prev.questionFeedback || prev.questionFeedback.length === 0) && data.structure) {
@@ -118,6 +124,7 @@ const ResultPage = () => {
                 try {
                     await saveExamResult(user.id, {
                         universityName,
+                        facultyName,
                         examSubject,
                         score: resultData.score,
                         maxScore: resultData.maxScore,
@@ -553,7 +560,7 @@ const ResultPage = () => {
         <div className="container" style={{ maxWidth: '1400px', paddingBottom: '4rem' }}>
             <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
                 <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>採点結果</h1>
-                <p style={{ color: 'var(--color-text-secondary)' }}>{universityName} - {examSubject}</p>
+                <p style={{ color: 'var(--color-text-secondary)' }}>{universityName} {facultyName} - {examSubject}</p>
                 {isAdmin && (
                     <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginTop: '1rem' }}>
                         <button 
@@ -591,7 +598,37 @@ const ResultPage = () => {
                     </div>
                 </div>
 
-                <div style={{ textAlign: 'left', background: 'rgba(255,255,255,0.5)', padding: '1.25rem', borderRadius: '12px' }}>
+                <div className="no-print" style={{ 
+                    display: 'flex', 
+                    gap: '1rem', 
+                    justifyContent: 'center', 
+                    marginTop: '2rem',
+                    padding: '1rem',
+                    borderTop: '1px solid rgba(0,0,0,0.05)'
+                }}>
+                    <button 
+                        onClick={() => window.print()}
+                        className="btn btn-secondary"
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.5rem' }}
+                    >
+                        <span>🖨️</span> 結果を印刷/PDF保存
+                    </button>
+                    {(location.state?.pdfPath || examId) && (
+                        <button 
+                            onClick={() => {
+                                const path = location.state?.pdfPath;
+                                if (path) window.open(path, '_blank');
+                                else alert("原本PDFのパスが見つかりません。");
+                            }}
+                            className="btn btn-secondary"
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.5rem' }}
+                        >
+                            <span>📄</span> 原本PDFを表示
+                        </button>
+                    )}
+                </div>
+
+                <div style={{ textAlign: 'left', background: 'rgba(255,255,255,0.5)', padding: '1.25rem', borderRadius: '12px', marginTop: '2rem' }}>
                     <h3 style={{ fontSize: '1rem', color: 'var(--color-text-primary)', marginBottom: '1rem' }}>弱点分析・アドバイス</h3>
                     <ContentBlockRenderer 
                         fieldName="weakness"
@@ -705,7 +742,19 @@ const ResultPage = () => {
                                             ))}
                                         </div>
                                     </div>
-                                    <div style={{ flex: '1 1 500px', minWidth: 0, position: 'sticky', top: '1rem', alignSelf: 'flex-start', maxHeight: '70vh', overflowY: 'auto', background: 'rgba(99,102,241,0.04)', borderRadius: '12px', padding: '1rem', border: isDesignMode ? '1px dashed #6366f1' : 'none' }}>
+                                    <div style={{ 
+                                        flex: '1 1 500px', 
+                                        minWidth: 0, 
+                                        position: window.innerWidth > 768 ? 'sticky' : 'relative', 
+                                        top: '1rem', 
+                                        alignSelf: 'flex-start', 
+                                        maxHeight: window.innerWidth > 768 ? '70vh' : 'auto', 
+                                        overflowY: window.innerWidth > 768 ? 'auto' : 'visible', 
+                                        background: 'rgba(99,102,241,0.04)', 
+                                        borderRadius: '12px', 
+                                        padding: '1rem', 
+                                        border: isDesignMode ? '1px dashed #6366f1' : 'none' 
+                                    }}>
                                         <p style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6366f1', marginBottom: '0.75rem' }}>📝 大問全体の詳細解説</p>
                                         <ContentBlockRenderer 
                                             fieldName="section"

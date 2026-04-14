@@ -12,10 +12,13 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                     const data = await getBannerById(bannerId);
                     setBanners([data]);
                 } else {
-                    const data = await getActiveBanners(pageTarget);
-                    // If multiple banners, maybe pick one randomly or show all?
-                    // For now, let's pick the latest one.
-                    setBanners(data);
+                    let data = await getActiveBanners(pageTarget);
+                    // Fallback: If no banners for specific target, try 'all'
+                    if ((!data || data.length === 0) && pageTarget !== 'all') {
+                        console.log(`No banners for target "${pageTarget}", falling back to "all"`);
+                        data = await getActiveBanners('all');
+                    }
+                    setBanners(data || []);
                 }
             } catch (err) {
                 console.error("AdBanner error:", err);
@@ -67,12 +70,13 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => handleClick(banner.id)}
-                className={`block relative group overflow-hidden rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all ${isSquare ? 'max-w-xs mx-auto aspect-square' : 'w-full aspect-[12/3] md:aspect-[1200/300]'}`}
+                className={`block relative group overflow-hidden rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all ${isSquare ? 'max-w-xs mx-auto aspect-square' : 'w-full min-h-[60px] aspect-[16/3] md:aspect-[1200/300]'}`}
             >
                 <img
                     src={banner.image_url}
                     alt={banner.title}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    style={{ minHeight: '60px' }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
                     <span className="text-white text-xs font-bold drop-shadow-md">詳細を見る →</span>
@@ -83,7 +87,7 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
     };
 
     return (
-        <div className={`ad-banner-widget py-4 ${className}`}>
+        <div className={`ad-banner-widget py-2 md:py-4 ${className}`}>
             {renderBanner()}
         </div>
     );

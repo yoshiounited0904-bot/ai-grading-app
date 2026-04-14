@@ -180,6 +180,7 @@ const DashboardPage = () => {
                                         section_scores: result.section_scores
                                     },
                                     universityName: result.university_name,
+                                    facultyName: result.faculty_name,
                                     examSubject: result.exam_subject,
                                     answers: result.answers
                                 }
@@ -190,7 +191,7 @@ const DashboardPage = () => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                                 <div>
                                     <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>
-                                        {result.university_name} - {result.exam_subject}
+                                        {result.university_name}{result.faculty_name ? ` ${result.faculty_name}` : ''} - {result.exam_subject}
                                     </h3>
                                     <p style={{ color: '#888', fontSize: '0.9rem' }}>
                                         {new Date(result.created_at).toLocaleDateString('ja-JP', {

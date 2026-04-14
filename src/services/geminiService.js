@@ -2,8 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { gradeObjectively } from "../utils/gradingEngine";
 
 const MODELS = {
-    PRIMARY: "gemini-2.5-flash",
-    FALLBACK: "gemini-1.5-flash"
+    PRIMARY: "gemini-1.5-flash-latest",
+    FALLBACK: "gemini-1.5-pro-latest"
 };
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -143,18 +143,19 @@ const createLightweightExamData = (examData) => {
     return lightweight;
 };
 
-export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imageParts) => {
+export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imageParts, fullMaxScore = 0) => {
     try {
         // Step 1: Programmatic Grading for Objective Questions
-        const { score: objScore, questionFeedback: initialFeedback, pendingAiGrading } = gradeObjectively(examData, userAnswers);
+        const { score: objScore, maxScore: objMaxScore, questionFeedback: initialFeedback, pendingAiGrading } = gradeObjectively(examData, userAnswers);
 
         // If no AI grading is needed, use simple programmatic weakness analysis
         if (pendingAiGrading.length === 0) {
-            const simpleWeakness = generateSimpleWeakness(objScore, examData.maxScore, initialFeedback);
+            const finalMaxScore = objMaxScore || examData.max_score || examData.maxScore || 100;
+            const simpleWeakness = generateSimpleWeakness(objScore, finalMaxScore, initialFeedback);
             return {
                 score: objScore,
-                maxScore: examData.maxScore || 100,
-                passProbability: calculatePassProbability(objScore, examData.maxScore, examData.passing_lines),
+                maxScore: objMaxScore || 100,
+                passProbability: calculatePassProbability(objScore, objMaxScore, examData.passing_lines, fullMaxScore),
                 weaknessAnalysis: simpleWeakness,
                 questionFeedback: initialFeedback,
                 detailedAnalysis: examData.detailedAnalysis || ""
@@ -173,6 +174,7 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         ${JSON.stringify(pendingAiGrading.map(q => ({
             id: q.id,
             correctAnswer: q.correctAnswer,
+            alternativeAnswers: q.alternativeAnswers || [], // Added
             points: q.points,
             instruction: q.gradingInstruction // Custom instruction from admin
         })))}
@@ -183,8 +185,10 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         **Rules:**
         1. Social Studies (types D, E): Use "Element-Based Grading". Score proportionally to the number of elements satisfied.
         2. English: Grade based on accuracy and keywords.
-        3. Output MUST be Japanese.
-        4. CRITICAL: You MUST evaluate strictly EVERY SINGLE question listed in the "User Answers" array. Do not combine, skip, or invent question IDs.
+        3. Alternative Answers: If "alternativeAnswers" is provided, the student's answer should be considered correct if it matches the intent of either the "correctAnswer" OR any string in the "alternativeAnswers" list.
+        4. Essay (自由記述): If the type is "essay", perform highly flexible grading. Focus on logical structure, depth of content, and expression rather than exact keyword matching. Provide encouraging and detailed feedback.
+        5. Output MUST be Japanese.
+        6. CRITICAL: You MUST evaluate strictly EVERY SINGLE question listed in the "User Answers" array. Do not combine, skip, or invent question IDs.
         
         Return JSON format:
         {
@@ -215,12 +219,12 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
             return f;
         });
 
-        const maxScore = examData.maxScore || initialFeedback.length * 5; // Fallback
+        const maxScore = objMaxScore || examData.max_score || examData.maxScore || initialFeedback.length * 5; // Fallback
 
         return {
             score: totalScore,
             maxScore: maxScore,
-            passProbability: calculatePassProbability(totalScore, maxScore, examData.passing_lines),
+            passProbability: calculatePassProbability(totalScore, maxScore, examData.passing_lines, fullMaxScore),
             weaknessAnalysis: aiResult.generalWeakness,
             questionFeedback: finalFeedback,
             detailedAnalysis: examData.detailedAnalysis || ""
@@ -232,15 +236,22 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
     }
 };
 
-const calculatePassProbability = (score, max, passingLines) => {
-    if (passingLines) {
-        if (score >= (passingLines.A || 0)) return "A";
-        if (score >= (passingLines.B || 0)) return "B";
-        if (score >= (passingLines.C || 0)) return "C";
-        if (score >= (passingLines.D || 0)) return "D";
+const calculatePassProbability = (score, max, passingLines, fullMaxScore = 0) => {
+    // If we have specific passing borders and a fullMaxScore reference, calculate proportionally
+    if (passingLines && fullMaxScore > 0) {
+        const ratioToCurrent = max / fullMaxScore;
+        
+        // Helper to scale a border score
+        const scale = (val) => val ? val * ratioToCurrent : 0;
+
+        if (score >= scale(passingLines.A)) return "A";
+        if (score >= scale(passingLines.B)) return "B";
+        if (score >= scale(passingLines.C)) return "C";
+        if (score >= scale(passingLines.D)) return "D";
         return "E";
     }
 
+    // Fallback to simple percentage mapping
     const ratio = score / max;
     if (ratio >= 0.8) return "A";
     if (ratio >= 0.7) return "B";

@@ -557,20 +557,60 @@ function AdminExamEditor() {
             return;
         }
 
+        // 1. Prepare initial preview data and open window SYNCHRONOUSLY
+        const previewId = `${universityId}-${facultyId}-preview`;
+        
+        // MATCH ExamPage expect keys for immediate local preview
+        const initialFormattedExam = {
+            id: examId,
+            university,
+            universityId: universityId,
+            faculty,
+            facultyId: facultyId,
+            year,
+            subject,
+            subjectEn: subjectEn,
+            type,
+            pdf_path: examData.pdf_path,
+            pdfPath: examData.pdf_path,
+            max_score: examData.max_score,
+            structure: examData.structure,
+            passing_lines: examData.passing_lines,
+            duration_minutes: durationMinutes,
+            custom_layout: customLayout
+        };
+
+        localStorage.setItem('previewExamData', JSON.stringify({
+            exam: initialFormattedExam,
+            universityName: university,
+            universityId: universityId
+        }));
+
+        // Open immediately - browser won't block this
+        const previewWindow = window.open(`/exam/${previewId}`, '_blank');
+
         setSaving(true);
         let finalPdfPath = examData.pdf_path || '';
 
+        // Continue with async operations (upload & save)
         if (questionFiles && questionFiles.length > 0) {
             try {
                 const { publicUrl, error: uploadError } = await uploadExamPdf(questionFiles[0], examId);
                 if (uploadError) throw uploadError;
                 if (publicUrl) {
                     finalPdfPath = publicUrl;
+                    
+                    // Update the already opened preview window with the new PDF path
+                    const updatedExam = { ...initialFormattedExam, pdf_path: publicUrl, pdfPath: publicUrl };
+                    localStorage.setItem('previewExamData', JSON.stringify({
+                        exam: updatedExam,
+                        universityName: university,
+                        universityId: universityId
+                    }));
+                    if (previewWindow) previewWindow.location.reload();
                 }
             } catch (err) {
-                alert('PDFのアップロードに失敗しました:\n' + err.message);
-                setSaving(false);
-                return;
+                console.error("PDF upload failed for preview:", err);
             }
         }
 
@@ -588,38 +628,17 @@ function AdminExamEditor() {
             max_score: parseInt(examData.max_score),
             detailed_analysis: examData.detailed_analysis,
             structure: examData.structure,
-            passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
+            passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
+            custom_layout: customLayout
         };
 
         const { error } = await saveAdminExam(payload);
         setSaving(false);
 
         if (error) {
-            alert('保存に失敗しました:\n' + error.message);
+            alert('データベースへの保存には失敗しましたが、プレビューは表示しました:\n' + error.message);
         } else {
-            const formattedExam = {
-                id: payload.id,
-                university: payload.university,
-                universityId: payload.university_id,
-                faculty: payload.faculty,
-                facultyId: payload.faculty_id,
-                year: payload.year,
-                subject: payload.subject,
-                subjectEn: payload.subject_en,
-                type: payload.type,
-                pdfPath: payload.pdf_path,
-                maxScore: payload.max_score,
-                detailedAnalysis: payload.detailed_analysis,
-                structure: payload.structure,
-                passingLines: payload.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
-            };
-            // Open preview in a new tab to preserve the current Admin Editor state (file inputs)
-            localStorage.setItem('previewExamData', JSON.stringify({
-                exam: formattedExam,
-                universityName: formattedExam.university,
-                universityId: formattedExam.universityId
-            }));
-            window.open(`/exam/${formattedExam.universityId}-${formattedExam.facultyId}-preview`, '_blank');
+            alert('保存しました！');
         }
     };
 
@@ -632,6 +651,10 @@ function AdminExamEditor() {
                 newStructure[sectionIdx].questions[qIdx][field] = value.split(',').map(s => s.trim());
             } else {
                 newStructure[sectionIdx].questions[qIdx][field] = value;
+                // Auto-detect multi-selection when comma is entered in correctAnswer
+                if (field === 'correctAnswer' && String(value).includes(',') && newStructure[sectionIdx].questions[qIdx].type === 'selection') {
+                    newStructure[sectionIdx].questions[qIdx].type = 'selection_multi';
+                }
             }
         }
         setExamData({ ...examData, structure: newStructure });
@@ -873,7 +896,10 @@ function AdminExamEditor() {
             id: nextId,
             label: `問${nextId}`,
             points: 0,
+            type: "selection", // Default to selection
+            completeGroupId: "", // Added
             correctAnswer: "",
+            alternativeAnswers: [],
             gradingInstruction: "",
             explanation: ""
         });
@@ -912,7 +938,7 @@ function AdminExamEditor() {
             alert('先にAIでデータを生成してください。');
             return;
         }
-        const rows = [['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'grading_instruction', 'points', 'explanation']];
+        const rows = [['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'alternative_answers', 'grading_instruction', 'points', 'explanation']];
         examData.structure.forEach(sec => {
             sec.questions.forEach(q => {
                 rows.push([
@@ -922,6 +948,7 @@ function AdminExamEditor() {
                     q.label,
                     q.type || 'selection',
                     q.correctAnswer || '',
+                    (q.alternativeAnswers || []).join('|'), // Joined by pipe
                     (q.gradingInstruction || '').replace(/"/g, '""'), // escape quotes
                     q.points || 0,
                     (q.explanation || '').replace(/"/g, '""') // escape quotes
@@ -1586,10 +1613,12 @@ function AdminExamEditor() {
                                             <tr className="bg-gray-50/50 border-b border-gray-50">
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ID</th>
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ラベル</th>
-                                                <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">形式</th>
-                                                <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">配点</th>
-                                                <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">正解</th>
-                                                <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">解説・採点基準</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">形式</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">完答</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">配点</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">正解</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">別解</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">解説・採点基準</th>
                                                 <th className="px-6 py-4 w-10"></th>
                                             </tr>
                                         </thead>
@@ -1598,27 +1627,63 @@ function AdminExamEditor() {
                                                 <tr key={qIdx} className="hover:bg-indigo-50/20 transition-colors">
                                                     <td className="px-6 py-4"><input type="text" value={q.id} onChange={e => handleStructureChange(sIdx, qIdx, 'id', e.target.value)} className="w-12 p-3 rounded-xl border border-gray-100 text-xs font-black bg-gray-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.label} onChange={e => handleStructureChange(sIdx, qIdx, 'label', e.target.value)} className="w-16 p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
-                                                    <td className="px-6 py-4">
+                                                                                                        <td className="px-6 py-4">
                                                         <div className="flex flex-col gap-2">
-                                                            <select value={q.type || 'text'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-[110px] p-3 rounded-xl border border-gray-100 text-xs font-bold bg-white outline-none focus:border-navy-blue/30">
-                                                                <option value="text">記述</option>
-                                                                <option value="selection">選択</option>
-                                                                <option value="unordered">順不同</option>
+                                                            <div className="flex items-center gap-1">
+                                                                <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-[120px] p-2 rounded-xl border border-gray-100 text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30">
+                                                                <option value="selection">選択(一つ選択)</option>
+                                                                <option value="selection_multi">選択(複数選択)</option>
+                                                                <option value="descriptive">記述</option>
+                                                                <option value="essay">自由記述</option>
                                                             </select>
-                                                            {['selection', 'unordered'].includes(q.type) && (
+                                                                {(q.type === 'selection_multi' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
+                                                                    <span className="bg-purple-100 text-purple-700 text-[8px] px-1.5 py-0.5 rounded-full font-black animate-pulse whitespace-nowrap">
+                                                                        複数判定中
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {['selection', 'selection_multi', 'unordered'].includes(q.type) && (
                                                                 <input 
                                                                     type="text" 
                                                                     value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
                                                                     onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
-                                                                    placeholder="選択肢(カンマ区切り)" 
-                                                                    className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white outline-none focus:border-navy-blue/30 transition-all shadow-sm" 
+                                                                    placeholder="選択肢(a,b,c)" 
+                                                                    className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white transition-all shadow-sm" 
                                                                     title="カンマ区切りで入力（例: a,b,c,d）"
                                                                 />
                                                             )}
                                                         </div>
                                                     </td>
+                                                    <td className="px-6 py-4">
+                                                        <select 
+                                                           value={q.completeGroupId || ""} 
+                                                           onChange={e => handleStructureChange(sIdx, qIdx, 'completeGroupId', e.target.value)} 
+                                                           className="w-[80px] p-2 rounded-xl border border-gray-100 text-[10px] bg-indigo-50/30 font-bold"
+                                                        >
+                                                            <option value="">なし</option>
+                                                            {[...Array(10)].map((_, i) => (
+                                                                <option key={i+1} value={String(i+1)}>グループ{i+1}</option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
                                                     <td className="px-6 py-4"><input type="number" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value) || 0)} className="w-14 p-3 rounded-xl border border-gray-100 text-xs font-black text-indigo-600 bg-indigo-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[120px] p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
+                                                    <td className="px-6 py-4">
+                                                        {q.type === 'descriptive' ? (
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="別解1, 別解2" 
+                                                                value={(q.alternativeAnswers || []).join(', ')} 
+                                                                onChange={e => {
+                                                                    const alts = e.target.value.split(',').map(s => s.trim()).filter(s => s !== "");
+                                                                    handleStructureChange(sIdx, qIdx, 'alternativeAnswers', alts);
+                                                                }} 
+                                                                className="w-full min-w-[150px] p-3 rounded-xl border border-gray-100 text-xs bg-indigo-50/20 focus:bg-white focus:border-indigo-300 outline-none transition-all" 
+                                                            />
+                                                        ) : (
+                                                            <span className="text-gray-300 text-[10px] italic">記述のみ有効</span>
+                                                        )}
+                                                    </td>
                                                     <td className="px-6 py-4 space-y-4">
                                                         <div className="space-y-2">
                                                             <div className="flex justify-between">

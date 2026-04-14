@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData } from '../services/adminExamService';
+import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData, duplicateAdminExam } from '../services/adminExamService';
 
 function AdminDashboard() {
     const [exams, setExams] = useState([]);
@@ -36,6 +36,20 @@ function AdminDashboard() {
         }
     };
 
+    const handleCopy = async (exam) => {
+        if (window.confirm(`「${exam.university} ${exam.year}年度 ${exam.subject}」をコピーした新しいデータを作成しますか？`)) {
+            setLoading(true);
+            const { error } = await duplicateAdminExam(exam.id);
+            if (error) {
+                console.error('Error duplicating exam:', error);
+                alert('コピーに失敗しました。');
+            } else {
+                fetchExams();
+            }
+            setLoading(false);
+        }
+    };
+
     const handleCommentUpdate = async (id, comment) => {
         const { error } = await updateAdminComment(id, comment);
         if (error) {
@@ -61,13 +75,23 @@ function AdminDashboard() {
         }
     };
 
-    const handleToggleCompleted = async (examId, currentStatus) => {
-        const { error } = await updateAdminFields(examId, { is_completed: !currentStatus });
+    const handleCycleStatus = async (examId, currentStatus) => {
+        const statuses = ['working', 'completed', 'verified'];
+        // Default to 'working' if currentStatus is not recognized or is the old boolean format
+        let normalizedStatus = currentStatus;
+        if (currentStatus === true || currentStatus === 'completed') normalizedStatus = 'completed';
+        else if (currentStatus === false || currentStatus === 'working' || !currentStatus) normalizedStatus = 'working';
+        else if (currentStatus === 'verified') normalizedStatus = 'verified';
+
+        const currentIndex = statuses.indexOf(normalizedStatus);
+        const nextStatus = statuses[(currentIndex + 1) % statuses.length];
+
+        const { error } = await updateAdminFields(examId, { master_status: nextStatus });
         if (error) {
-            console.error('Error updating completion status:', error);
-            alert('更新に失敗しました。「is_completed」(boolean) カラムをデータベース(Supabase)の exams テーブルに追加してください。');
+            console.error('Error updating status:', error);
+            alert('更新に失敗しました。SQLを実行して「master_status」(text) カラムをデータベース(Supabase)の exams テーブルに追加してください。');
         } else {
-            setExams(prev => prev.map(e => e.id === examId ? { ...e, is_completed: !currentStatus } : e));
+            setExams(prev => prev.map(e => e.id === examId ? { ...e, master_status: nextStatus } : e));
         }
     };
 
@@ -133,11 +157,11 @@ function AdminDashboard() {
                 examSubject: `${exam.year}年度 ${exam.subject}`,
                 isDesignMode: true,
                 result: {
-                    score: 0,
-                    maxScore: exam.max_score,
-                    passProbability: "---",
-                    detailedAnalysis: exam.detailed_analysis,
-                    weaknessAnalysis: exam.weakness_analysis || "",
+                    score: 50,
+                    maxScore: exam.max_score || 100,
+                    passProbability: "B",
+                    detailedAnalysis: exam.detailed_analysis || "デザインモード用の詳細解説ダミーです。",
+                    weaknessAnalysis: "これはデザインモード用のダミー弱点分析です。実際の採点時には、得点率に応じた適切な分析メッセージが表示されます。",
                     questionFeedback: dummyFeedback
                 },
                 examStructure: exam.structure,
@@ -247,17 +271,25 @@ function AdminDashboard() {
                                                 </div>
                                             </td>
                                             
-                                            {/* Status / Completed Mark */}
+                                            {/* Status Badge */}
                                             <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
                                                 <button
-                                                    onClick={() => handleToggleCompleted(exam.id, exam.is_completed)}
+                                                    onClick={() => handleCycleStatus(exam.id, exam.master_status)}
                                                     className={`px-3 py-1.5 text-[10px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 ${
-                                                        exam.is_completed 
+                                                        exam.master_status === 'verified'
+                                                        ? 'bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 shadow-sm'
+                                                        : exam.master_status === 'completed'
                                                         ? 'bg-green-50 text-green-600 border-green-200 hover:bg-green-100 hover:border-green-300' 
                                                         : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100 hover:text-gray-500'
                                                     }`}
                                                 >
-                                                    {exam.is_completed ? <><span className="text-[12px]">✨</span>完成</> : <><span className="text-[12px]">✏️</span>作業中</>}
+                                                    {exam.master_status === 'verified' ? (
+                                                        <><span className="text-[12px]">💎</span>検証済み</>
+                                                    ) : exam.master_status === 'completed' ? (
+                                                        <><span className="text-[12px]">✨</span>完成</>
+                                                    ) : (
+                                                        <><span className="text-[12px]">✏️</span>作業中</>
+                                                    )}
                                                 </button>
                                             </td>
 
@@ -317,6 +349,9 @@ function AdminDashboard() {
                                                         <Link to={`/admin/exam/${exam.id}`} className="flex-1 py-1 text-[10px] font-bold bg-gray-50 text-gray-600 rounded border border-gray-100 hover:bg-gray-100 text-center">
                                                             編集
                                                         </Link>
+                                                        <button onClick={() => handleCopy(exam)} className="flex-1 py-1 text-[10px] font-bold bg-indigo-50 text-indigo-600 rounded border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-colors">
+                                                            複
+                                                        </button>
                                                         <button onClick={() => handleDelete(exam)} className="flex-1 py-1 text-[10px] font-bold bg-red-50 text-red-500 rounded border border-red-100 hover:bg-red-500 hover:text-white transition-colors">
                                                             削
                                                         </button>
