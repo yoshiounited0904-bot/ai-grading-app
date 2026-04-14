@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient'
 export const saveExamResult = async (userId, resultData) => {
     const insertData = {
         user_id: userId,
-        university_name: resultData.universityName,
+        university_name: resultData.facultyName ? `${resultData.universityName} ${resultData.facultyName}` : resultData.universityName,
         faculty_name: resultData.facultyName,
         exam_subject: resultData.examSubject,
         exam_year: resultData.examYear || 2025,
@@ -17,9 +17,19 @@ export const saveExamResult = async (userId, resultData) => {
         section_scores: resultData.sectionScores
     };
 
-    const { data, error } = await supabase
+    // We try to insert. If faculty_name column is missing, we try again without it.
+    let { data, error } = await supabase
         .from('exam_results')
         .insert([insertData]);
+
+    if (error && error.message.includes('faculty_name')) {
+        const { faculty_name, ...fallbackData } = insertData;
+        const result = await supabase
+            .from('exam_results')
+            .insert([fallbackData]);
+        data = result.data;
+        error = result.error;
+    }
 
     return { data, error };
 }

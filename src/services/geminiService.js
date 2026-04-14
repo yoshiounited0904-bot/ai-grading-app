@@ -2,8 +2,10 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { gradeObjectively } from "../utils/gradingEngine";
 
 const MODELS = {
-    PRIMARY: "gemini-1.5-flash-latest",
-    FALLBACK: "gemini-1.5-pro-latest"
+    PRIMARY: "gemini-1.5-flash",
+    PRIMARY_LATEST: "gemini-1.5-flash-latest",
+    FALLBACK: "gemini-1.5-pro",
+    FALLBACK_LATEST: "gemini-1.5-pro-latest"
 };
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -23,14 +25,14 @@ const sanitizeJson = (text) => {
 };
 
 const generateWithRetry = async (genAI, prompt, imageParts, config = {}) => {
-    let currentModelName = MODELS.PRIMARY;
+    const modelOrder = [MODELS.PRIMARY, MODELS.PRIMARY_LATEST, MODELS.FALLBACK, MODELS.FALLBACK_LATEST];
     let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
+    
+    for (const modelName of modelOrder) {
         try {
+            console.log(`Trying grading with model: ${modelName}...`);
             const model = genAI.getGenerativeModel({
-                model: currentModelName,
+                model: modelName,
                 ...config
             });
 
@@ -38,28 +40,23 @@ const generateWithRetry = async (genAI, prompt, imageParts, config = {}) => {
             const response = await result.response;
             return response.text();
         } catch (error) {
-            console.warn(`Attempt ${attempts + 1} failed with model ${currentModelName}:`, error.message);
+            console.warn(`Model ${modelName} failed:`, error.message);
+            
+            // If it's a 404 (Not Found), try the next model immediately
+            if (error.message.includes('404') || error.message.includes('not found')) {
+                continue;
+            }
 
-            // Check for overload (503) or other transient errors
-            if (error.message.includes('503') || error.message.includes('overloaded')) {
-                attempts++;
-                if (attempts < maxAttempts) {
-                    // Exponential backoff: 1s, 2s, 4s...
-                    const delay = 1000 * Math.pow(2, attempts - 1);
-                    console.log(`Retrying in ${delay}ms...`);
-                    await wait(delay);
-
-                    // Switch to fallback model on last attempt or if primary fails twice
-                    if (attempts >= 1 && currentModelName === MODELS.PRIMARY) {
-                        console.log(`Switching to fallback model: ${MODELS.FALLBACK}`);
-                        currentModelName = MODELS.FALLBACK;
-                    }
-                    continue;
-                }
+            // If it's a 429 (Quota) or 503 (Overload)
+            attempts++;
+            if (attempts < modelOrder.length) {
+                await wait(1000);
+                continue;
             }
             throw error;
         }
     }
+    throw new Error("All available Gemini models failed to respond.");
 };
 
 export const analyzeExamWithGemini = async (apiKey, imageParts) => {
