@@ -1633,18 +1633,16 @@ function AdminExamEditor() {
                                                                 <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-[120px] p-2 rounded-xl border border-gray-100 text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30">
                                                                     <option value="selection">選択(一つ選択)</option>
                                                                     <option value="selection_multi">選択(複数選択)</option>
-                                                                    <option value="complete">完答(順序通り)</option>
-                                                                    <option value="unordered">順不同(記号複数)</option>
                                                                     <option value="descriptive">記述</option>
                                                                     <option value="essay">自由記述</option>
                                                                 </select>
-                                                                {(q.type === 'selection_multi' || q.type === 'unordered' || q.type === 'complete' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
+                                                                {(q.type === 'selection_multi' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
                                                                     <span className="bg-purple-100 text-purple-700 text-[8px] px-1.5 py-0.5 rounded-full font-black animate-pulse whitespace-nowrap">
                                                                         複数判定中
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            {['selection', 'selection_multi', 'unordered', 'complete'].includes(q.type) && (
+                                                            {['selection', 'selection_multi'].includes(q.type) && (
                                                                 <input 
                                                                     type="text" 
                                                                     value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
