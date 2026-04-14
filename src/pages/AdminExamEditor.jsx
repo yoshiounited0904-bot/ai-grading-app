@@ -1614,6 +1614,7 @@ function AdminExamEditor() {
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ID</th>
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ラベル</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">形式</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">完答</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">配点</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">正解</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">別解</th>

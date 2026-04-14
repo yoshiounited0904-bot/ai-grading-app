@@ -38,10 +38,26 @@ export const gradeObjectively = (examData, userAnswers) => {
                     points: q.points || 0 // Store points for possible group sum
                 };
 
-                if (isCorrect) {
-                    score += q.points || 0;
+                if (q.completeGroupId && q.completeGroupId.trim() !== '') {
+                    const groupId = q.completeGroupId.trim();
+                    if (!completeGroups[groupId]) {
+                        completeGroups[groupId] = {
+                            questions: [],
+                            allCorrect: true,
+                            totalPoints: 0
+                        };
+                    }
+                    completeGroups[groupId].questions.push(feedbackItem);
+                    if (!isCorrect) {
+                        completeGroups[groupId].allCorrect = false;
+                    }
+                    completeGroups[groupId].totalPoints += (q.points || 0);
+                } else {
+                    if (isCorrect) {
+                        score += q.points || 0;
+                    }
+                    questionFeedback.push(feedbackItem);
                 }
-                questionFeedback.push(feedbackItem);
             } else {
                 // Mark for AI processing (subjective)
                 const feedbackItem = {
@@ -51,14 +67,32 @@ export const gradeObjectively = (examData, userAnswers) => {
                     alternativeAnswers: q.alternativeAnswers || [],
                     points: q.points || 0,
                     gradingInstruction: q.gradingInstruction || q.gradingCriteria || "",
-                    isSubjective: true
+                    isSubjective: true,
+                    completeGroupId: q.completeGroupId // Pass group ID
                 };
                 questionFeedback.push(feedbackItem);
             }
         });
     });
 
-
+    // Process Complete Groups
+    Object.keys(completeGroups).forEach(groupId => {
+        const group = completeGroups[groupId];
+        if (group.allCorrect) {
+            score += group.totalPoints;
+            group.questions.forEach(fq => {
+                fq.explanation = `【完答正解! グループ合計 ${group.totalPoints}点】\n` + (fq.explanation || "");
+                questionFeedback.push(fq);
+            });
+        } else {
+            // Failed group: All questions in group get 0 score
+            group.questions.forEach(fq => {
+                fq.correct = false; // Force incorrect
+                fq.explanation = "【完答問題: グループ内で不正解が含まれるため、この問題の得点は0点となります】\n" + (fq.explanation || "");
+                questionFeedback.push(fq);
+            });
+        }
+    });
 
     return {
         score,
