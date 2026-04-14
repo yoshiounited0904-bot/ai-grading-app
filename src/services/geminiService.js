@@ -2,10 +2,10 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { gradeObjectively } from "../utils/gradingEngine";
 
 const MODELS = {
-    PRIMARY: "gemini-1.5-flash",
-    PRIMARY_LATEST: "gemini-1.5-flash-latest",
-    FALLBACK: "gemini-1.5-pro",
-    FALLBACK_LATEST: "gemini-1.5-pro-latest"
+    PRIMARY: "gemini-2.5-flash",
+    PRIMARY_LATEST: "gemini-flash-latest",
+    FALLBACK: "gemini-2.5-pro",
+    FALLBACK_LATEST: "gemini-pro-latest"
 };
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));

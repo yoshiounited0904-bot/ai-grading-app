@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const MODELS = {
-  PRIMARY: "gemini-2.0-flash",
-  FALLBACK: "gemini-1.5-flash"
+  PRIMARY: "gemini-2.5-flash",
+  FALLBACK: "gemini-2.5-pro"
 };
 
 const ENGLISH_RULES = `

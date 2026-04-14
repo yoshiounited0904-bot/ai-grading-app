@@ -190,24 +190,43 @@ const DashboardPage = () => {
                         >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                                 <div>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                                        <span style={{ 
+                                            fontSize: '0.75rem', 
+                                            background: 'var(--color-accent-primary)15', 
+                                            color: 'var(--color-accent-primary)',
+                                            padding: '0.1rem 0.5rem',
+                                            borderRadius: '4px',
+                                            fontWeight: '600'
+                                        }}>
+                                            {result.exam_subject || '科目不明'}
+                                        </span>
+                                        {result.faculty_name && (
+                                            <span style={{ 
+                                                fontSize: '0.75rem', 
+                                                background: '#f3f4f6', 
+                                                color: '#4b5563',
+                                                padding: '0.1rem 0.5rem',
+                                                borderRadius: '4px',
+                                                fontWeight: '600'
+                                            }}>
+                                                {result.faculty_name}
+                                            </span>
+                                        )}
+                                    </div>
                                     <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>
                                         {(() => {
                                             const univ = result.university_name || '';
                                             const fac = result.faculty_name || '';
-                                            // If university_name already contains faculty_name, don't repeat it
+                                            // Smart display: if university already contains faculty, use it as is
                                             if (fac && univ.includes(fac)) {
-                                                return `${univ} - ${result.exam_subject}`;
+                                                return univ;
                                             }
-                                            // If faculty exists separately, join them
-                                            if (fac) {
-                                                return `${univ} ${fac} - ${result.exam_subject}`;
-                                            }
-                                            // Fallback for old data or combined university_name
-                                            return `${univ} - ${result.exam_subject}`;
+                                            return univ;
                                         })()}
                                     </h3>
                                     <p style={{ color: '#888', fontSize: '0.9rem' }}>
-                                        {new Date(result.created_at).toLocaleDateString('ja-JP', {
+                                        📅 {new Date(result.created_at).toLocaleDateString('ja-JP', {
                                             year: 'numeric',
                                             month: 'long',
                                             day: 'numeric',
