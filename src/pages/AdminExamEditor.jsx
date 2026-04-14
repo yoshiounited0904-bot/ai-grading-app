@@ -1631,18 +1631,20 @@ function AdminExamEditor() {
                                                         <div className="flex flex-col gap-2">
                                                             <div className="flex items-center gap-1">
                                                                 <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-[120px] p-2 rounded-xl border border-gray-100 text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30">
-                                                                <option value="selection">選択(一つ選択)</option>
-                                                                <option value="selection_multi">選択(複数選択)</option>
-                                                                <option value="descriptive">記述</option>
-                                                                <option value="essay">自由記述</option>
-                                                            </select>
-                                                                {(q.type === 'selection_multi' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
+                                                                    <option value="selection">選択(一つ選択)</option>
+                                                                    <option value="selection_multi">選択(複数選択)</option>
+                                                                    <option value="complete">完答(順序通り)</option>
+                                                                    <option value="unordered">順不同(記号複数)</option>
+                                                                    <option value="descriptive">記述</option>
+                                                                    <option value="essay">自由記述</option>
+                                                                </select>
+                                                                {(q.type === 'selection_multi' || q.type === 'unordered' || q.type === 'complete' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
                                                                     <span className="bg-purple-100 text-purple-700 text-[8px] px-1.5 py-0.5 rounded-full font-black animate-pulse whitespace-nowrap">
                                                                         複数判定中
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            {['selection', 'selection_multi', 'unordered'].includes(q.type) && (
+                                                            {['selection', 'selection_multi', 'unordered', 'complete'].includes(q.type) && (
                                                                 <input 
                                                                     type="text" 
                                                                     value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
@@ -1655,16 +1657,21 @@ function AdminExamEditor() {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <select 
-                                                           value={q.completeGroupId || ""} 
-                                                           onChange={e => handleStructureChange(sIdx, qIdx, 'completeGroupId', e.target.value)} 
-                                                           className="w-[80px] p-2 rounded-xl border border-gray-100 text-[10px] bg-indigo-50/30 font-bold"
-                                                        >
-                                                            <option value="">なし</option>
-                                                            {[...Array(10)].map((_, i) => (
-                                                                <option key={i+1} value={String(i+1)}>グループ{i+1}</option>
-                                                            ))}
-                                                        </select>
+                                                        <div className="flex flex-col gap-1 items-center">
+                                                            <select 
+                                                                value={q.completeGroupId || ""} 
+                                                                onChange={e => handleStructureChange(sIdx, qIdx, 'completeGroupId', e.target.value)} 
+                                                                className={`w-[80px] p-2 rounded-xl border text-[10px] font-bold transition-all ${q.completeGroupId ? 'border-orange-200 bg-orange-50 text-orange-600' : 'border-gray-100 bg-indigo-50/30 text-gray-400'}`}
+                                                            >
+                                                                <option value="">なし</option>
+                                                                {[...Array(10)].map((_, i) => (
+                                                                    <option key={i+1} value={String(i+1)}>グループ{i+1}</option>
+                                                                ))}
+                                                            </select>
+                                                            {q.completeGroupId && (
+                                                                <span className="text-[8px] font-black text-orange-400 uppercase">完答対象</span>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td className="px-6 py-4"><input type="number" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value) || 0)} className="w-14 p-3 rounded-xl border border-gray-100 text-xs font-black text-indigo-600 bg-indigo-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[120px] p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
