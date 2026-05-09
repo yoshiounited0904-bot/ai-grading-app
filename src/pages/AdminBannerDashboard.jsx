@@ -148,7 +148,6 @@ const AdminBannerDashboard = () => {
                                                 style={{
                                                     display: 'block',
                                                     width: '20px',
-                                                    height: '200px',
                                                     height: '20px',
                                                     backgroundColor: 'white',
                                                     borderRadius: '50%',

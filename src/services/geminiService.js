@@ -40,17 +40,26 @@ const generateWithRetry = async (genAI, prompt, imageParts, config = {}) => {
             const response = await result.response;
             return response.text();
         } catch (error) {
-            console.warn(`Model ${modelName} failed:`, error.message);
+            const isTransient = error.message?.includes('429') || 
+                               error.message?.includes('503') || 
+                               error.message?.includes('504') ||
+                               error.message?.includes('overloaded') ||
+                               error.message?.includes('high demand') ||
+                               error.message?.includes('Load failed') ||
+                               error.message?.includes('fetch');
+
+            console.warn(`Model ${modelName} failed (${isTransient ? 'Transient' : 'Error'}):`, error.message);
             
             // If it's a 404 (Not Found), try the next model immediately
             if (error.message.includes('404') || error.message.includes('not found')) {
                 continue;
             }
 
-            // If it's a 429 (Quota) or 503 (Overload)
+            // If it's a transient server error, wait a bit longer before trying fallback
             attempts++;
             if (attempts < modelOrder.length) {
-                await wait(1000);
+                const waitTime = isTransient ? 2000 : 1000;
+                await wait(waitTime);
                 continue;
             }
             throw error;
@@ -140,7 +149,7 @@ const createLightweightExamData = (examData) => {
     return lightweight;
 };
 
-export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imageParts, fullMaxScore = 0) => {
+export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imageParts, fullMaxScore = 0, onProgress = null) => {
     try {
         // Step 1: Programmatic Grading for Objective Questions
         const { score: objScore, maxScore: objMaxScore, questionFeedback: initialFeedback, pendingAiGrading } = gradeObjectively(examData, userAnswers);
@@ -149,6 +158,7 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
         if (pendingAiGrading.length === 0) {
             const finalMaxScore = objMaxScore || examData.max_score || examData.maxScore || 100;
             const simpleWeakness = generateSimpleWeakness(objScore, finalMaxScore, initialFeedback);
+            if (onProgress) onProgress(100);
             return {
                 score: objScore,
                 maxScore: objMaxScore || 100,
@@ -159,77 +169,173 @@ export const gradeExamWithGemini = async (apiKey, examData, userAnswers, imagePa
             };
         }
 
-        // Step 2: AI Grading for Subjective Questions (D, E, etc.)
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const isEnglish = examData.subjectEn === "english";
+        // Step 2: Group by Section for Progressive Reporting
+        const sectionGroups = pendingAiGrading.reduce((acc, item) => {
+            const sId = item.sectionId || 'unknown';
+            if (!acc[sId]) acc[sId] = [];
+            acc[sId].push(item);
+            return acc;
+        }, {});
 
-        const aiPrompt = `
-        You are an expert university entrance exam grader.
-        Grade the following SUBJECTIVE questions based on the Master Data criteria.
+        const subjectiveSectionIds = Object.keys(sectionGroups);
+        const totalOverallSections = (examData.structure && examData.structure.length) || 1;
         
-        **Master Data Criteria:**
-        ${JSON.stringify(pendingAiGrading.map(q => ({
-            id: q.id,
-            correctAnswer: q.correctAnswer,
-            alternativeAnswers: q.alternativeAnswers || [], // Added
-            points: q.points,
-            instruction: q.gradingInstruction // Custom instruction from admin
-        })))}
-        
-        **User Answers:**
-        ${JSON.stringify(pendingAiGrading.map(q => ({ id: q.id, answer: q.userAnswer })))}
-        
-        **Rules:**
-        1. Social Studies (types D, E): Use "Element-Based Grading". Score proportionally to the number of elements satisfied.
-        2. English: Grade based on accuracy and keywords.
-        3. Alternative Answers: If "alternativeAnswers" is provided, the student's answer should be considered correct if it matches the intent of either the "correctAnswer" OR any string in the "alternativeAnswers" list.
-        4. Essay (自由記述): If the type is "essay", perform highly flexible grading. Focus on logical structure, depth of content, and expression rather than exact keyword matching. Provide encouraging and detailed feedback.
-        5. Output MUST be Japanese.
-        6. CRITICAL: You MUST evaluate strictly EVERY SINGLE question listed in the "User Answers" array. Do not combine, skip, or invent question IDs.
-        
-        Return JSON format:
-        {
-            "aiFeedback": [
-                { "id": "question_id", "score": number, "correct": boolean, "explanation": "feedback in Japanese" }
-            ],
-            "generalWeakness": "Brief overall advice"
-        }
-        `;
-
-        const text = await generateWithRetry(genAI, aiPrompt, imageParts, {
-            generationConfig: { responseMimeType: "application/json" }
+        // Keep track of which sections are "done"
+        const finishedSectionIds = new Set();
+        // Objective sections are effectively done already
+        examData.structure.forEach(s => {
+            const sId = String(s.id);
+            if (!sectionGroups[sId]) {
+                finishedSectionIds.add(sId);
+            }
         });
-        const aiResult = JSON.parse(sanitizeJson(text));
+
+        // Report initial progress based on objective sections
+        if (onProgress) {
+            onProgress(Math.round((finishedSectionIds.size / totalOverallSections) * 100));
+        }
+        
+        let totalScore = objScore;
+        let allAiFeedback = [];
+        let aggregatedWeakness = "";
+
+        const genAI = new GoogleGenerativeAI(apiKey);
+
+        // Process each subjective section sequentially
+        for (let i = 0; i < subjectiveSectionIds.length; i++) {
+            const sId = subjectiveSectionIds[i];
+            const questions = sectionGroups[sId];
+            
+            console.log(`Grading section ${sId} (${i + 1}/${subjectiveSectionIds.length})...`);
+            
+            const aiPrompt = `
+            You are an expert university entrance exam grader.
+            Grade the following SUBJECTIVE questions from section "${sId}" based on the Master Data criteria.
+            
+            **Master Data Criteria:**
+            ${JSON.stringify(questions.map(q => ({
+                id: q.id,
+                correctAnswer: q.correctAnswer,
+                alternativeAnswers: q.alternativeAnswers || [],
+                points: q.points,
+                instruction: q.gradingInstruction
+            })))}
+            
+            **User Answers:**
+            ${JSON.stringify(questions.map(q => ({ id: q.id, answer: q.userAnswer })))}
+            
+            **Rules:**
+            1. Social Studies (types D, E): Element-Based Grading.
+            2. English: Accuracy and keywords.
+            3. Alternative Answers: Match intent.
+            4. Essay: Flexible grading, logical structure, encouraging feedback.
+            5. Output MUST be Japanese.
+            6. Evaluate ALL questions in the array.
+            
+            Return JSON format:
+            {
+                "aiFeedback": [
+                    { "id": "question_id", "score": number, "correct": boolean, "explanation": "feedback in Japanese" }
+                ],
+                "sectionAdvice": "Brief advice for this specific section"
+            }
+            `;
+
+            try {
+                const text = await generateWithRetry(genAI, aiPrompt, imageParts, {
+                    generationConfig: { responseMimeType: "application/json" }
+                });
+                const sectionResult = JSON.parse(sanitizeJson(text));
+                
+                if (sectionResult.aiFeedback) {
+                    allAiFeedback.push(...sectionResult.aiFeedback);
+                }
+                if (sectionResult.sectionAdvice) {
+                    aggregatedWeakness += (aggregatedWeakness ? "\n" : "") + sectionResult.sectionAdvice;
+                }
+            } catch (secError) {
+                console.error(`Error grading section ${sId}:`, secError);
+                // Fallback for this section
+                questions.forEach(q => {
+                    allAiFeedback.push({
+                        id: q.id,
+                        score: 0,
+                        correct: false,
+                        explanation: `【採点エラー】セクションの採点中にエラーが発生しました: ${secError.message}`
+                    });
+                });
+            }
+
+            // Mark this section as finished and report progress
+            finishedSectionIds.add(sId);
+            if (onProgress) {
+                onProgress(Math.round((finishedSectionIds.size / totalOverallSections) * 100));
+            }
+        }
 
         // Step 3: Merge Results
-        let totalScore = objScore;
         const finalFeedback = initialFeedback.map(f => {
             if (f.isSubjective) {
-                const aiItem = aiResult.aiFeedback.find(ai => ai.id === f.id);
+                const aiItem = allAiFeedback.find(ai => ai.id === f.id);
                 if (aiItem) {
                     totalScore += aiItem.score;
                     return { ...f, score: aiItem.score, correct: aiItem.correct, explanation: aiItem.explanation };
                 } else {
-                    return { ...f, score: 0, correct: false, explanation: "【採点エラー】AIがこの問題の評価結果を出力しませんでした。" };
+                    return { ...f, score: 0, correct: false, explanation: "【採点エラー】AIが結果を出力しませんでした。" };
                 }
             }
             return f;
         });
 
-        const maxScore = objMaxScore || examData.max_score || examData.maxScore || initialFeedback.length * 5; // Fallback
+        const maxScore = objMaxScore || examData.max_score || examData.maxScore || initialFeedback.length * 5;
+
+        // Step 4: Final Holistic Analysis (NEW)
+        console.log("Generating holistic weakness analysis...");
+        let finalWeakness = "";
+        try {
+            const holisticPrompt = `
+            あなたは大学受験の専門家です。以下の採点結果を見て、生徒への「弱点分析・アドバイス」を生成してください。
+            大問ごとのバラバラな評価ではなく、試験全体の傾向（例：文法は強いが読解量が多いと失速する、等）を分析してください。
+
+            【試験情報】
+            大学: ${examData.university} ${examData.faculty} ${examData.subject} (${examData.year}年度)
+            全体スコア: ${totalScore} / ${maxScore}
+
+            【採点結果（サマリー）】
+            ${finalFeedback.map(f => `設問${f.label}: ${f.score}/${f.points || 5}点 (${f.correct ? '正解' : '不正解'}) ${f.explanation ? ' - ' + f.explanation.substring(0, 50) + '...' : ''}`).join('\n')}
+
+            【公式解説（マスターデータ）の傾向】
+            ${examData.detailedAnalysis || 'なし'}
+
+            【出力ルール】
+            1. 200〜400文字程度の丁寧な日本語。
+            2. 正解・不正解のパターンから、生徒の真の弱点（語彙力、時間配分、論理構成力など）を指摘する。
+            3. 明治大学などの志望校特有の傾向に触れる。
+            4. 生徒を励まし、次につなげるポジティブなトーン。
+            5. JSONではなく、テキストのみで回答してください。
+            `;
+
+            const holisticText = await generateWithRetry(genAI, holisticPrompt, imageParts);
+            finalWeakness = holisticText.trim();
+        } catch (holisticError) {
+            console.error("Holistic analysis error:", holisticError);
+            finalWeakness = aggregatedWeakness || "全体的な傾向として、間違えた箇所を中心に復習を行い、理解を深めましょう。";
+        }
+
+        if (onProgress) onProgress(100);
 
         return {
             score: totalScore,
             maxScore: maxScore,
             passProbability: calculatePassProbability(totalScore, maxScore, examData.passing_lines, fullMaxScore),
-            weaknessAnalysis: aiResult.generalWeakness,
+            weaknessAnalysis: finalWeakness,
             questionFeedback: finalFeedback,
             detailedAnalysis: examData.detailedAnalysis || ""
         };
 
     } catch (error) {
-        console.error("Error in Hybrid Grading:", error);
-        throw new Error("採点中にエラーが発生しました: " + error.message);
+        console.error("Error in Progressive Hybrid Grading:", error);
+        throw new Error("採点中に重大なエラーが発生しました: " + error.message);
     }
 };
 

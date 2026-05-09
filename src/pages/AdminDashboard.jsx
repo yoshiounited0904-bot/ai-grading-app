@@ -201,6 +201,12 @@ function AdminDashboard() {
                         >
                             広告運用管理 (CMS)
                         </button>
+                        <button 
+                            onClick={() => navigate('/admin/users')}
+                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue"
+                        >
+                            ユーザー承認管理
+                        </button>
                         </div>
                     </div>
                     <Link
@@ -231,30 +237,47 @@ function AdminDashboard() {
                         </div>
                     </div>
                 ) : (
-                    <div className="mt-8 bg-white/50 backdrop-blur-sm rounded-2xl p-4 shadow-inner border-2 border-indigo-100/50">
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full border-separate border-spacing-y-4">
-                                <thead>
-                                    <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
-                                        <th className="px-6 py-2 text-left">大学・学部 / ID</th>
-                                        <th className="px-6 py-2 text-left">年度・科目</th>
-                                        <th className="px-6 py-2 text-center whitespace-nowrap">ステータス</th>
-                                        <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
-                                        <th className="px-6 py-2 text-left">共有メモ</th>
-                                        <th className="px-6 py-2 text-right">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {exams.map((exam) => (
-                                        <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''}`}>
-                                            {/* University & Faculty */}
-                                            <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
-                                                <div className="flex flex-col">
-                                                    <span className="text-lg font-black text-navy-blue leading-tight">{exam.university}</span>
-                                                    <span className="text-sm font-bold text-gray-400">{exam.faculty}</span>
-                                                    <span className="text-[10px] font-mono mt-1 text-gray-300"># {exam.id}</span>
-                                                </div>
-                                            </td>
+                    <div className="mt-8 space-y-12">
+                        {Object.entries(
+                            exams.reduce((acc, exam) => {
+                                const univ = exam.university || 'その他';
+                                if (!acc[univ]) acc[univ] = [];
+                                acc[univ].push(exam);
+                                return acc;
+                            }, {})
+                        ).map(([university, universityExams]) => (
+                            <div key={university} className="bg-white/50 backdrop-blur-sm rounded-3xl p-6 shadow-xl shadow-indigo-100/50 border-2 border-indigo-100/30 transition-all">
+                                <div className="flex items-center gap-4 mb-6">
+                                    <div className="w-1.5 h-8 bg-navy-blue rounded-full"></div>
+                                    <h2 className="text-2xl font-black text-navy-blue tracking-tight">
+                                        {university}
+                                        <span className="ml-3 text-xs font-bold text-navy-blue/40 bg-navy-blue/5 px-3 py-1 rounded-full align-middle">
+                                            {universityExams.length} 件
+                                        </span>
+                                    </h2>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full border-separate border-spacing-y-4">
+                                        <thead>
+                                            <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
+                                                <th className="px-6 py-2 text-left">学部 / ID</th>
+                                                <th className="px-6 py-2 text-left">年度・科目</th>
+                                                <th className="px-6 py-2 text-center whitespace-nowrap">ステータス</th>
+                                                <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
+                                                <th className="px-6 py-2 text-left">共有メモ</th>
+                                                <th className="px-6 py-2 text-right">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {universityExams.map((exam) => (
+                                                <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''}`}>
+                                                    {/* Faculty & ID */}
+                                                    <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[200px]">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-lg font-black text-navy-blue leading-tight">{exam.faculty}</span>
+                                                            <span className="text-[10px] font-mono mt-1 text-gray-300"># {exam.id}</span>
+                                                        </div>
+                                                    </td>
 
                                             {/* Year & Subject */}
                                             <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
@@ -360,9 +383,11 @@ function AdminDashboard() {
                                             </td>
                                         </tr>
                                     ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>

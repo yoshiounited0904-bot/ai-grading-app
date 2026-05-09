@@ -1,12 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 import { gradeExamWithGemini } from '../services/geminiService';
 
 const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
+    const { user, loading: authLoading } = useAuth();
     let { exam, universityName, universityId, selectedSectionIds, facultyName } = location.state || {};
+
+    useEffect(() => {
+        if (!authLoading && !user) {
+            navigate('/');
+            return;
+        }
+    }, [user, authLoading, navigate]);
 
     // Check localStorage if coming from Admin "Save & Preview" new tab
     if (!exam) {
@@ -30,6 +39,7 @@ const ExamPage = () => {
     const [answers, setAnswers] = useState({});
     const [grading, setGrading] = useState(false);
     const [gradingProgress, setGradingProgress] = useState('');
+    const [gradingProgressValue, setGradingProgressValue] = useState(0); // 0 to 100
     const [logs, setLogs] = useState([]);
     // Initialize directly from the passed exam object
     // Filter structure if selectedSectionIds is provided
@@ -54,10 +64,46 @@ const ExamPage = () => {
     const [activeTab, setActiveTab] = useState('pdf');
     const [isMobile, setIsMobile] = useState(false);
     const [pdfImages, setPdfImages] = useState([]);
+    const [rawImagesForGrading, setRawImagesForGrading] = useState([]); // Store raw base64 for grading
     const [loadingPdf, setLoadingPdf] = useState(false);
 
     // Submission Confirmation
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+    // Persistence: Load state from sessionStorage
+    useEffect(() => {
+        if (!exam?.id) return;
+        
+        const savedAnswers = sessionStorage.getItem(`exam_answers_${exam.id}`);
+        if (savedAnswers) {
+            try {
+                setAnswers(JSON.parse(savedAnswers));
+            } catch (e) {
+                console.error("Failed to parse saved answers", e);
+            }
+        }
+
+        const savedTimerStarted = sessionStorage.getItem(`exam_timer_started_${exam.id}`);
+        if (savedTimerStarted === 'true') {
+            setTimerStarted(true);
+            const savedTime = sessionStorage.getItem(`exam_time_remaining_${exam.id}`);
+            if (savedTime) {
+                setTimeRemaining(parseInt(savedTime, 10));
+            }
+        }
+    }, [exam?.id]);
+
+    // Persistence: Save state to sessionStorage
+    useEffect(() => {
+        if (!exam?.id) return;
+        sessionStorage.setItem(`exam_answers_${exam.id}`, JSON.stringify(answers));
+    }, [answers, exam?.id]);
+
+    useEffect(() => {
+        if (!exam?.id) return;
+        sessionStorage.setItem(`exam_timer_started_${exam.id}`, timerStarted);
+        sessionStorage.setItem(`exam_time_remaining_${exam.id}`, timeRemaining);
+    }, [timerStarted, timeRemaining, exam?.id]);
 
     const addLog = React.useCallback((msg) => {
         console.log(msg);
@@ -104,6 +150,7 @@ const ExamPage = () => {
                     const images = await convertPdfToImages(exam.pdfPath, (msg) => {
                         console.log("PDF Viewer Load:", msg);
                     });
+                    setRawImagesForGrading(images);
                     setPdfImages(images.map(img => `data:image/jpeg;base64,${img.inlineData.data}`));
                 } catch (err) {
                     console.error("Failed to load PDF images for viewer:", err);
@@ -159,17 +206,24 @@ const ExamPage = () => {
 
         try {
             setGrading(true);
+            setGradingProgressValue(0);
             setLogs(['採点を開始します...']);
 
-            // Re-fetch images for grading context
-            setGradingProgress("PDFを画像に変換中...");
-            addLog("Step 1: 採点用にPDFを再読み込み中...");
-            const images = await import('../utils/pdfUtils').then(m => m.convertPdfToImages(exam.pdfPath, (msg) => {
-                addLog(msg);
-                if (msg.includes("Page")) {
-                    setGradingProgress(`PDF変換中: ${msg}`);
-                }
-            }));
+            // Process images for grading
+            let images = [];
+            if (rawImagesForGrading && rawImagesForGrading.length > 0) {
+                addLog("Step 1: 既にロード済みの画像を使用します（メモリ節約）。");
+                images = rawImagesForGrading;
+                setGradingProgressValue(20); // 既に画像がある場合は20%まで進める
+            } else {
+                setGradingProgress("PDFを画像に変換中...");
+                addLog("Step 1: 採点用にPDFを読み込み中...");
+                images = await import('../utils/pdfUtils').then(m => m.convertPdfToImages(
+                    exam.pdfPath, 
+                    (msg) => addLog(msg),
+                    (p) => setGradingProgressValue(Math.round(p * 0.2)) // 0-20%
+                ));
+            }
 
             setGradingProgress("AIによる採点を実行中...");
             addLog("Step 2: 採点データを送信中...");
@@ -187,10 +241,20 @@ const ExamPage = () => {
 
             let result;
             try {
-                // Pass the loaded examData (with structure/answers) to the grading service
                 // Including fullMaxScore for proportional border calculation
                 const { gradeExamWithGemini } = await import('../services/geminiService');
-                result = await gradeExamWithGemini(apiKey, examData, formattedAnswers, images, fullMaxScore);
+                result = await gradeExamWithGemini(apiKey, examData, formattedAnswers, images, fullMaxScore, (val) => {
+                    if (val < 100) {
+                        // AI採点の各セクション進捗を 20% 〜 90% にマッピング
+                        setGradingProgressValue(20 + Math.round(val * 0.7));
+                    } else {
+                        // 100% (採点完了直後) は 90% として止めておき、総評生成中であることを示す
+                        setGradingProgress('AI先生の総評を生成中...');
+                        setGradingProgressValue(90);
+                        addLog("採点完了。AI先生が全体の総評を生成しています...");
+                    }
+                });
+                setGradingProgressValue(100);
                 console.log("Grading Result Raw:", result);
             } catch (apiError) {
                 console.error("API Error:", apiError);
@@ -202,6 +266,11 @@ const ExamPage = () => {
             }
 
             addLog("採点完了！結果画面へ移動します。");
+
+            // Clear session storage on successful completion
+            sessionStorage.removeItem(`exam_answers_${exam.id}`);
+            sessionStorage.removeItem(`exam_timer_started_${exam.id}`);
+            sessionStorage.removeItem(`exam_time_remaining_${exam.id}`);
 
             setGrading(false);
             navigate('/result', {
@@ -667,9 +736,31 @@ const ExamPage = () => {
                         <div key={i}>{log}</div>
                     ))}
                     {grading && (
-                        <div style={{ marginTop: '0.5rem', color: '#4ade80' }}>
-                            <div style={{ fontWeight: 'bold' }}>{gradingProgress}</div>
-                            <div className="animate-pulse">採点中...</div>
+                        <div style={{ marginTop: '0.75rem', color: '#4ade80' }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>{gradingProgress}</div>
+                            
+                            {/* Progress Bar UI */}
+                            <div style={{ 
+                                height: '8px', 
+                                width: '100%', 
+                                background: 'rgba(255,255,255,0.1)', 
+                                borderRadius: '4px', 
+                                overflow: 'hidden',
+                                marginBottom: '0.5rem',
+                                border: '1px solid rgba(255,255,255,0.2)'
+                            }}>
+                                <div style={{ 
+                                    height: '100%', 
+                                    width: `${gradingProgressValue}%`, 
+                                    background: 'linear-gradient(90deg, #10b981 0%, #34d399 100%)',
+                                    transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    boxShadow: '0 0 10px rgba(16,185,129,0.5)'
+                                }}></div>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
+                                <span className="animate-pulse">AIが詳しく分析中...</span>
+                                <span style={{ fontWeight: 'bold' }}>{gradingProgressValue}%</span>
+                            </div>
                         </div>
                     )}
                 </div>

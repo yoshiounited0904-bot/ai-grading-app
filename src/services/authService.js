@@ -18,7 +18,8 @@ export const signUp = async (email, password, username, firstChoiceUniversity, g
                     id: data.user.id,
                     username,
                     first_choice_university: firstChoiceUniversity,
-                    grade
+                    grade,
+                    approval_status: 'pending'
                 }
             ])
         if (profileError) console.error('Profile creation error:', profileError)

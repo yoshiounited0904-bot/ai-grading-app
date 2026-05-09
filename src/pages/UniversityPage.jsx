@@ -1,12 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getExamsForUniversity } from '../data/examRegistry';
+import { useAuth } from '../contexts/AuthContext';
 
 const UniversityPage = () => {
     const { universityId } = useParams();
     const navigate = useNavigate();
+    const { user, loading: authLoading } = useAuth();
     const [university, setUniversity] = useState(null);
     const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!authLoading && !user) {
+            navigate('/');
+            return;
+        }
+    }, [user, authLoading, navigate]);
 
     // Modal state
     const [showSectionModal, setShowSectionModal] = useState(false);

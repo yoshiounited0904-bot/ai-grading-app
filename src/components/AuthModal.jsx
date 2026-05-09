@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { signUp, signIn } from '../services/authService'
 
 const AuthModal = ({ isOpen, onClose }) => {
@@ -11,6 +11,19 @@ const AuthModal = ({ isOpen, onClose }) => {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [message, setMessage] = useState('')
+    const [infoMessage, setInfoMessage] = useState('')
+
+    useEffect(() => {
+        const handleOpen = (e) => {
+            if (e.detail?.message) {
+                setInfoMessage(e.detail.message);
+            } else {
+                setInfoMessage('');
+            }
+        };
+        document.addEventListener('openAuthModal', handleOpen);
+        return () => document.removeEventListener('openAuthModal', handleOpen);
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault()
@@ -55,6 +68,21 @@ const AuthModal = ({ isOpen, onClose }) => {
 
                 {error && <div style={{ color: '#ef4444', marginBottom: '1rem', textAlign: 'center', fontSize: '0.9rem' }}>{error}</div>}
                 {message && <div style={{ color: '#10b981', marginBottom: '1rem', textAlign: 'center', fontSize: '0.9rem' }}>{message}</div>}
+                {infoMessage && (
+                    <div style={{ 
+                        background: 'var(--color-bg-secondary)', 
+                        color: 'var(--color-accent-primary)', 
+                        padding: '0.75rem', 
+                        borderRadius: '8px', 
+                        marginBottom: '1.5rem', 
+                        fontSize: '0.85rem', 
+                        textAlign: 'center',
+                        fontWeight: '600',
+                        border: '1px solid var(--color-silver-light)'
+                    }}>
+                        ℹ️ {infoMessage}
+                    </div>
+                )}
 
                 <form onSubmit={handleSubmit}>
                     <div className="form-group">

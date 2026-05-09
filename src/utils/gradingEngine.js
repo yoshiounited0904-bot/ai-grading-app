@@ -62,6 +62,7 @@ export const gradeObjectively = (examData, userAnswers) => {
                 // Mark for AI processing (subjective)
                 const feedbackItem = {
                     id: q.id,
+                    sectionId: section.id, // Added for grouping during AI grading
                     userAnswer: userAnswer,
                     correctAnswer: correctAnswer,
                     alternativeAnswers: q.alternativeAnswers || [],

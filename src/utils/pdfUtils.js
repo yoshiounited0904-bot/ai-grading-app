@@ -6,7 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 const version = pdfjsLib.version || '4.8.69';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
 
-export const convertPdfToImages = async (pdfUrl, onLog = console.log) => {
+export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress = null) => {
     onLog(`Starting PDF conversion for: ${pdfUrl}`);
     try {
         const loadingTask = pdfjsLib.getDocument(pdfUrl);
@@ -21,6 +21,7 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log) => {
         const images = [];
 
         onLog(`Processing ${pagesToProcess} pages sequentially...`);
+        if (onProgress) onProgress(0);
 
         for (let i = 1; i <= pagesToProcess; i++) {
             // Yield to main thread to prevent freezing
@@ -58,6 +59,9 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log) => {
                     }
                 });
                 onLog(`Page ${i} processed.`);
+                if (onProgress) {
+                    onProgress(Math.round((i / pagesToProcess) * 100));
+                }
             } catch (pageError) {
                 console.error(`Error rendering page ${i}:`, pageError);
                 onLog(`Error rendering page ${i}: ${pageError.message}`);
@@ -65,6 +69,7 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log) => {
         }
 
         onLog("PDF conversion complete.");
+        if (onProgress) onProgress(100);
         return images;
     } catch (error) {
         console.error("Error converting PDF to images:", error);

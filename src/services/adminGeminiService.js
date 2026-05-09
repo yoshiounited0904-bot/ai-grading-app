@@ -1,9 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const MODELS = {
-  PRIMARY: "gemini-2.5-flash",
-  FALLBACK: "gemini-2.5-pro"
-};
+const MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-2.5-pro",
+  "gemini-1.5-pro"
+];
 
 const ENGLISH_RULES = `
 【最重要前提】
@@ -196,108 +198,168 @@ export const sanitizeJson = (jsonString) => {
   // Remove markdown code blocks if present (legacy fallback)
   clean = clean.replace(/```json/g, "").replace(/```/g, "").trim();
 
-  // Rescue for truncation: Add missing closing brackets/braces
-  const openBraces = (clean.match(/\{/g) || []).length;
-  const closeBraces = (clean.match(/\}/g) || []).length;
-  if (openBraces > closeBraces) {
-    clean += "}".repeat(openBraces - closeBraces);
+  // Rescue for truncation: 
+  
+  // 1. If it ends with a comma, remove it as it breaks JSON.parse
+  clean = clean.replace(/,\s*$/g, "");
+  clean = clean.replace(/,\s*([\}\]])/g, "$1");
+
+  // 2. Add missing closing quotes if it's truncated mid-string
+  const quoteCount = (clean.match(/"/g) || []).length;
+  if (quoteCount % 2 !== 0) {
+    clean += '"';
   }
 
-  const openBrackets = (clean.match(/\[/g) || []).length;
-  const closeBrackets = (clean.match(/\]/g) || []).length;
-  if (openBrackets > closeBrackets) {
-    clean += "]".repeat(openBrackets - closeBrackets);
+  // 3. Add missing closing brackets/braces in the CORRECT order using a stack
+  const stack = [];
+  for (let i = 0; i < clean.length; i++) {
+    const char = clean[i];
+    if (char === '{') stack.push('}');
+    else if (char === '[') stack.push(']');
+    else if (char === '}') {
+      if (stack[stack.length - 1] === '}') stack.pop();
+    } else if (char === ']') {
+      if (stack[stack.length - 1] === ']') stack.pop();
+    }
+  }
+
+  // Append missing closers in reverse order
+  while (stack.length > 0) {
+    clean += stack.pop();
   }
 
   return clean;
 };
 
-// --- RETRY UTILITY FOR 429 ERRORS ---
-const withRetry = async (fn, maxRetries = 10, initialDelay = 5000) => {
-  let attempt = 0;
-  while (attempt < maxRetries) {
-    try {
-      return await fn();
-    } catch (error) {
-      attempt++;
-      // Check for 429 in various formats
-      const isRateLimit = (error.status === 429) ||
-        (error.message?.includes("429")) ||
-        (error.message?.includes("Resource exhausted")) ||
-        (error.message?.includes("Too many requests"));
+// --- RETRY & FALLBACK UTILITY FOR 429/503 ERRORS ---
+const generateContentWithFallback = async (genAI, requestData, maxRetriesPerModel = 5, initialDelay = 5000) => {
+  const errors = [];
+  for (const modelName of MODELS) {
+    const model = genAI.getGenerativeModel({ model: modelName });
+    let attempt = 0;
+    while (attempt < maxRetriesPerModel) {
+      try {
+        console.log(`[GeminiService] Attempting generation with model: ${modelName} (Attempt ${attempt + 1}/${maxRetriesPerModel})`);
+        return await model.generateContent(requestData);
+      } catch (error) {
+        attempt++;
+        const isRetryable = (error.status === 429 || error.status === 503 || error.status === 504) ||
+          (error.message?.includes("429")) ||
+          (error.message?.includes("503")) ||
+          (error.message?.includes("Resource exhausted")) ||
+          (error.message?.includes("Too many requests")) ||
+          (error.message?.includes("overloaded")) ||
+          (error.message?.includes("high demand")) ||
+          (error.message?.includes("Load failed")) ||
+          (error.message?.includes("fetch"));
 
-      if (isRateLimit && attempt < maxRetries) {
-        // Exponential backoff: 5s, 10s, 20s, 40s...
-        const delay = initialDelay * Math.pow(2, attempt - 1);
-        console.warn(`[GeminiService] Rate limit hit (429/TooManyRequests). Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
+        if (isRetryable && attempt < maxRetriesPerModel) {
+          const delay = Math.min(30000, initialDelay * Math.pow(2, attempt - 1));
+          console.warn(`[GeminiService] Model ${modelName} hit error (${error.status || error.message}). Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetriesPerModel})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        console.warn(`[GeminiService] Model ${modelName} failed after ${attempt} attempts. Error: ${error.message}`);
+        errors.push({ model: modelName, error });
+        break; // Break inner loop, try next model in the outer loop
       }
-      throw error;
     }
   }
+  
+  // If we reach here, all models failed. Throw the first error (from primary model) but append info about others.
+  if (errors.length > 0) {
+    const primaryError = errors[0].error;
+    primaryError.message = `[All Fallback Models Failed] Primary Error: ${primaryError.message} | Other models tried: ${errors.slice(1).map(e => e.model).join(", ")}`;
+    throw primaryError;
+  }
+  throw new Error("Unknown error in generateContentWithFallback: All models failed but no errors caught.");
 };
 
-// Helper function to convert File to base64 and preserve mimeType
-// For images, we resize/compress them to avoid payload size errors
-const fileToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    const isImage = file.type.startsWith('image/');
+// Helper function to convert either a File object or a URL string to base64
+const anySourceToBase64 = async (source) => {
+  if (!source) return null;
 
-    if (isImage) {
-      const img = new Image();
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const reader = new FileReader();
+  // Case 1: source is already a File/Blob object
+  if (source instanceof File || source instanceof Blob) {
+    return new Promise((resolve, reject) => {
+      const isImage = source.type.startsWith('image/');
+      if (isImage) {
+        const img = new Image();
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const reader = new FileReader();
 
-      reader.onload = (e) => {
-        img.onload = () => {
-          // Max dimensions
-          const MAX_WIDTH = 1600;
-          const MAX_HEIGHT = 1600;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
+        reader.onload = (e) => {
+          img.onload = () => {
+            const MAX_WIDTH = 1600;
+            const MAX_HEIGHT = 1600;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) {
+              if (width > MAX_WIDTH) {
+                height *= MAX_WIDTH / width;
+                width = MAX_WIDTH;
+              }
+            } else {
+              if (height > MAX_HEIGHT) {
+                width *= MAX_HEIGHT / height;
+                height = MAX_HEIGHT;
+              }
             }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-
-          // Draw image
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Get high quality jpeg (smaller than uncompressed image)
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-          const base64String = dataUrl.split(',')[1];
-          resolve({ data: base64String, mimeType: 'image/jpeg' });
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            const base64String = dataUrl.split(',')[1];
+            resolve({ data: base64String, mimeType: 'image/jpeg' });
+          };
+          img.onerror = () => reject(new Error('Failed to load image for compression'));
+          img.src = e.target.result;
         };
-        img.onerror = () => reject(new Error('Failed to load image for compression'));
-        img.src = e.target.result;
-      };
-      reader.onerror = error => reject(error);
-      reader.readAsDataURL(file);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(source);
+      } else {
+        const reader = new FileReader();
+        reader.readAsDataURL(source);
+        reader.onload = () => {
+          const base64String = reader.result.split(',')[1];
+          resolve({ data: base64String, mimeType: source.type });
+        };
+        reader.onerror = error => reject(error);
+      }
+    });
+  }
 
-    } else {
-      // For PDFs
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64String = reader.result.split(',')[1];
-        resolve({ data: base64String, mimeType: file.type });
-      };
-      reader.onerror = error => reject(error);
+  // Case 2: source is a URL string
+  if (typeof source === 'string') {
+    try {
+      const response = await fetch(source);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const blob = await response.blob();
+      
+      // If it's a PDF, we don't need further processing beyond base64
+      if (blob.type === 'application/pdf') {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64String = reader.result.split(',')[1];
+            resolve({ data: base64String, mimeType: blob.type });
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+      
+      // If it's an image, use the recursive logic above to compress it
+      return anySourceToBase64(blob);
+    } catch (err) {
+      console.error(`Failed to fetch source from URL: ${source}`, err);
+      throw new Error(`ファイルを取得できませんでした: ${source}`);
     }
-  });
+  }
+
+  return null;
 };
 
 export const generateExamMasterData = async (apiKey, subjectType, questionFiles, questionFilesBySection, answerFilesBySection, sectionInstructionsBySection, sectionPointsBySection, extraInfo) => {
@@ -311,7 +373,6 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     }
 
     const genAI = new GoogleGenerativeAI(trimmedKey);
-    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
     const maxScore = extraInfo?.maxScore || 100;
     const isEnglish = subjectType === 'english';
@@ -343,14 +404,14 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     let commonQuestionText = "";
     if (questionFiles && questionFiles.length > 0) {
       console.log(`[Stage 0] Transcribing common question documents...`);
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
 
       const qOcrPrompt = `提供された問題用紙の画像を正確にテキスト化してください。`;
-      const qOcrResult = await withRetry(() => model.generateContent({
+      const qOcrResult = await generateContentWithFallback(genAI, {
         contents: [{ role: 'user', parts: [...qInlineData, { text: qOcrPrompt }] }],
         generationConfig: { maxOutputTokens: 8192 }
-      }));
+      });
       commonQuestionText = qOcrResult.response.text();
     }
 
@@ -367,10 +428,10 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
       const aDataArray = await Promise.all(rawAnswerFiles.map(file => fileToBase64(file)));
       const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
       const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
-      const aOcrResult = await withRetry(() => model.generateContent({
+      const aOcrResult = await generateContentWithFallback(genAI, {
         contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
         generationConfig: { maxOutputTokens: 2048 }
-      }));
+      });
       const answerText = aOcrResult.response.text();
 
       // 1b. OCR the specific questions for this section (if provided)
@@ -381,10 +442,10 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
         const qDataArray = await Promise.all(rawQuestionFiles.map(file => fileToBase64(file)));
         const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
         const sqOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
-        const sqOcrResult = await withRetry(() => model.generateContent({
+        const sqOcrResult = await generateContentWithFallback(genAI, {
           contents: [{ role: 'user', parts: [...qInlineData, { text: sqOcrPrompt }] }],
           generationConfig: { maxOutputTokens: 4096 }
-        }));
+        });
         sectionQuestionText = sqOcrResult.response.text();
       }
 
@@ -407,6 +468,7 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 3. 以下のJSON構造（オブジェクト1つ）のみを出力してください（コードブロックなし）。
 4. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
 5. 全ての小問の \`points\` は 0 に設定してください。
+6. 全ての小問の \`explanation\` は必ず空文字 ("") に設定し、解説文は一切生成しないでください。
 
 【出力構造】
 {
@@ -427,10 +489,10 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 }
 `;
 
-      const extractResult = await withRetry(() => model.generateContent({
+      const extractResult = await generateContentWithFallback(genAI, {
         contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
         generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-      }), 5, 4000);
+      }, 5, 4000);
 
       const sectionRaw = extractResult.response.text();
       try {
@@ -471,10 +533,10 @@ ${JSON.stringify(extractedSections, null, 2)}
 3. 思考プロセスや配点理由などのテキスト解説は一切含めないでください。
 `;
 
-    const pointsResult = await withRetry(() => model.generateContent({
+    const pointsResult = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: pointsPrompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-    }));
+    });
 
     let fullSections = extractedSections; // Fallback
     try {
@@ -543,45 +605,39 @@ export const regenerateQuestionExplanation = async (apiKey, questionData, questi
       throw new Error("Gemini APIの初期化に失敗しました。");
     }
 
-    let model;
-    try {
-      model = genAI.getGenerativeModel({
-        model: MODELS.PRIMARY,
-        // tools: [{ googleSearch: {} }] // Allow web search just in case
-      });
-    } catch (err) {
-      throw new Error(`モデル "${MODELS.PRIMARY}" の読み出しに失敗しました。`);
-    }
-
     const imageParts = [];
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
-    const prompt = `あなたは大学入試の専門講師です。以下の問題の解説を、簡潔に2〜3文で書いてください。
+    const prompt = `あなたは大学入試の専門講師です。
+必ず【添付されている画像（問題用紙および解答用紙）】を読み取り、以下の対象設問についての解説を作成してください。
 
-【対象の問題データ】
+【対象の設問（構造データ）】
 ${JSON.stringify(questionData, null, 2)}
 
-【要件】
-1. なぜその答えになるのか、根拠（本文の該当箇所など）を1文で示すこと。
-2. 選択問題の場合、誤りの選択肢が間違っている理由を1〜2文で簡潔に加えること。
-3. アスタリスク（*）記号は一切使用禁止。見出しや強調も含め ** や * は使わないこと。
-4. 长すぎる解説は不要。受験生が「なるほど」と思える最小限の説明で十分。
-5. 必ず日本語で記述すること。
+【絶対厳守の文字数・構成ルール】
+・解説全体の長さは【絶対に2〜3文以内（約50〜100文字程度）】に収めること。これより長い解説はシステムエラーになります。
+・「なぜその答えになるのかの根拠」と「他の選択肢がダメな理由」を、無駄な前置きを一切省いて直接記述すること。
+・改行や箇条書きは使用せず、シンプルな文章で完結させること。
 
-出力は解説本文のみ（プレーンテキスト）。
+【その他の要件】
+1. 添付画像を分析し、該当箇所を特定した上で解説を作成すること。画像を見ずに一般論を書くのは禁止。
+2. アスタリスク（*）記号は一切使用禁止。見出しや強調も含め ** や * は使わないこと。
+3. 必ず日本語で記述すること。
+
+出力は解説本文のみ（プレーンテキスト）を返してください。
 `;
 
-    const result = await withRetry(() => model.generateContent({
+    const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
       generationConfig: { maxOutputTokens: 8192 }
-    }));
+    });
 
     const text = result.response.text();
     console.log("[AdminGeminiService] Raw Explanation Response:", text.substring(0, 500) + "...");
@@ -611,176 +667,40 @@ export const regenerateDetailedAnalysis = async (apiKey, subjectType, examData, 
       throw new Error("Gemini APIの初期化に失敗しました。");
     }
 
-    let model;
-    try {
-      model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
-    } catch (err) {
-      throw new Error(`モデル "${MODELS.PRIMARY}" の読み出しに失敗しました。`);
-    }
-
     const imageParts = [];
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
-    let prompt = "";
-
-    if (subjectType === 'english') {
-      prompt = `あなたは、難関大学入試（早稲田・慶應レベル）の英語長文問題を解く専門家である。
-目的は「答え」ではなく、受験生が同じやり方を再現できるレベルで、
-設問準備・読解・解答の思考プロセスを口語体でなく文語体で完全に言語化することである。
-
-────────────────
-【最重要前提】
-
-・設問準備 → 読解 → 設問処理は分離されていない
-・解説は「実際に問題を解いている時系列」で書く
-・本文解説では、必ず英文を引用しながら進める
-・日本語の解説は、必ず直前に引用した英文に対応させる
-・箇条書き・矢印・処理ログ風の書き方は禁止
-・受験生が「英文 ↔ 解説」を往復できる文章にする
-
-────────────────
-【0. 入力】
-
-以下が与えられる：
-・本文（段落番号つき推奨）※添付画像を参照
-・設問（番号つき・選択肢つき）※添付画像及び以下の構造データを参照
-・（任意）ユーザー指定の正解 ※以下の構造データを参照
+    const prompt = `あなたは大学入試の専門講師です。
+提供された問題と解答のファイル、および試験データ構造をもとに、この試験の「全体講評（レビュー）」を作成してください。
+※個別の問題の解き方（詳細な解説）は不要です。試験全体の傾向や難易度、対策に焦点を当ててください。
 
 【試験データ構造】
 ${JSON.stringify({ maxScore: examData.max_score, structure: examData.structure }, null, 2)}
 
-────────────────
-【1. 内部実行ルール（※出力しないが必ず実行）】
+【記述要件】
+以下の構成（見出し）で、受験生に向けた実践的な講評を作成してください。
+■ 全体総評（全体の難易度、時間配分の厳しさなど）
+■ 大問ごとの傾向と分析（各大問の特徴、出題形式、差がつくポイントなど）
+■ 合格へのアドバイス・今後の対策（この大学・学部を志望する受験生が今後どのような勉強をすべきか）
 
-### 1-1. 設問準備（読む前）
-
-本文を読む前に、全設問を確認し、各設問について次のみを行う：
-
-・設問タイプの把握（傍線部説明／定義／NOT／比喩／理由 など）
-・「どの段落まで読めば解けるか」の見通し
-・読解中に意識すべき観点（But／抽象→具体／評価語 など）
-
-重要：
-・この段階では答えを作らない
-・やるのは「読み方の設計」だけ
-
-### 1-2. 読解（解きながら読む）
-
-各段落について、必ず以下の流れで処理する：
-
-A. 段落に入る前に、今どの設問を意識しているかを確認  
-B. 英文を **一文ずつ引用** する  
-C. その英文を読んだ瞬間に頭の中で行っている判断を、日本語の文章で説明する  
-D. 次の英文で、理解がどう修正・更新されたかを書く  
-E. But／疑問文／言い換え／抽象↔具体が出た場合は、必ず意味づけを言語化する  
-F. 段落を読み終えた時点で、
-   ・段落の趣旨
-   ・本文全体における役割
-   を文章でまとめる
-G. この時点で解ける設問があれば、
-   「ここまで読めばこの設問に必要な情報はそろっている」
-   という自然な日本語で示す
-
-重要：
-・いきなり段落要約から入らない
-・必ず「英文 → 思考 → 英文 → 思考」の流れを守る
-
-### 1-3. 選択肢処理
-
-選択肢問題は、正解探しではなく「誤りの言語化」で処理する。
-
-・各誤選択肢について、
-  - 本文のどこがズレているか
-  - ズレの種類（言い過ぎ／範囲ズレ／主語述語ズレ／抽象化しすぎ等）
-を短い文章で明確に説明する。
-
-────────────────
-【2. 出力順（絶対厳守）】
-
-以下の順番を必ず守る。
-
-① 解答一覧  
-② 設問準備フェーズ（文章で）  
-③ 読みながら解くプロセス（段落ごと・英文引用必須）  
-④ 設問ごとの解答プロセス  
-⑤ 本文全文和訳  
-⑥ 完全解説（①〜④を統合した時系列の最終版）
-
-────────────────
-【3. 各出力の詳細】
-
-①【解答一覧】
-・ユーザー指定の解答をそのまま列挙
-・理由は書かない
-
-②【設問準備フェーズ】
-・箇条書きは禁止
-・各設問について
-  「この設問は何を聞いており、どこをどう読めば解けそうか」
-  を文章で説明する
-
-③【読みながら解くプロセス】
-・必ず英文を引用しながら進める
-・一文ごとに
-  「この文を読んだ時点ではこう理解する」
-  「次の文でこの理解がこう変わる」
-  を書く
-・設問との接続は自然な文章で行う
-
-④【設問ごとの解答プロセス】
-・どの段落・どの英文を根拠にしたかを明示
-・他の選択肢がなぜ違うかを本文ベースで説明
-
-⑤【本文全文和訳】
-・自然な日本語
-・逐語訳ではないが情報は落とさない
-・解説は入れない
-
-⑥【完全解説】
-・設問準備 → 読解 → 解答が
-  実際の頭の中でどう往復しているかを、
-  一続きの文章として再構成する
-・時系列を絶対に崩さない
-
-────────────────
-【4. 禁止事項】
-
-・箇条書き中心の解説
-・処理ログ風の羅列
-・英文を示さずに日本語だけで説明すること
-・参考書的なまとめ先行の解説
-・「なんとなく」「感覚的に」などの曖昧表現
-・アスタリスク（*）記号は一切使用しないこと（太字等はHTMLタグや他の記号で代用するか使用を控える）
-
-以上のルールに従い、すべてMarkdownで記述し、コードブロック(\`\`\`markdown など)で全体を囲まず、直接本文のみを出力してください。
+【厳格ルール】
+- アスタリスク（*）記号は一切使用禁止。見出し・強調には「■」「【】」などの記号を用いること（HTMLタグも不要）。
+- コードブロック表記(\`\`\`markdown など)で全体を囲まないこと。本文のみを出力すること。
+- 必ず日本語で記述すること。
+- 丁寧で励みになる口調（〜です・〜ます調）で記述すること。
 `;
-    } else {
-      prompt = `あなたは大学入試の専門講師です。提供された問題と解答のファイル、および抽出された構造データをもとに、試験の「全体詳細解説」を作成してください。
 
-【試験データ構造】
-${JSON.stringify({ maxScore: examData.max_score, structure: examData.structure }, null, 2)}
-
-【要件】
-1. 受験生が復習する際に役立つよう、大問ごとに丁寧な解説を記述すること。
-2. アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。代わりに「①②③」「【】」などの記号を使うこと。
-3. コードブロック表記（\`\`\`markdown など）で全体を囲まないこと。本文のみを出力すること。
-4. **必ず日本語で記述すること。**
-
-出力は解説本文のみを返してください。
-`;
-    }
-
-    const result = await withRetry(() => model.generateContent({
+    const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
       generationConfig: { maxOutputTokens: 65536 }
-    }));
+    });
 
     const text = result.response.text();
     console.log("[AdminGeminiService] Raw Detailed Analysis length:", text.length);
@@ -807,15 +727,6 @@ export const regeneratePointsAllocation = async (apiKey, subjectType, examData, 
       genAI = new GoogleGenerativeAI(trimmedKey);
     } catch (err) {
       throw new Error("Gemini APIの初期化に失敗しました。");
-    }
-
-    let model;
-    try {
-      model = genAI.getGenerativeModel({
-        model: MODELS.PRIMARY,
-      });
-    } catch (err) {
-      throw new Error(`モデル "${MODELS.PRIMARY}" の読み出しに失敗しました。`);
     }
 
     const isEnglish = subjectType === 'english';
@@ -846,11 +757,11 @@ export const regeneratePointsAllocation = async (apiKey, subjectType, examData, 
     // Prepare inputs
     const imageParts = [];
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
@@ -884,10 +795,10 @@ ${JSON.stringify(currentStructure, null, 2)}
 `;
 
     // Execute generation with retry logic (using JSON mime type structure to enforce schema if possible, or just parse response)
-    const result = await withRetry(() => model.generateContent([
+    const result = await generateContentWithFallback(genAI, [
       prompt,
       ...imageParts
-    ]));
+    ]);
 
     const text = result.response.text();
     const sanitizedText = sanitizeJson(text);
@@ -978,28 +889,111 @@ ${JSON.stringify(currentStructure, null, 2)}
   }
 };
 
-export const generateSectionDetailedAnalysis = async (apiKey, subjectType, sectionData, questionFiles = [], answerFiles = [], specialInstruction = "") => {
+export const generateSectionDetailedAnalysis = async (apiKey, subjectType, sectionData, questionFiles = [], answerFiles = [], specialInstruction = "", subjectName = "") => {
   try {
     const trimmedKey = apiKey?.trim();
     if (!trimmedKey) throw new Error("Gemini API Key is not set.");
 
     const genAI = new GoogleGenerativeAI(trimmedKey);
-    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
     const imageParts = [];
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
     const questionType = sectionData.questionType || 'default';
     
     let basePrompt = "";
-    if (subjectType === 'english') {
+    if (subjectName && subjectName.includes('日本史')) {
+      basePrompt = `下記のプロンプトを用いて日本史の解説を作成してください。
+
+あなたは難関大学（早慶レベル）の日本史問題を解説する専門講師である。
+
+最優先目的は「誤情報を出さないこと」であり、
+知識の網羅性よりも正確性を優先する。
+
+【前提】
+外部の特定教材やデータベースは参照しない。
+そのため、出力内容は厳密に制限する。
+
+【最重要ルール】
+
+① 問題文・選択肢から論理的に導ける内容を最優先する  
+② 使用する知識は「高校日本史教科書レベルで確実に一般化されているもの」に限定する  
+③ 不要な知識拡張は禁止  
+
+【知識使用制約】
+
+・以下の条件をすべて満たす場合のみ知識を使用してよい：
+
+　- 日本史の基本事項として広く知られている  
+　- 早慶レベルで頻出の内容である  
+　- 1〜2行で簡潔に説明できる  
+
+・以下は禁止：
+
+　- 細かい年号  
+　- マイナー人物  
+　- 例外事例  
+　- 研究レベルの知識  
+　- エピソード・雑学  
+
+【因果関係ルール】
+
+・因果関係は最大3ステップまで  
+・明確に教科書レベルで成立する関係のみ使用  
+・因果が曖昧な場合は接続しない  
+
+【解説方針】
+
+・長文解説とするが、情報量を増やすのではなく、既知情報を分解して丁寧に説明する  
+・以下の要素で厚みを出す：
+
+　- 定義  
+　- 背景  
+　- 因果関係  
+　- 設問処理  
+　- 誤答分析  
+
+【出力順】
+
+① 解答  
+② 問題の論点整理  
+③ 解答に必要な知識の提示  
+④ 解答プロセス  
+⑤ 誤答分析  
+⑥ 周辺知識（※条件付き）  
+⑦ 同型問題への応用  
+
+【周辺知識の制約】
+
+・問題テーマと直接関係するもののみ扱う  
+・抽象化できる知識に限定  
+・新しい論点は追加しない  
+
+【禁止事項】
+
+・曖昧な一般論  
+・知識の穴埋め  
+・推測による補完  
+・問題に無関係な知識展開  
+・冗長な説明  
+・アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。
+
+【内部検証（必須）】
+
+出力前に以下を必ず確認する：
+
+1. 問題から逸脱していないか  
+2. 一般的教科書レベルを超えていないか  
+3. 因果関係に飛躍がないか  
+4. 誤答分析が本文・知識と整合しているか`;
+    } else if (subjectType === 'english') {
       if (questionType === 'grammar') {
         basePrompt = `あなたは、大学受験レベル（MARCH〜早慶）の英文法問題を解くプロ講師である。
 目的は「正解を出すこと」ではなく、受験生が同じ思考を再現できるレベルで第${sectionData.id}問（${sectionData.label}）の解法を言語化することである。
@@ -1181,10 +1175,10 @@ ${specialInstruction ? `【ユーザーからの個別指示】\n${specialInstru
 出力は解説本文（Markdown）のみを返してください。
 `;
 
-    const result = await withRetry(() => model.generateContent({
+    const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: finalPrompt }, ...imageParts] }],
       generationConfig: { maxOutputTokens: 65536 }
-    }));
+    });
 
     const text = result.response.text();
     return text.replace(/```markdown\n?|```\n?|```/g, '').trim();
@@ -1201,7 +1195,6 @@ export const generateSingleSectionData = async (apiKey, subjectType, sectionInde
     console.log(`[AdminGeminiService] Generating section ${sectionIndex} data...`);
 
     const genAI = new GoogleGenerativeAI(trimmedKey);
-    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
     const isEnglish = subjectType === 'english';
     const isSocial = subjectType === 'social';
@@ -1216,26 +1209,26 @@ export const generateSingleSectionData = async (apiKey, subjectType, sectionInde
     // OCR Answer
     let answerText = "";
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
       const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
-      const aOcrResult = await withRetry(() => model.generateContent({
+      const aOcrResult = await generateContentWithFallback(genAI, {
         contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
         generationConfig: { maxOutputTokens: 2048 }
-      }));
+      });
       answerText = aOcrResult.response.text();
     }
 
     // OCR Question
     let questionText = "";
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
       const qOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
-      const qOcrResult = await withRetry(() => model.generateContent({
+      const qOcrResult = await generateContentWithFallback(genAI, {
         contents: [{ role: 'user', parts: [...qInlineData, { text: qOcrPrompt }] }],
         generationConfig: { maxOutputTokens: 8192 }
-      }));
+      });
       questionText = qOcrResult.response.text();
     }
 
@@ -1258,7 +1251,7 @@ ${targetPointsRule}
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
 2. アスタリスク（*）記号を絶対に使用しないでください。
 3. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
-4. 各小問の \`explanation\` および大問の \`sectionAnalysis\` は、**必ず日本語で** 記述してください。正解を導くための論理的で丁寧な解説と、誤答の理由を含めること。
+4. 各小問の \`explanation\` および大問の \`sectionAnalysis\` は、必ず空文字 ("") に設定してください。解説の文章は一切生成しないでください。
 5. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
 
 【出力構造】
@@ -1275,16 +1268,16 @@ ${targetPointsRule}
       "options": ["a", "b", "c", "d"],
       "correctAnswer": "正解",
       "points": 5,
-      "explanation": "なぜこれが正解なのかの解説"
+      "explanation": ""
     }
   ]
 }
 `;
 
-    const result = await withRetry(() => model.generateContent({
+    const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-    }), 5, 5000);
+    }, 5, 5000);
 
     const sectionRaw = result.response.text();
     const parsedSection = JSON.parse(sanitizeJson(sectionRaw));
@@ -1308,15 +1301,14 @@ export const generateSectionQuestionsExplanations = async (apiKey, subjectType, 
     if (!trimmedKey) throw new Error("Gemini API Key is not set.");
 
     const genAI = new GoogleGenerativeAI(trimmedKey);
-    const model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
 
     const imageParts = [];
     if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = await Promise.all(questionFiles.map(file => fileToBase64(file)));
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
     if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = await Promise.all(answerFiles.map(file => fileToBase64(file)));
+      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
       aDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
     }
 
@@ -1327,9 +1319,10 @@ export const generateSectionQuestionsExplanations = async (apiKey, subjectType, 
 【厳格ルール】
 1. **既存の id, label, type, options, correctAnswer, points は絶対に書き換えないこと。** 
 2. 渡された JSON の各要素にある \`explanation\` フィールドを、論理的で丁寧な解説（本文の根拠、誤答の理由）で埋めてください。
-3. 日本語で記述すること。
-4. アスタリスク（*）記号は一切使用禁止。
-5. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
+3. 【超重要】各小問の \`explanation\` の長さは【絶対に2〜3文以内（約50〜100文字程度）】に収めること。「なぜ正解か」「なぜ他はダメか」を無駄な前置きなく直接書き、改行や箇条書きは使わずにシンプルな文章で完結させてください。長すぎる解説はシステムエラーになります。
+4. 日本語で記述すること。
+5. アスタリスク（*）記号は一切使用禁止。
+6. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
 
 【対象の設問構造（現在のデータ）】
 ${JSON.stringify(sectionData, null, 2)}
@@ -1339,10 +1332,10 @@ ${JSON.stringify(sectionData, null, 2)}
 - 既存の構造を維持
 `;
 
-    const result = await withRetry(() => model.generateContent({
+    const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-    }), 5, 5000);
+    }, 5, 5000);
 
     const sectionRaw = result.response.text();
     const parsed = JSON.parse(sanitizeJson(sectionRaw));
