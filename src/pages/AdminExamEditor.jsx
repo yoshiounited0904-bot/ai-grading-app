@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
 import { getAdminBanners } from '../services/adminBannerService';
@@ -19,6 +19,7 @@ function AdminExamEditor() {
     const [generatingSectionData, setGeneratingSectionData] = useState({});
     const [generatingDetailed, setGeneratingDetailed] = useState(false);
     const [generatingSectionAnalysis, setGeneratingSectionAnalysis] = useState({});
+    const [generatingVocabulary, setGeneratingVocabulary] = useState({});
     const [regeneratingPoints, setRegeneratingPoints] = useState(false);
     const [bulkGenerating, setBulkGenerating] = useState(false);
     const [banners, setBanners] = useState([]);
@@ -893,6 +894,31 @@ function AdminExamEditor() {
             setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: false }));
         }
     };
+
+    const handleExtractVocabulary = async (sIdx, section) => {
+        if (!confirm(`第${section.id}問から英検準一級レベルの英単語を抽出しますか？\n（すでに抽出済みの場合は上書きされます）`)) return;
+
+        setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: true }));
+        try {
+            const apiKey = getGeminiApiKey();
+
+            const qFiles = questionFilesBySection[sIdx + 1] || [];
+            const savedQPath = examData?.structure?.[sIdx]?.question_pdf_path;
+            const finalQFiles = qFiles.length > 0 ? qFiles : (questionFiles.length > 0 ? questionFiles : (savedQPath ? [savedQPath] : (examData?.pdf_path ? [examData.pdf_path] : [])));
+
+            if (finalQFiles.length === 0) {
+                throw new Error("単語を抽出するための問題データがありません。");
+            }
+
+            const newVocabulary = await geminiQueue.add(() => extractSectionVocabulary(apiKey, finalQFiles));
+            handleStructureChange(sIdx, null, 'vocabulary', newVocabulary);
+            alert(`第${section.id}問の英単語抽出が完了しました！`);
+        } catch (error) {
+            alert('英単語の抽出に失敗しました:\n' + error.message);
+        } finally {
+            setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: false }));
+        }
+    };
     const handleRegenerateDetailedAnalysis = async () => {
         if (!examData) {
             alert('マスターデータが存在しません。');
@@ -1002,6 +1028,26 @@ function AdminExamEditor() {
             newStructure[sectionIdx].questions.push(newQuestion);
         }
         
+        setExamData({ ...examData, structure: newStructure });
+    };
+
+    const handleMoveQuestion = (sectionIdx, qIdx, direction) => {
+        const newStructure = [...examData.structure];
+        const questions = [...newStructure[sectionIdx].questions];
+        
+        if (direction === 'up' && qIdx > 0) {
+            const temp = questions[qIdx];
+            questions[qIdx] = questions[qIdx - 1];
+            questions[qIdx - 1] = temp;
+        } else if (direction === 'down' && qIdx < questions.length - 1) {
+            const temp = questions[qIdx];
+            questions[qIdx] = questions[qIdx + 1];
+            questions[qIdx + 1] = temp;
+        } else {
+            return; // Invalid move
+        }
+        
+        newStructure[sectionIdx].questions = questions;
         setExamData({ ...examData, structure: newStructure });
     };
 
@@ -1822,7 +1868,11 @@ function AdminExamEditor() {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <div className="flex flex-col items-center gap-3">
+                                                        <div className="flex flex-col items-center gap-2">
+                                                            <div className="flex gap-1 mb-1">
+                                                                <button onClick={() => handleMoveQuestion(sIdx, qIdx, 'up')} disabled={qIdx === 0} className="text-gray-300 hover:text-indigo-500 disabled:opacity-30 disabled:hover:text-gray-300 transition-colors" title="上に移動">↑</button>
+                                                                <button onClick={() => handleMoveQuestion(sIdx, qIdx, 'down')} disabled={qIdx === section.questions.length - 1} className="text-gray-300 hover:text-indigo-500 disabled:opacity-30 disabled:hover:text-gray-300 transition-colors" title="下に移動">↓</button>
+                                                            </div>
                                                             <button onClick={() => handleAddQuestion(sIdx, qIdx)} className="text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 w-6 h-6 rounded-full flex items-center justify-center transition-all text-sm font-black bg-white border border-gray-100 shadow-sm" title="この上に小問を追加">＋</button>
                                                             <button onClick={() => handleDeleteQuestion(sIdx, qIdx)} className="text-gray-300 hover:text-red-500 transition-colors text-lg" title="小問を削除">×</button>
                                                         </div>
@@ -1851,11 +1901,35 @@ function AdminExamEditor() {
                                                     </select>
                                                 )}
                                             </div>
-                                            <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5">
-                                                {generatingSectionAnalysis[sIdx] ? '再生成中...' : '✨ AIで解説生成'}
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                {subjectEn === 'english' && (
+                                                    <button onClick={() => handleExtractVocabulary(sIdx, section)} disabled={generatingVocabulary[sIdx]} className="text-[10px] font-black text-indigo-500 hover:text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5">
+                                                        {generatingVocabulary[sIdx] ? '抽出中...' : '📚 英検準1級単語を抽出'}
+                                                    </button>
+                                                )}
+                                                <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5">
+                                                    {generatingSectionAnalysis[sIdx] ? '再生成中...' : '✨ AIで解説生成'}
+                                                </button>
+                                            </div>
                                         </div>
                                         <textarea value={section.sectionAnalysis || ''} onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)} className="w-full p-5 rounded-2xl border border-gray-100 text-xs bg-white focus:bg-gray-50/30 outline-none transition-all min-h-[100px]" placeholder="この大問全体の読解ポイント..." />
+                                        
+                                        {subjectEn === 'english' && section.vocabulary && section.vocabulary.length > 0 && (
+                                            <div className="mt-4 p-4 bg-indigo-50/30 border border-indigo-100 rounded-xl">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <h4 className="text-[10px] font-black text-indigo-800 uppercase">抽出された英単語 ({section.vocabulary.length}語)</h4>
+                                                    <button onClick={() => handleStructureChange(sIdx, null, 'vocabulary', [])} className="text-[10px] text-red-400 hover:text-red-600 font-bold">クリア</button>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {section.vocabulary.map((vocab, vIdx) => (
+                                                        <span key={vIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-indigo-100 rounded-md text-[10px]">
+                                                            <span className="font-black text-indigo-900">{vocab.word}</span>
+                                                            <span className="text-gray-500">- {vocab.meaning}</span>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                     <button onClick={() => handleAddQuestion(sIdx)} className="w-full lg:w-auto px-8 py-4 bg-white hover:bg-navy-blue hover:text-white text-navy-blue font-black rounded-2xl border-2 border-navy-blue/10 transition-all text-xs whitespace-nowrap">＋ 小問を追加</button>
                                 </div>

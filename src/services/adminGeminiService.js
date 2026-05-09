@@ -1251,7 +1251,7 @@ ${targetPointsRule}
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
 2. アスタリスク（*）記号を絶対に使用しないでください。
 3. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
-4. 各小問の \`explanation\` および大問の \`sectionAnalysis\` は、必ず空文字 ("") に設定してください。解説の文章は一切生成しないでください。
+4. 【超重要】各小問の \`explanation\` には、正解の根拠や他がダメな理由を【必ず2〜3文以内（約50〜100文字程度）】の非常に簡潔な文章で生成して埋めてください。ダラダラと長い解説はエラーになります。一方、大問全体の \`sectionAnalysis\` は必ず空文字 ("") に設定し、一切生成しないでください。
 5. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
 
 【出力構造】
@@ -1343,6 +1343,61 @@ ${JSON.stringify(sectionData, null, 2)}
     return parsed;
   } catch (error) {
     console.error(`[AdminGeminiService] Failed to generate explanations for section:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Extracts Eiken Pre-1st grade level vocabulary from the given question files.
+ */
+export const extractSectionVocabulary = async (apiKey, questionFiles = []) => {
+  try {
+    const trimmedKey = apiKey?.trim();
+    if (!trimmedKey) throw new Error("Gemini API Key is not set.");
+
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+
+    const imageParts = [];
+    if (questionFiles && questionFiles.length > 0) {
+      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
+      qDataArray.forEach(fd => imageParts.push({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
+    } else {
+      throw new Error("問題の画像ファイルがありません。");
+    }
+
+    const prompt = `あなたは大学入試・英検指導の専門講師です。
+提供された問題用紙の画像から、英語の長文や問題文を読み取り、**「英検準一級（Pre-1st Grade）レベル」の重要な英単語**を抽出してください。
+
+【厳格ルール】
+1. 英検準一級レベルに相当する単語のみを厳選すること（基礎的すぎる単語や、専門的すぎるマニアックな単語は除外）。
+2. 単語とその日本語の意味をペアにしてリスト化すること。
+3. 出力は以下のJSON配列形式のみとすること。これ以外の文章やマークダウン（\`\`\`json等）を含めないこと。
+4. アスタリスク（*）記号は一切使用禁止。
+
+【出力形式の例】
+[
+  {
+    "word": "comprehensive",
+    "meaning": "総合的な、包括的な"
+  },
+  {
+    "word": "allocate",
+    "meaning": "割り当てる"
+  }
+]
+`;
+
+    const result = await generateContentWithFallback(genAI, {
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2048 }
+    }, 5, 5000);
+
+    const sectionRaw = result.response.text();
+    const parsed = JSON.parse(sanitizeJson(sectionRaw));
+    
+    return parsed;
+  } catch (error) {
+    console.error(`[AdminGeminiService] Failed to extract vocabulary:`, error);
     throw error;
   }
 };

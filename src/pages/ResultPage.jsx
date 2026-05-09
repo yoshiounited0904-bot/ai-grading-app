@@ -776,6 +776,23 @@ const ResultPage = () => {
                                         />
                                     </div>
                                 </div>
+                                {section.vocabulary && section.vocabulary.length > 0 && (
+                                    <div style={{ marginTop: '1.5rem' }}>
+                                        <details style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                            <summary style={{ padding: '1rem', cursor: 'pointer', fontWeight: 'bold', color: '#475569', display: 'flex', alignItems: 'center', gap: '0.5rem', outline: 'none' }}>
+                                                <span style={{ fontSize: '1.2rem' }}>📚</span> この大問で出題された英検準1級レベルの英単語 ({section.vocabulary.length}語)
+                                            </summary>
+                                            <div style={{ padding: '0 1rem 1rem 1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                                {section.vocabulary.map((vocab, vIdx) => (
+                                                    <span key={vIdx} style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '8px', fontSize: '0.85rem' }}>
+                                                        <span style={{ fontWeight: 'bold', color: '#1e293b', marginRight: '0.4rem' }}>{vocab.word}</span>
+                                                        <span style={{ color: '#64748b' }}>{vocab.meaning}</span>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </details>
+                                    </div>
+                                )}
                             </div>
                         );
                     })
