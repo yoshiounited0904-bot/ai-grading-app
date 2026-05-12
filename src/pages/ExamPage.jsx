@@ -8,50 +8,62 @@ const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { user, loading: authLoading } = useAuth();
-    let { exam, universityName, universityId, selectedSectionIds, facultyName } = location.state || {};
+    const [exam, setExam] = useState(null);
+    const [universityName, setUniversityName] = useState('');
+    const [universityId, setUniversityId] = useState('');
+    const [selectedSectionIds, setSelectedSectionIds] = useState(null);
+    const [facultyName, setFacultyName] = useState('');
 
     useEffect(() => {
         if (!authLoading && !user) {
             navigate('/');
             return;
         }
-    }, [user, authLoading, navigate]);
 
-    // Check localStorage if coming from Admin "Save & Preview" new tab
-    if (!exam) {
+        // 1. Try location state
+        if (location.state?.exam) {
+            setExam(location.state.exam);
+            setUniversityName(location.state.universityName || '');
+            setUniversityId(location.state.universityId || '');
+            setSelectedSectionIds(location.state.selectedSectionIds || null);
+            setFacultyName(location.state.facultyName || '');
+            return;
+        }
+
+        // 2. Fallback to localStorage (e.g. on refresh)
         try {
             const previewData = localStorage.getItem('previewExamData');
             if (previewData) {
                 const parsed = JSON.parse(previewData);
-                exam = parsed.exam;
-                universityName = parsed.universityName;
-                universityId = parsed.universityId;
+                setExam(parsed.exam);
+                setUniversityName(parsed.universityName || '');
+                setUniversityId(parsed.universityId || '');
+                // Note: selectedSectionIds/facultyName might not be in previewData if from Admin
             }
         } catch (e) {
-            console.error("Failed to parse preview data from localStorage", e);
+            console.error("Failed to recover exam from localStorage", e);
         }
-    }
-
-    // Debug: Check what is actually being passed
-    // alert(`Debug State: ID=${universityId}, Exam=${!!exam}`);
-    console.log("ExamPage State:", location.state);
+    }, [user, authLoading, navigate, location.state]);
 
     const [answers, setAnswers] = useState({});
     const [grading, setGrading] = useState(false);
     const [gradingProgress, setGradingProgress] = useState('');
-    const [gradingProgressValue, setGradingProgressValue] = useState(0); // 0 to 100
+    const [gradingProgressValue, setGradingProgressValue] = useState(0); 
     const [logs, setLogs] = useState([]);
-    // Initialize directly from the passed exam object
-    // Filter structure if selectedSectionIds is provided
-    const [examData, setExamData] = useState(() => {
-        if (!exam) return null;
-        if (!selectedSectionIds) return exam;
+    const [examData, setExamData] = useState(null);
+
+    useEffect(() => {
+        if (!exam) return;
         
-        return {
+        const structure = selectedSectionIds 
+            ? exam.structure.filter(section => selectedSectionIds.includes(section.id))
+            : exam.structure;
+            
+        setExamData({
             ...exam,
-            structure: exam.structure.filter(section => selectedSectionIds.includes(section.id))
-        };
-    });
+            structure
+        });
+    }, [exam, selectedSectionIds]);
 
     // Timer states
     const examDuration = ((exam?.duration_minutes || exam?.durationMinutes || 60) * 60); // seconds
@@ -104,6 +116,35 @@ const ExamPage = () => {
         sessionStorage.setItem(`exam_timer_started_${exam.id}`, timerStarted);
         sessionStorage.setItem(`exam_time_remaining_${exam.id}`, timeRemaining);
     }, [timerStarted, timeRemaining, exam?.id]);
+
+    // Exit Confirmation
+    useEffect(() => {
+        const handleBeforeUnload = (e) => {
+            const hasAnswers = Object.values(answers).some(val => 
+                Array.isArray(val) ? val.length > 0 : (val && String(val).trim() !== '')
+            );
+            if (hasAnswers || timerStarted) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [answers, timerStarted]);
+
+    const handleExit = (targetPath) => {
+        const hasAnswers = Object.values(answers).some(val => 
+            Array.isArray(val) ? val.length > 0 : (val && String(val).trim() !== '')
+        );
+        
+        if (hasAnswers || timerStarted) {
+            if (window.confirm("回答途中のデータは全て失われます。本当に終了しますか？")) {
+                navigate(targetPath);
+            }
+        } else {
+            navigate(targetPath);
+        }
+    };
 
     const addLog = React.useCallback((msg) => {
         console.log(msg);
@@ -311,7 +352,7 @@ const ExamPage = () => {
             <div className="exam-header-compact">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <button
-                        onClick={() => navigate(`/university/${universityId || ''}`)}
+                        onClick={() => handleExit(`/university/${universityId || ''}`)}
                         style={{
                             background: 'none',
                             border: 'none',
@@ -356,7 +397,7 @@ const ExamPage = () => {
                     <button
                         className="btn btn-secondary"
                         style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
-                        onClick={() => navigate('/')}
+                        onClick={() => handleExit('/')}
                     >
                         終了
                     </button>
@@ -462,7 +503,7 @@ const ExamPage = () => {
                     flex: 1,
                     borderRight: 'var(--border-glass)',
                     background: '#525659',
-                    display: activeTab === 'pdf' ? 'block' : 'none',
+                    display: isMobile ? (activeTab === 'pdf' ? 'block' : 'none') : 'block',
                     overflowY: isMobile ? 'auto' : 'hidden'
                 }} className="pdf-container">
                     {(exam?.type === 'pdf' || (exam?.pdfPath || exam?.pdf_path)) ? (
@@ -506,7 +547,7 @@ const ExamPage = () => {
                 <div style={{
                     width: '400px',
                     background: 'var(--color-bg-primary)',
-                    display: activeTab === 'answer' ? 'flex' : 'none',
+                    display: isMobile ? (activeTab === 'answer' ? 'flex' : 'none') : 'flex',
                     flexDirection: 'column',
                     position: 'relative'
                 }} className="answer-container">
@@ -714,55 +755,93 @@ const ExamPage = () => {
                     </div>
                 </div>
             )}
-            {/* Log Overlay */}
-            {logs.length > 0 && (
+            {/* Log & Progress Overlay */}
+            {(logs.length > 0 || grading) && (
                 <div style={{
                     position: 'fixed',
-                    bottom: '20px',
-                    right: '20px',
-                    background: 'rgba(0,0,0,0.8)',
+                    bottom: '24px',
+                    right: '24px',
+                    background: 'rgba(15, 23, 42, 0.95)',
+                    backdropFilter: 'blur(12px)',
                     color: 'white',
-                    padding: '1rem',
-                    borderRadius: '8px',
-                    maxWidth: '400px',
-                    maxHeight: '300px',
-                    overflowY: 'auto',
-                    zIndex: 1000,
-                    fontSize: '0.8rem',
-                    fontFamily: 'monospace'
+                    padding: '1.5rem',
+                    borderRadius: '24px',
+                    width: '360px',
+                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+                    zIndex: 3000,
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1rem'
                 }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', borderBottom: '1px solid #555' }}>採点ログ</div>
-                    {logs.map((log, i) => (
-                        <div key={i}>{log}</div>
-                    ))}
+                    {/* Progress Section (Always Visible at Top) */}
                     {grading && (
-                        <div style={{ marginTop: '0.75rem', color: '#4ade80' }}>
-                            <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>{gradingProgress}</div>
-                            
-                            {/* Progress Bar UI */}
+                        <div style={{ 
+                            borderBottom: '1px solid rgba(255, 255, 255, 0.1)', 
+                            paddingBottom: '1rem' 
+                        }}>
                             <div style={{ 
-                                height: '8px', 
+                                fontWeight: '900', 
+                                fontSize: '0.85rem', 
+                                marginBottom: '0.75rem', 
+                                color: '#10b981', 
+                                display: 'flex', 
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                            }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                    {gradingProgress || '採点中...'}
+                                </span>
+                                <span style={{ fontFamily: 'monospace', fontSize: '1rem' }}>{gradingProgressValue}%</span>
+                            </div>
+                            
+                            <div style={{ 
+                                height: '6px', 
                                 width: '100%', 
                                 background: 'rgba(255,255,255,0.1)', 
-                                borderRadius: '4px', 
-                                overflow: 'hidden',
-                                marginBottom: '0.5rem',
-                                border: '1px solid rgba(255,255,255,0.2)'
+                                borderRadius: '3px', 
+                                overflow: 'hidden'
                             }}>
                                 <div style={{ 
                                     height: '100%', 
                                     width: `${gradingProgressValue}%`, 
                                     background: 'linear-gradient(90deg, #10b981 0%, #34d399 100%)',
-                                    transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
-                                    boxShadow: '0 0 10px rgba(16,185,129,0.5)'
+                                    transition: 'width 0.4s ease-out'
                                 }}></div>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
-                                <span className="animate-pulse">AIが詳しく分析中...</span>
-                                <span style={{ fontWeight: 'bold' }}>{gradingProgressValue}%</span>
                             </div>
                         </div>
                     )}
+
+                    {/* Logs List (Scrollable Area) */}
+                    <div style={{ 
+                        maxHeight: '160px', 
+                        overflowY: 'auto', 
+                        paddingRight: '4px' 
+                    }} className="custom-scrollbar">
+                        <div style={{ 
+                            fontSize: '0.65rem', 
+                            color: 'rgba(255,255,255,0.4)', 
+                            marginBottom: '0.5rem', 
+                            fontWeight: '900', 
+                            textTransform: 'uppercase', 
+                            letterSpacing: '0.1em' 
+                        }}>
+                            Grading Logs
+                        </div>
+                        {logs.map((log, i) => (
+                            <div key={i} style={{ 
+                                fontSize: '0.75rem', 
+                                marginBottom: '6px', 
+                                opacity: 0.8, 
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                                lineHeight: '1.4'
+                            }}>
+                                <span style={{ color: '#10b981', marginRight: '8px', fontWeight: 'bold' }}>&gt;</span>
+                                {log}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>

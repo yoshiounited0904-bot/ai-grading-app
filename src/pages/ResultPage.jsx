@@ -778,9 +778,13 @@ const ResultPage = () => {
                                 </div>
                                 {section.vocabulary && section.vocabulary.length > 0 && (
                                     <div style={{ marginTop: '1.5rem' }}>
-                                        <details style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                                            <summary style={{ padding: '1rem', cursor: 'pointer', fontWeight: 'bold', color: '#475569', display: 'flex', alignItems: 'center', gap: '0.5rem', outline: 'none' }}>
-                                                <span style={{ fontSize: '1.2rem' }}>📚</span> この大問で出題された英検準1級レベルの英単語 ({section.vocabulary.length}語)
+                                        <details open style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', transition: 'all 0.3s ease' }}>
+                                            <summary style={{ padding: '1rem', cursor: 'pointer', fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', outline: 'none', listStyle: 'none' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                                    <span style={{ fontSize: '1.2rem' }}>📖</span>
+                                                    <span style={{ fontSize: '0.95rem' }}>この大問で出題された難単語 ({section.vocabulary.length}語)</span>
+                                                </div>
+                                                <span className="details-arrow" style={{ transition: 'transform 0.3s ease' }}>▼</span>
                                             </summary>
                                             <div style={{ padding: '0 1rem 1rem 1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                                 {section.vocabulary.map((vocab, vIdx) => (

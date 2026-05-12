@@ -22,6 +22,9 @@ function AdminExamEditor() {
     const [generatingVocabulary, setGeneratingVocabulary] = useState({});
     const [regeneratingPoints, setRegeneratingPoints] = useState(false);
     const [bulkGenerating, setBulkGenerating] = useState(false);
+    const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+    const [bulkGeneratingSectionAnalyses, setBulkGeneratingSectionAnalyses] = useState(false);
+    const [bulkSectionAnalysisProgress, setBulkSectionAnalysisProgress] = useState({ current: 0, total: 0 });
     const [banners, setBanners] = useState([]);
     
     useEffect(() => {
@@ -35,9 +38,9 @@ function AdminExamEditor() {
         };
         fetchBanners();
     }, []);
-    const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
     const [isBulkGeneratingSections, setIsBulkGeneratingSections] = useState(false);
     const [bulkSectionsProgress, setBulkSectionsProgress] = useState({ current: 0, total: 0 });
+    const [bulkIncludeVocab, setBulkIncludeVocab] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploadingQuestion, setUploadingQuestion] = useState(false);
     const [uploadingAnswers, setUploadingAnswers] = useState({});
@@ -172,7 +175,7 @@ function AdminExamEditor() {
         setLoading(false);
     };
 
-    const handleGenerateSection = async (sectionNum, silent = false) => {
+    const handleGenerateSection = async (sectionNum, silent = false, shouldExtractVocab = false) => {
         if (!examId) {
             if (!silent) alert('IDを入力してください。');
             return false;
@@ -241,6 +244,7 @@ function AdminExamEditor() {
 
                 newStructure[sIdx] = {
                     ...sectionResult,
+                    vocabulary: newStructure[sIdx].vocabulary || [], // Preserve existing if any
                     answer_pdf_path: existingA_pdf,
                     question_pdf_path: existingQ_pdf,
                     instruction: existingInstruction
@@ -248,6 +252,25 @@ function AdminExamEditor() {
 
                 return { ...prev, structure: newStructure };
             });
+
+            // Automatic Vocabulary Extraction
+            if (shouldExtractVocab) {
+                const sIdx = sectionNum - 1;
+                setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: true }));
+                try {
+                    const vocabResult = await geminiQueue.add(() => extractSectionVocabulary(apiKey, finalQFiles));
+                    setExamData(prev => {
+                        const newStructure = [...(prev?.structure || [])];
+                        newStructure[sIdx].vocabulary = vocabResult;
+                        return { ...prev, structure: newStructure };
+                    });
+                } catch (vocabError) {
+                    console.error(`Vocabulary extraction failed for section ${sectionNum}:`, vocabError);
+                    // Don't fail the whole process if only vocab fails, but maybe log it
+                } finally {
+                    setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: false }));
+                }
+            }
 
             if (!silent) alert(`大問${sectionNum}の生成が完了しました！下部のエディタ（C）に内容が反映されました。`);
             return true;
@@ -374,7 +397,7 @@ function AdminExamEditor() {
         try {
             for (let i = 1; i <= sectionCount; i++) {
                 setBulkSectionsProgress({ current: i, total: sectionCount });
-                const success = await handleGenerateSection(i, true);
+                const success = await handleGenerateSection(i, true, bulkIncludeVocab);
                 
                 if (!success) {
                     alert(`大問${i}の生成中にエラーが発生したため、一括処理を中断しました。`);
@@ -715,6 +738,27 @@ function AdminExamEditor() {
         }
         setExamData({ ...examData, structure: newStructure });
     };
+    const handleUpdateVocab = (sIdx, vIdx, field, value) => {
+        const newStructure = [...examData.structure];
+        const newVocab = [...(newStructure[sIdx].vocabulary || [])];
+        newVocab[vIdx] = { ...newVocab[vIdx], [field]: value };
+        newStructure[sIdx].vocabulary = newVocab;
+        setExamData({ ...examData, structure: newStructure });
+    };
+
+    const handleRemoveVocab = (sIdx, vIdx) => {
+        const newStructure = [...examData.structure];
+        const newVocab = (newStructure[sIdx].vocabulary || []).filter((_, i) => i !== vIdx);
+        newStructure[sIdx].vocabulary = newVocab;
+        setExamData({ ...examData, structure: newStructure });
+    };
+
+    const handleAddVocab = (sIdx) => {
+        const newStructure = [...examData.structure];
+        const newVocab = [...(newStructure[sIdx].vocabulary || []), { word: '', meaning: '' }];
+        newStructure[sIdx].vocabulary = newVocab;
+        setExamData({ ...examData, structure: newStructure });
+    };
 
     const handleAddGenerationSection = () => {
         const newCount = sectionCount + 1;
@@ -860,6 +904,72 @@ function AdminExamEditor() {
         } finally {
             setBulkGenerating(false);
             setBulkProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handleBulkGenerateSectionAnalyses = async () => {
+        if (!examData || !examData.structure) return;
+
+        const tasks = [];
+        examData.structure.forEach((section, sIdx) => {
+            if (!section.sectionAnalysis || section.sectionAnalysis.trim() === '' || section.sectionAnalysis.includes('AI生成中')) {
+                tasks.push({ sIdx, section });
+            }
+        });
+
+        if (tasks.length === 0) {
+            alert('自動生成が必要な（詳細解説が空欄の）大問はありません。');
+            return;
+        }
+
+        if (!confirm('各大問の「詳細解説」をAIで一括生成します。これには時間がかかる場合があります。\n※すでに解説が入力されている大問はスキップされます。\nよろしいですか？')) return;
+
+        setBulkGeneratingSectionAnalyses(true);
+        setBulkSectionAnalysisProgress({ current: 0, total: tasks.length });
+
+        const apiKey = getGeminiApiKey();
+
+        try {
+            for (let i = 0; i < tasks.length; i++) {
+                const { sIdx, section } = tasks[i];
+                setBulkSectionAnalysisProgress({ current: i + 1, total: tasks.length });
+                
+                handleStructureChange(sIdx, null, 'sectionAnalysis', '🔄 AI生成中...');
+                
+                try {
+                    const qFiles = questionFilesBySection[sIdx + 1] || [];
+                    const savedQPath = examData?.structure?.[sIdx]?.question_pdf_path;
+                    const finalQFiles = qFiles.length > 0 ? qFiles : (questionFiles.length > 0 ? questionFiles : (savedQPath ? [savedQPath] : (examData?.pdf_path ? [examData.pdf_path] : [])));
+                    
+                    const aFiles = answerFilesBySection[sIdx + 1] || [];
+                    const savedAPath = examData?.structure?.[sIdx]?.answer_pdf_path;
+                    const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
+
+                    const newAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
+                        apiKey,
+                        subjectEn,
+                        section,
+                        finalQFiles,
+                        finalAFiles,
+                        sectionInstructionsBySection[sIdx + 1] || '',
+                        examData?.subject || ''
+                    ));
+                    handleStructureChange(sIdx, null, 'sectionAnalysis', newAnalysis);
+                } catch (err) {
+                    console.error("Error generating analysis for section", section.id, err);
+                    handleStructureChange(sIdx, null, 'sectionAnalysis', '⚠️ AI生成エラー');
+                }
+
+                if (i < tasks.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 3000)); // slightly longer wait for section analysis
+                }
+            }
+            alert('大問詳細解説の一括生成が完了しました！');
+        } catch (error) {
+            alert('一括生成中にエラーが発生しました:\n' + error.message);
+        } finally {
+            setBulkGeneratingSectionAnalyses(false);
+            setBulkSectionAnalysisProgress({ current: 0, total: 0 });
         }
     };
 
@@ -1695,6 +1805,18 @@ function AdminExamEditor() {
                                     上記で設定した各大問ファイルと目標配点をもとに、すべての大問データを順番にAI生成します。<br/>
                                     <span className="text-red-400 font-black mt-2 block">※すでに生成済みのデータがある場合は上書きされます。</span>
                                 </p>
+
+                                <div className="flex justify-center mb-6">
+                                    <label className="flex items-center gap-3 bg-white/80 backdrop-blur px-6 py-3 rounded-2xl border border-indigo-100 cursor-pointer hover:bg-white transition-all shadow-sm">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={bulkIncludeVocab}
+                                            onChange={(e) => setBulkIncludeVocab(e.target.checked)}
+                                            className="w-5 h-5 rounded-lg border-2 border-indigo-200 text-indigo-600 focus:ring-indigo-500 transition-all"
+                                        />
+                                        <span className="text-xs font-black text-navy-blue">難単語（抽出）も同時に行う</span>
+                                    </label>
+                                </div>
                                 <button
                                     onClick={handleBulkGenerateSections}
                                     disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
@@ -1748,6 +1870,21 @@ function AdminExamEditor() {
                                     </>
                                 ) : (
                                     '✨ 全解説を一括作成'
+                                )}
+                            </button>
+                            <button
+                                onClick={handleBulkGenerateSectionAnalyses}
+                                disabled={bulkGeneratingSectionAnalyses || regeneratingPoints}
+                                className="bg-purple-600 text-white hover:bg-purple-700 font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+                                style={{ minWidth: '160px' }}
+                            >
+                                {bulkGeneratingSectionAnalyses ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        <span>詳細解説生成中 ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
+                                    </>
+                                ) : (
+                                    '📄 全詳細解説を一括作成'
                                 )}
                             </button>
                         </div>
@@ -1914,19 +2051,44 @@ function AdminExamEditor() {
                                         </div>
                                         <textarea value={section.sectionAnalysis || ''} onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)} className="w-full p-5 rounded-2xl border border-gray-100 text-xs bg-white focus:bg-gray-50/30 outline-none transition-all min-h-[100px]" placeholder="この大問全体の読解ポイント..." />
                                         
-                                        {subjectEn === 'english' && section.vocabulary && section.vocabulary.length > 0 && (
+                                        {subjectEn === 'english' && (
                                             <div className="mt-4 p-4 bg-indigo-50/30 border border-indigo-100 rounded-xl">
                                                 <div className="flex justify-between items-center mb-2">
-                                                    <h4 className="text-[10px] font-black text-indigo-800 uppercase">抽出された英単語 ({section.vocabulary.length}語)</h4>
-                                                    <button onClick={() => handleStructureChange(sIdx, null, 'vocabulary', [])} className="text-[10px] text-red-400 hover:text-red-600 font-bold">クリア</button>
+                                                    <h4 className="text-[10px] font-black text-indigo-800 uppercase">この大問で出題された難易英単語 ({section.vocabulary?.length || 0}語)</h4>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => handleAddVocab(sIdx)} className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold">＋ 単語を追加</button>
+                                                        <button onClick={() => handleStructureChange(sIdx, null, 'vocabulary', [])} className="text-[10px] text-red-400 hover:text-red-600 font-bold">クリア</button>
+                                                    </div>
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">
-                                                    {section.vocabulary.map((vocab, vIdx) => (
-                                                        <span key={vIdx} className="inline-flex items-center gap-1 px-2 py-1 bg-white border border-indigo-100 rounded-md text-[10px]">
-                                                            <span className="font-black text-indigo-900">{vocab.word}</span>
-                                                            <span className="text-gray-500">- {vocab.meaning}</span>
-                                                        </span>
+                                                    {section.vocabulary && section.vocabulary.map((vocab, vIdx) => (
+                                                        <div key={vIdx} className="inline-flex items-center gap-1 p-1 bg-white border border-indigo-100 rounded-md shadow-sm">
+                                                            <input 
+                                                                type="text" 
+                                                                value={vocab.word} 
+                                                                onChange={(e) => handleUpdateVocab(sIdx, vIdx, 'word', e.target.value)}
+                                                                className="w-20 bg-transparent border-none outline-none text-[10px] font-black text-indigo-900 px-1"
+                                                                placeholder="Word"
+                                                            />
+                                                            <span className="text-gray-300">|</span>
+                                                            <input 
+                                                                type="text" 
+                                                                value={vocab.meaning} 
+                                                                onChange={(e) => handleUpdateVocab(sIdx, vIdx, 'meaning', e.target.value)}
+                                                                className="w-32 bg-transparent border-none outline-none text-[10px] text-gray-500 px-1"
+                                                                placeholder="Meaning"
+                                                            />
+                                                            <button 
+                                                                onClick={() => handleRemoveVocab(sIdx, vIdx)}
+                                                                className="text-gray-300 hover:text-red-500 transition-colors ml-1 px-1"
+                                                            >
+                                                                ×
+                                                            </button>
+                                                        </div>
                                                     ))}
+                                                    {(!section.vocabulary || section.vocabulary.length === 0) && (
+                                                        <p className="text-[10px] text-gray-400 italic">単語が抽出されていません。</p>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}

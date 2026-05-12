@@ -539,3 +539,12 @@ a {
 .no-print {
   /* Class to manually hide elements from print */
 }
+
+/* Vocabulary Toggle Animation */
+details[open] .details-arrow {
+  transform: rotate(180deg);
+}
+
+details summary::-webkit-details-marker {
+  display: none;
+}
