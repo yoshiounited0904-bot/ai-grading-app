@@ -400,8 +400,9 @@ function AdminExamEditor() {
                 const success = await handleGenerateSection(i, true, bulkIncludeVocab);
                 
                 if (!success) {
-                    alert(`大問${i}の生成中にエラーが発生したため、一括処理を中断しました。`);
-                    break;
+                    const proceed = confirm(`大問${i}の生成中にエラーが発生しました。この大問をスキップして次へ進みますか？\n(「キャンセル」を押すと一括処理を中断します)`);
+                    if (!proceed) break;
+                    continue;
                 }
                 
                 // Rate limit spacing

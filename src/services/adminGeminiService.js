@@ -422,43 +422,26 @@ export const generateExamMasterData = async (apiKey, subjectType, questionFiles,
     for (const [sectionIndex, rawAnswerFiles] of Object.entries(answerFilesBySection)) {
       if (!rawAnswerFiles || rawAnswerFiles.length === 0) continue;
 
-      console.log(`[Stage 1] Processing section ${sectionIndex} / ${sectionsCount} ...`);
+      console.log(`[Stage 1] Processing section ${sectionIndex} / ${sectionsCount} with multimodal AI...`);
 
-      // 1a. OCR the answers for this section
-      const aDataArray = await Promise.all(rawAnswerFiles.map(file => fileToBase64(file)));
+      // 1a. Prepare Answer Images
+      const aDataArray = await Promise.all(rawAnswerFiles.map(file => anySourceToBase64(file)));
       const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-      const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
-      const aOcrResult = await generateContentWithFallback(genAI, {
-        contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
-        generationConfig: { maxOutputTokens: 2048 }
-      });
-      const answerText = aOcrResult.response.text();
 
-      // 1b. OCR the specific questions for this section (if provided)
-      let sectionQuestionText = "";
+      // 1b. Prepare Question Images
       const rawQuestionFiles = questionFilesBySection[sectionIndex] || [];
-      if (rawQuestionFiles.length > 0) {
-        console.log(`[Stage 1] Transcribing specific questions for section ${sectionIndex}...`);
-        const qDataArray = await Promise.all(rawQuestionFiles.map(file => fileToBase64(file)));
-        const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-        const sqOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
-        const sqOcrResult = await generateContentWithFallback(genAI, {
-          contents: [{ role: 'user', parts: [...qInlineData, { text: sqOcrPrompt }] }],
-          generationConfig: { maxOutputTokens: 4096 }
-        });
-        sectionQuestionText = sqOcrResult.response.text();
-      }
+      const qDataArray = await Promise.all(rawQuestionFiles.map(file => anySourceToBase64(file)));
+      const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
 
-      // 1c. Extract structure
+      // 1c. Consolidated Multimodal Prompt
       const sectionInstruction = sectionInstructionsBySection[sectionIndex] || "";
       const extractPrompt = `
-以下の試験素材を分析し、**第${sectionIndex}問**に関する設問構造と正解のみを抽出してください。
+あなたは大学入試の専門家です。提供された画像（問題用紙および解答用紙）を詳細に分析し、**第${sectionIndex}問**に関する設問構造と正解を抽出してください。
 
-【第${sectionIndex}問 問題テキスト】
-${sectionQuestionText || commonQuestionText || "（問題テキストなし）"}
-
-【第${sectionIndex}問 解答テキスト】
-${answerText}
+【入力素材】
+・添付画像のうち、解答が含まれるものを読み取ってください。
+・添付画像のうち、問題が含まれるものを読み取り、解答と紐付けてください。
+${commonQuestionText ? `・参考用共通テキスト: ${commonQuestionText.substring(0, 500)}...` : ""}
 
 ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 
@@ -469,6 +452,7 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 4. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
 5. 全ての小問の \`points\` は 0 に設定してください。
 6. 全ての小問の \`explanation\` は必ず空文字 ("") に設定し、解説文は一切生成しないでください。
+7. 画像からテキストを読み取る際は、誤字脱字に注意し、正確に抽出してください。
 
 【出力構造】
 {
@@ -490,21 +474,20 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
 `;
 
       const extractResult = await generateContentWithFallback(genAI, {
-        contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
+        contents: [{ role: 'user', parts: [...qInlineData, ...aInlineData, { text: extractPrompt }] }],
         generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
       }, 5, 4000);
 
       const sectionRaw = extractResult.response.text();
       try {
         const parsedSection = JSON.parse(sanitizeJson(sectionRaw));
-        // Ensure sectionAnalysis exists even if empty at first
         if (!parsedSection.sectionAnalysis) parsedSection.sectionAnalysis = "";
         extractedSections.push(parsedSection);
       } catch (err) {
         console.error(`[AdminGeminiService] Failed to parse section ${sectionIndex}:`, err);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     console.log(`[Stage 1] Completed extraction for ${extractedSections.length} sections.`);
@@ -1840,43 +1823,21 @@ export const generateSingleSectionData = async (apiKey, subjectType, sectionInde
       subjectSpecificRules = SOCIAL_RULES;
     }
 
-    // OCR Answer
-    let answerText = "";
-    if (answerFiles && answerFiles.length > 0) {
-      const aDataArray = (await Promise.all(answerFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
-      const aInlineData = aDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-      const aOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の解答です。正確にテキスト化してください。`;
-      const aOcrResult = await generateContentWithFallback(genAI, {
-        contents: [{ role: 'user', parts: [...aInlineData, { text: aOcrPrompt }] }],
-        generationConfig: { maxOutputTokens: 2048 }
-      });
-      answerText = aOcrResult.response.text();
-    }
+    // 1. Prepare Answer Images
+    const aDataArray = await Promise.all(answerFiles.map(file => anySourceToBase64(file)));
+    const aInlineData = aDataArray.filter(Boolean).map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
 
-    // OCR Question
-    let questionText = "";
-    if (questionFiles && questionFiles.length > 0) {
-      const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
-      const qInlineData = qDataArray.map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
-      const qOcrPrompt = `以下の画像は試験の「第${sectionIndex}問」の問題です。正確にテキスト化してください。`;
-      const qOcrResult = await generateContentWithFallback(genAI, {
-        contents: [{ role: 'user', parts: [...qInlineData, { text: qOcrPrompt }] }],
-        generationConfig: { maxOutputTokens: 8192 }
-      });
-      questionText = qOcrResult.response.text();
-    }
+    // 2. Prepare Question Images
+    const qDataArray = await Promise.all(questionFiles.map(file => anySourceToBase64(file)));
+    const qInlineData = qDataArray.filter(Boolean).map(fd => ({ inlineData: { mimeType: fd.mimeType, data: fd.data } }));
 
     const targetPointsRule = targetPoints ? `\n【重要：目標配点】\nこの大問の小問群の \`points\` の合計がぴったり **${targetPoints}** 点 になるように必ず割り振ってください。（各小問の配点は1以上の自然数であること）\n` : `\n【配点ルール】\n問題数や難易度に合わせて自然な点数（1以上の自然数）を割り振ってください。\n`;
 
     const extractPrompt = `
-以下の試験素材を分析し、**第${sectionIndex}問**に関する設問データ（構造、正解、配点、詳細解説）を一斉に生成してください。
+あなたは大学入試の専門家です。提供された画像（問題用紙および解答用紙）を詳細に分析し、**第${sectionIndex}問**に関する設問データ（構造、正解、配点、詳細解説）を一斉に生成してください。
 
-【第${sectionIndex}問 問題テキスト】
-${questionText || "（なし）"}
-
-【第${sectionIndex}問 解答テキスト】
-${answerText || "（なし）"}
-
+【入力素材】
+・添付画像から問題と解答の関係を読み取り、正確なデータを作成してください。
 ${instruction ? `【個別指示】\n${instruction}\n` : ""}
 ${subjectSpecificRules}
 ${targetPointsRule}
@@ -1885,8 +1846,9 @@ ${targetPointsRule}
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
 2. アスタリスク（*）記号を絶対に使用しないでください。
 3. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
-4. 【超重要】各小問の \`explanation\` には、正解の根拠や他がダメな理由を【必ず2〜3文以内（約50〜100文字程度）】の非常に簡潔な文章で生成して埋めてください。ダラダラと長い解説はエラーになります。一方、大問全体の \`sectionAnalysis\` は必ず空文字 ("") に設定し、一切生成しないでください。
+4. 【重要】各小問の \`explanation\` には、正解の根拠や他がダメな理由を【必ず2〜3文以内（約50〜100文字程度）】の非常に簡潔な文章で生成して埋めてください。大問全体の \`sectionAnalysis\` は必ず空文字 ("") に設定してください。
 5. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
+6. 画像からの読み取りミス（OCRミス）がないよう、特に記号や数値は慎重に確認してください。
 
 【出力構造】
 {
@@ -1902,14 +1864,14 @@ ${targetPointsRule}
       "options": ["a", "b", "c", "d"],
       "correctAnswer": "正解",
       "points": 5,
-      "explanation": ""
+      "explanation": "..."
     }
   ]
 }
 `;
 
     const result = await generateContentWithFallback(genAI, {
-      contents: [{ role: 'user', parts: [{ text: extractPrompt }] }],
+      contents: [{ role: 'user', parts: [...qInlineData, ...aInlineData, { text: extractPrompt }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
     }, 5, 5000);
 
