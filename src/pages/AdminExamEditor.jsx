@@ -329,12 +329,26 @@ function AdminExamEditor() {
             return;
         }
 
+        // Update independent state variables for the UI
+        if (data.university) {
+            setUniversity(data.university);
+            const matchUni = universitiesData.find(u => u.name === data.university);
+            if (matchUni) setUniversityId(matchUni.id);
+        }
+        if (data.faculty) {
+            setFaculty(data.faculty);
+            const matchUni = universitiesData.find(u => u.name === (data.university || university));
+            const matchFac = matchUni?.faculties?.find(f => f.name === data.faculty);
+            if (matchFac) setFacultyId(matchFac.id);
+        }
+        if (data.duration) {
+            setDurationMinutes(data.duration);
+        }
+
+        // Update the examData JSON object
         setExamData(prev => ({
             ...prev,
-            university: prev.university || data.university,
-            faculty: prev.faculty || data.faculty,
             max_score: data.maxScore || prev.max_score,
-            duration_minutes: data.duration || prev.duration_minutes,
             passing_lines: data.passingLines || prev.passing_lines
         }));
         
