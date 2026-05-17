@@ -62,14 +62,15 @@ export const gradeObjectively = (examData, userAnswers) => {
                 // Mark for AI processing (subjective)
                 const feedbackItem = {
                     id: q.id,
-                    sectionId: section.id, // Added for grouping during AI grading
+                    type: q.type, // Pass the dropdown type (e.g., 'essay')
+                    sectionId: section.id,
                     userAnswer: userAnswer,
                     correctAnswer: correctAnswer,
                     alternativeAnswers: q.alternativeAnswers || [],
                     points: q.points || 0,
                     gradingInstruction: q.gradingInstruction || q.gradingCriteria || "",
                     isSubjective: true,
-                    completeGroupId: q.completeGroupId // Pass group ID
+                    completeGroupId: q.completeGroupId
                 };
                 questionFeedback.push(feedbackItem);
             }

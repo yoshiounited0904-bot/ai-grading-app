@@ -8,7 +8,8 @@ export const getUniversityList = async () => {
         // Select only identifying and summary fields
         const { data: exams, error } = await supabase
             .from('exams')
-            .select('university, university_id, type, faculty, faculty_id');
+            .select('university, university_id, type, faculty, faculty_id')
+            .eq('is_published', true);
 
         if (error) {
             console.error('Error fetching university list:', error);
@@ -51,10 +52,23 @@ export const getUniversityList = async () => {
  */
 export const getExamsForUniversity = async (universityId) => {
     try {
-        const { data: exams, error } = await supabase
+        // Handle split IDs by getting the university name first
+        const { data: uniData } = await supabase
             .from('exams')
-            .select('*')
-            .eq('university_id', universityId);
+            .select('university')
+            .eq('university_id', universityId)
+            .limit(1);
+            
+        const uniName = uniData && uniData.length > 0 ? uniData[0].university : null;
+
+        let query = supabase.from('exams').select('*').eq('is_published', true);
+        if (uniName) {
+            query = query.eq('university', uniName);
+        } else {
+            query = query.eq('university_id', universityId);
+        }
+
+        const { data: exams, error } = await query;
 
         if (error) {
             console.error(`Error fetching exams for university ${universityId}:`, error);
@@ -96,7 +110,8 @@ export const getExamsForUniversity = async (universityId) => {
                 maxScore: exam.max_score,
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
-                duration_minutes: exam.duration_minutes
+                duration_minutes: exam.duration_minutes,
+                is_published: exam.is_published
             };
 
             if (!faculty.exams.find(e => e.id === formattedExam.id)) {
@@ -119,7 +134,8 @@ export const getUniversities = async () => {
     try {
         const { data: exams, error } = await supabase
             .from('exams')
-            .select('*');
+            .select('*')
+            .eq('is_published', true);
 
         if (error) {
             console.error('Error fetching exams from Supabase:', error);

@@ -137,31 +137,90 @@ E．論述問題（長）
 ※ 表現の巧拙は評価対象としない
 ※ 要素充足のみを基準とする
 
-⸻
+【2. 内部実行ルール（出力しないが必ず実行）】
 
-【1. 内部実行ルール（出力しないが必ず実行）】
+2-1. 設問分類
 
-1-1. 設問分類
 ・各設問を、上記A〜Eのいずれかに必ず分類する
 ・複数該当しそうな場合でも、最も厳密に当てはまる1つのみを採用
 ・新たな設問タイプの創設は禁止
 
 ⸻
 
-1-2. 配点割当
-・配点は、③で定義された序列を絶対条件として割り振る
+2-2. 配点割当
+
+・配点は、
+　③で定義された序列を絶対条件として割り振る
+
 ・同一タイプ内で複数設問がある場合のみ、以下を考慮して微調整してよい：
 　- 必要な知識量
 　- 思考の段階数
 　- 論述であれば要素数
-※ ただし、タイプ間の配点逆転は禁止
+
+※ ただし、
+　タイプ間の配点逆転は禁止
 
 ⸻
 
-1-3. 論述問題の要素設計
+2-3. 論述問題の要素設計
+
 ・論述問題については、必ず：
 　- 模範回答を要素に分解
-　- 要素数と要素充足条件を内部的に検討し、適切な配点を割り当てること（テキストとしての出力は不要）
+　- 要素数を明示
+
+・採点は、
+　要素充足率＝得点率
+　として扱う
+
+⸻
+
+【3. 出力形式（厳守）】
+
+以下の順序で出力する。
+
+⸻
+
+① 設問一覧と分類
+	•	設問番号
+	•	設問内容（簡潔）
+	•	A〜Eのどれに該当するか
+
+⸻
+
+② 配点一覧
+	•	設問番号
+	•	設問タイプ
+	•	配点
+
+⸻
+
+③ 配点理由
+
+各設問について、
+ユーザー定義の序列を主語にして
+なぜこの配点になっているかを文章で説明する。
+
+⸻
+
+④ 論述問題の採点設計（該当する場合）
+	•	各論述問題の要素分解
+	•	要素数
+	•	満点時の要素充足条件
+
+⸻
+
+⑤ 全体チェック
+	•	配点の大小関係が定義通り守られているか
+	•	論述が最も得点差を生む構造になっているか
+
+⸻
+
+【4. 禁止事項】
+
+・設問パターンの再分類
+・配点序列への異議・一般論の挿入
+・「実際の入試では〜」といった相対化
+・表現力・日本語のうまさを採点基準に含めること
 `;
 
 export const sanitizeJson = (jsonString) => {
@@ -232,9 +291,10 @@ export const sanitizeJson = (jsonString) => {
 };
 
 // --- RETRY & FALLBACK UTILITY FOR 429/503 ERRORS ---
-const generateContentWithFallback = async (genAI, requestData, maxRetriesPerModel = 5, initialDelay = 5000) => {
+const generateContentWithFallback = async (genAI, requestData, maxRetriesPerModel = 5, initialDelay = 5000, customModelList = null) => {
   const errors = [];
-  for (const modelName of MODELS) {
+  const modelList = customModelList || MODELS;
+  for (const modelName of modelList) {
     const model = genAI.getGenerativeModel({ model: modelName });
     let attempt = 0;
     while (attempt < maxRetriesPerModel) {
@@ -362,6 +422,95 @@ const anySourceToBase64 = async (source) => {
   return null;
 };
 
+export const extractExamMetadata = async (apiKey, questionFiles = []) => {
+  try {
+    const trimmedKey = apiKey?.trim();
+    if (!trimmedKey) {
+      throw new Error("Gemini API Key is not set.");
+    }
+
+    if (!questionFiles || questionFiles.length === 0) {
+      throw new Error("問題PDFがありません。");
+    }
+
+    const genAI = new GoogleGenerativeAI(trimmedKey);
+    const qDataArray = (await Promise.all(questionFiles.map(file => anySourceToBase64(file)))).filter(Boolean);
+    if (qDataArray.length === 0) {
+      throw new Error("問題PDFの読み込みに失敗しました。");
+    }
+
+    const qInlineData = qDataArray.map(fd => ({
+      inlineData: {
+        mimeType: fd.mimeType,
+        data: fd.data
+      }
+    }));
+
+    const prompt = `
+あなたは大学入試問題のメタデータ抽出担当です。
+提供された問題PDFまたは画像から、試験の基本情報をできるだけ正確に抽出してください。
+
+【抽出対象】
+1. university: 大学名（例: 早稲田大学）
+2. faculty: 学部名（例: 文学部）
+3. year: 年度（西暦4桁。見つからない場合は null）
+4. subject: 画面表示用の科目名（例: 英語、日本史、数学）
+5. subject_en: 内部用科目ID。必ず以下のいずれかにすること
+   - english
+   - social
+   - math
+   - japanese
+   - science
+6. max_score: 満点（整数。見つからない場合は null）
+7. duration_minutes: 制限時間（分。見つからない場合は null）
+
+【科目IDの分類ルール】
+- 英語、英文読解、英作文、リスニングなど → english
+- 日本史、世界史、地理、政治経済、倫理、現代社会など → social
+- 数学I/A、II/B、III/Cなど → math
+- 現代文、古文、漢文、国語総合など → japanese
+- 物理、化学、生物、地学など → science
+
+【重要ルール】
+- 推測しすぎず、見つからない項目は null にすること
+- 年度は必ず西暦4桁で返すこと
+- 科目名は日本語で返すこと
+- 学部名が学科名まで含んでいる場合は、そのまま返してよい
+- JSONオブジェクト1つのみを返すこと。コードブロックや説明文は禁止
+
+【出力形式】
+{
+  "university": "大学名 or null",
+  "faculty": "学部名 or null",
+  "year": 2025,
+  "subject": "英語",
+  "subject_en": "english",
+  "max_score": 100,
+  "duration_minutes": 90
+}
+`;
+
+    const result = await generateContentWithFallback(genAI, {
+      contents: [{ role: 'user', parts: [...qInlineData, { text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 2048 }
+    }, 5, 4000);
+
+    const parsed = JSON.parse(sanitizeJson(result.response.text()));
+    return {
+      university: typeof parsed.university === 'string' ? parsed.university.trim() : '',
+      faculty: typeof parsed.faculty === 'string' ? parsed.faculty.trim() : '',
+      year: Number.isInteger(parsed.year) ? parsed.year : null,
+      subject: typeof parsed.subject === 'string' ? parsed.subject.trim() : '',
+      subject_en: typeof parsed.subject_en === 'string' ? parsed.subject_en.trim() : '',
+      max_score: Number.isInteger(parsed.max_score) ? parsed.max_score : null,
+      duration_minutes: Number.isInteger(parsed.duration_minutes) ? parsed.duration_minutes : null
+    };
+  } catch (error) {
+    console.error("[AdminGeminiService] Failed to extract exam metadata:", error);
+    throw error;
+  }
+};
+
 export const generateExamMasterData = async (apiKey, subjectType, questionFiles, questionFilesBySection, answerFilesBySection, sectionInstructionsBySection, sectionPointsBySection, extraInfo) => {
   try {
     const trimmedKey = apiKey?.trim();
@@ -485,9 +634,9 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
         extractedSections.push(parsedSection);
       } catch (err) {
         console.error(`[AdminGeminiService] Failed to parse section ${sectionIndex}:`, err);
+        // Throw so the caller knows which section failed rather than silently producing incomplete data
+        throw new Error(`第${sectionIndex}問の解析結果をパースできませんでした。再度お試しください。`);
       }
-
-      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     console.log(`[Stage 1] Completed extraction for ${extractedSections.length} sections.`);
@@ -785,11 +934,10 @@ ${subjectSpecificRules}
 ${JSON.stringify(currentStructure, null, 2)}
 `;
 
-    // Execute generation with retry logic (using JSON mime type structure to enforce schema if possible, or just parse response)
-    const result = await generateContentWithFallback(genAI, [
-      prompt,
-      ...imageParts
-    ]);
+    const result = await generateContentWithFallback(genAI, {
+      contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
+    });
 
     const text = result.response.text();
     const sanitizedText = sanitizeJson(text);
@@ -1729,14 +1877,14 @@ A・B・Cのいずれかが教科書レベルで確実でない場合は説明�
 重要：この段階では答えを作らない。やるのは「読み方の設計」だけ。
 
 ### 1-2. 読解（解きながら読む）
-各段落について、必ず以下の流れで処理する：
-A. 段落に入る前に、今どの設問を意識しているかを確認
-B. 英文を **一文ずつ引用** する
-C. その英文を読んだ瞬間に頭の中で行っている判断を、日本語の文章で説明する
-D. 次の英文で、理解がどう修正・更新されたかを書く
-E. But／疑問文／言い換え／抽象↔具体が出た場合は、必ず意味づけを言語化する
-F. 段落を読み終えた時点で、段落の趣旨と本文全体における役割を文章でまとめる
-G. この時点で解ける設問があれば、「ここまで読めばこの設問に必要な情報はそろっている」と自然な日本語で示す
+各段落について、必ず以下の流れで処理してください（※「A.」「B.」などの記号や、以下の指示文自体を出力に含めることは厳禁です）：
+・段落に入る前に、今どの設問を意識しているかを確認する。
+・英文を **一文ずつ引用** する。
+・その英文を読んだ瞬間に頭の中で行っている判断（思考プロセス）を、自然な日本語の文章で説明する。
+・次の英文で、理解がどう修正・更新されたかを書く。
+・But／疑問文／言い換え／抽象↔具体が出た場合は、必ず意味づけを言語化する。
+・段落を読み終えた時点で、段落の趣旨と本文全体における役割を文章でまとめる。
+・この時点で解ける設問があれば、「ここまで読めばこの設問に必要な情報はそろっている」と自然な日本語で示す。
 重要：いきなり段落要約から入らない。必ず「英文 → 思考 → 英文 → 思考」の流れを守る。
 
 ### 1-3. 選択肢処理
@@ -1754,12 +1902,50 @@ G. この時点で解ける設問があれば、「ここまで読めばこの�
 ⑥ 完全解説（①〜④を統合した時系列の最終版）
 
 ────────────────
-【3. 禁止事項】
+【3. 各出力の詳細】
+
+①【解答一覧】
+・ユーザー指定の解答をそのまま列挙
+・理由は書かない
+
+②【設問準備フェーズ】
+・箇条書きは禁止
+・各設問について
+  「この設問は何を聞いており、どこをどう読めば解けそうか」
+  を文章で説明する
+
+③【読みながら解くプロセス】
+・必ず英文を引用しながら進める
+・一文ごとに
+  「この文を読んだ時点ではこう理解する」
+  「次の文でこの理解がこう変わる」
+  を書く
+・設問との接続は自然な文章で行う
+
+④【設問ごとの解答プロセス】
+・どの段落・どの英文を根拠にしたかを明示
+・他の選択肢がなぜ違うかを本文ベースで説明
+
+⑤【本文全文和訳】
+・自然な日本語
+・逐語訳ではないが情報は落とさない
+・解説は入れない
+
+⑥【完全解説】
+・設問準備 → 読解 → 解答が
+  実際の頭の中でどう往復しているかを、
+  一続きの文章として再構成する
+・時系列を絶対に崩さない
+
+────────────────
+【4. 禁止事項】
 ・箇条書き中心の解説、処理ログ風の羅列
 ・英文を示さずに日本語だけで説明すること
 ・参考書的なまとめ先行の解説
 ・「なんとなく」「感覚的に」などの曖昧表現
 ・アスタリスク（*）記号は一切使用しないこと（太字等はHTMLタグや他の記号で代用するか使用を控える）
+・プロンプト内の指示項目（「段落に入る前に...」等）や記号をそのまま出力結果に含めること
+・純粋な解説文のみを出力し、メタな指示文は一切含めないこと
 `;
       }
     } else if (subjectType === 'social') {
@@ -1846,16 +2032,17 @@ ${targetPointsRule}
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
 2. アスタリスク（*）記号を絶対に使用しないでください。
 3. 選択問題の \`options\` 配列には、記号・番号（例: "1", "a", "ア" など）のみを含めてください。
-4. 【重要】各小問の \`explanation\` には、正解の根拠や他がダメな理由を【必ず2〜3文以内（約50〜100文字程度）】の非常に簡潔な文章で生成して埋めてください。大問全体の \`sectionAnalysis\` は必ず空文字 ("") に設定してください。
-5. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
-6. 画像からの読み取りミス（OCRミス）がないよう、特に記号や数値は慎重に確認してください。
+4. 【重要】各小問の \`explanation\` には、正解の根拠や他がダメな理由を【必ず2〜3文以内（約50〜100文字程度）】の非常に簡潔な文章で生成して埋めてください。
+5. 【重要】\`sectionAnalysis\` には、この大問全体の読解ポイントや、受験生へのアドバイスを100〜200文字程度で生成して埋めてください。
+6. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
+7. 画像からの読み取りミス（OCRミス）がないよう、特に記号や数値は慎重に確認してください。
 
 【出力構造】
 {
   "id": "${sectionIndex}",
   "label": "第${sectionIndex}問",
   "allocatedPoints": ${targetPoints || 0},
-  "sectionAnalysis": "",
+  "sectionAnalysis": "大問全体の分析・解説文",
   "questions": [
     {
       "id": "小問ID",
@@ -1915,27 +2102,43 @@ export const generateSectionQuestionsExplanations = async (apiKey, subjectType, 
 【厳格ルール】
 1. **既存の id, label, type, options, correctAnswer, points は絶対に書き換えないこと。** 
 2. 渡された JSON の各要素にある \`explanation\` フィールドを、論理的で丁寧な解説で埋めてください。
-3. 【超重要】解説の長さは【各小問200〜400文字程度】を目安にしてください。「なぜ正解か」の根拠を本文の具体的箇所（第◯段落など）を挙げて説明し、「なぜ他が不正解か」についても論理的に記述してください。
+3. 【超重要】解説の長さは【各小問100文字程度】を目安にしてください。「なぜ正解か」の根拠を本文の具体的箇所（第◯段落など）を挙げて説明し、「なぜ他が不正解か」についても論理的に記述してください。
 4. 日本語で記述すること。
 5. アスタリスク（*）記号は一切使用禁止。
 6. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
 
 【対象の設問構造（現在のデータ）】
+小問数: ${sectionData.questions?.length || 0}
 ${JSON.stringify(sectionData, null, 2)}
 
 【出力要件】
-- JSONオブジェクト1つのみ
-- 既存の構造を維持
+- ルートはオブジェクトであること（配列ではない）
+- **重要：提供された ${sectionData.questions?.length || 0} 個の小問すべてについて、一つも漏らさずに解説を生成してください。**
+- 各小問の "id" は絶対に提供されたものと同じものを使用すること。
+- 出力はJSONオブジェクト1つのみ。
 `;
 
     const result = await generateContentWithFallback(genAI, {
       contents: [{ role: 'user', parts: [{ text: prompt }, ...imageParts] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
-    }, 5, 5000);
+    }, 5, 5000, ["gemini-2.5-pro", "gemini-1.5-pro", "gemini-2.5-flash"]);
 
     const sectionRaw = result.response.text();
-    const parsed = JSON.parse(sanitizeJson(sectionRaw));
+    const sanitized = sanitizeJson(sectionRaw);
+    console.log("[AdminGeminiService] Raw AI Response:", sectionRaw);
+    console.log("[AdminGeminiService] Sanitized Response:", sanitized);
     
+    const parsed = JSON.parse(sanitized);
+    
+    // Rescue: If AI returned an array, verify it looks like question objects before wrapping
+    if (Array.isArray(parsed)) {
+      const looksLikeQuestions = parsed.length > 0 && parsed.every(item => item && typeof item.id !== 'undefined');
+      if (!looksLikeQuestions) {
+        throw new Error("AIが予期しない配列形式を返しました。再度お試しください。");
+      }
+      return { ...sectionData, questions: parsed };
+    }
+
     return parsed;
   } catch (error) {
     console.error(`[AdminGeminiService] Failed to generate explanations for section:`, error);

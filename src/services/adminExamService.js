@@ -60,10 +60,12 @@ export const getAdminExams = async () => {
             master_status, 
             unimplemented_items, 
             admin_comment,
+            is_completed,
+            is_published,
             created_at,
             updated_at
         `)
-        .order('created_at', { ascending: false });
+        .order('university', { ascending: true });
     return { data, error };
 };
 
@@ -171,7 +173,7 @@ export const uploadExamPdf = async (file, examId) => {
     return { publicUrl };
 };
 
-export const duplicateAdminExam = async (examId) => {
+export const duplicateAdminExam = async (examId, count = 1) => {
     // 1. Get full source data
     const { data: source, error: fetchError } = await getAdminExamById(examId);
     if (fetchError) return { error: fetchError };
@@ -180,17 +182,20 @@ export const duplicateAdminExam = async (examId) => {
     // We remove id and created_at to let Supabase generate new ones
     const { id, created_at, updated_at, ...cleanData } = source;
     
-    const duplicateData = {
-        ...cleanData,
-        subject: `${cleanData.subject}(コピー)`,
-        master_status: 'working', // Reset status for the copy
-        id: `copy_${Date.now()}_${Math.floor(Math.random() * 1000)}` // Temporary unique string if needed, or let DB handle if ID is BIGINT
-    };
+    const duplicates = [];
+    for (let i = 0; i < count; i++) {
+        duplicates.push({
+            ...cleanData,
+            subject: count > 1 ? `${cleanData.subject}(コピー${i + 1})` : `${cleanData.subject}(コピー)`,
+            master_status: 'working', // Reset status for the copy
+            id: `copy_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}` 
+        });
+    }
 
-    // 3. Insert as new record
+    // 3. Insert as new records
     const { data, error } = await supabase
         .from('exams')
-        .insert([duplicateData])
+        .insert(duplicates)
         .select();
 
     return { data, error };

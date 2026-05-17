@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
+import { findUniversityMetadataKnowledge, listUniversityMetadataKnowledgeCandidates } from '../data/universityMetadataKnowledge';
 import { getAdminBanners } from '../services/adminBannerService';
 import { geminiQueue } from '../utils/promiseQueue';
+import universityBaseData from '../data/universityBaseData.json';
 
 function AdminExamEditor() {
     const { id } = useParams();
@@ -43,6 +45,9 @@ function AdminExamEditor() {
     const [bulkIncludeVocab, setBulkIncludeVocab] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploadingQuestion, setUploadingQuestion] = useState(false);
+    const [extractingMetadata, setExtractingMetadata] = useState(false);
+    const [knowledgeCandidates, setKnowledgeCandidates] = useState([]);
+    const [selectedKnowledgeKey, setSelectedKnowledgeKey] = useState('');
     const [uploadingAnswers, setUploadingAnswers] = useState({});
     const [generatingExplanationsOnly, setGeneratingExplanationsOnly] = useState({});
     const [activeTab, setActiveTab] = useState('master');
@@ -122,6 +127,143 @@ function AdminExamEditor() {
         }
     };
 
+    const normalizeSubjectFromMetadata = (subjectEnValue, subjectLabel) => {
+        if (['english', 'social', 'math', 'japanese', 'science'].includes(subjectEnValue)) {
+            return subjectEnValue;
+        }
+
+        const label = `${subjectLabel || ''}`.toLowerCase();
+        if (label.includes('英')) return 'english';
+        if (label.includes('数')) return 'math';
+        if (label.includes('国') || label.includes('現代文') || label.includes('古文') || label.includes('漢文')) return 'japanese';
+        if (label.includes('物理') || label.includes('化学') || label.includes('生物') || label.includes('地学') || label.includes('理科')) return 'science';
+        if (label.includes('日') || label.includes('世') || label.includes('地理') || label.includes('政経') || label.includes('倫理') || label.includes('社会')) return 'social';
+        return 'english';
+    };
+
+    const enrichMetadataWithKnowledge = (metadata) => {
+        const normalizedSubjectEn = normalizeSubjectFromMetadata(metadata.subject_en, metadata.subject);
+        const knowledgeCandidatesList = listUniversityMetadataKnowledgeCandidates({
+            university: metadata.university,
+            year: metadata.year,
+            subject: metadata.subject,
+            subject_en: normalizedSubjectEn
+        });
+        const knowledge = findUniversityMetadataKnowledge({
+            university: metadata.university,
+            faculty: metadata.faculty,
+            subject: metadata.subject,
+            year: metadata.year,
+            subject_en: normalizedSubjectEn
+        });
+
+        return {
+            ...metadata,
+            subject_en: normalizedSubjectEn,
+            max_score: metadata.max_score ?? knowledge?.max_score ?? null,
+            duration_minutes: metadata.duration_minutes ?? knowledge?.duration_minutes ?? null,
+            passing_lines: knowledge?.passing_lines || null,
+            knowledgeMatched: Boolean(knowledge),
+            knowledgeSources: knowledge?.sources || [],
+            knowledgeNotes: knowledge?.notes || [],
+            knowledgeCandidates: knowledgeCandidatesList
+        };
+    };
+
+    const applyKnowledgeCandidate = (candidate) => {
+        if (!candidate) return;
+        applyMetadataToForm({
+            university: candidate.university,
+            faculty: candidate.faculty,
+            year: candidate.year,
+            subject: candidate.subject,
+            subject_en: candidate.subject_en,
+            max_score: candidate.max_score,
+            duration_minutes: candidate.duration_minutes,
+            passing_lines: candidate.passing_lines
+        });
+    };
+
+    const applyMetadataToForm = (metadata) => {
+        if (metadata.university) {
+            setUniversity(metadata.university);
+            const matchedUniversity = universitiesData.find(u => u.name === metadata.university);
+            setUniversityId(matchedUniversity?.id || Math.floor(Math.random() * 10000));
+
+            if (metadata.faculty) {
+                setFaculty(metadata.faculty);
+                const matchedFaculty = matchedUniversity?.faculties.find(f => f.name === metadata.faculty);
+                setFacultyId(matchedFaculty?.id || ('fac' + Math.floor(Math.random() * 10000)));
+            }
+        } else if (metadata.faculty) {
+            setFaculty(metadata.faculty);
+            setFacultyId('fac' + Math.floor(Math.random() * 10000));
+        }
+
+        if (metadata.year) {
+            setYear(String(metadata.year));
+        }
+
+        if (metadata.subject) {
+            setSubject(metadata.subject);
+        }
+
+        setSubjectEn(metadata.subject_en || normalizeSubjectFromMetadata(metadata.subject_en, metadata.subject));
+
+        if (metadata.duration_minutes !== null && metadata.duration_minutes !== undefined) {
+            setDurationMinutes(String(metadata.duration_minutes));
+        }
+
+        if (metadata.max_score) {
+            setExamData(prev => ({
+                ...prev,
+                max_score: metadata.max_score,
+                passing_lines: metadata.passing_lines || {
+                    A: Math.round(metadata.max_score * 0.8),
+                    B: Math.round(metadata.max_score * 0.7),
+                    C: Math.round(metadata.max_score * 0.6),
+                    D: Math.round(metadata.max_score * 0.4)
+                }
+            }));
+        } else if (metadata.passing_lines) {
+            setExamData(prev => ({
+                ...prev,
+                passing_lines: metadata.passing_lines
+            }));
+        }
+    };
+
+    const handleExtractMetadata = async () => {
+        const finalQFiles = questionFiles.length > 0 ? questionFiles : (examData?.pdf_path ? [examData.pdf_path] : []);
+        if (finalQFiles.length === 0) {
+            alert('先に問題PDFをアップロードしてください。');
+            return;
+        }
+
+        const apiKey = getGeminiApiKey();
+        if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
+            alert('【エラー】Gemini APIキーが見つかりません。');
+            return;
+        }
+
+        setExtractingMetadata(true);
+        try {
+            const metadata = await geminiQueue.add(() => extractExamMetadata(apiKey, finalQFiles));
+            const enrichedMetadata = enrichMetadataWithKnowledge(metadata);
+            applyMetadataToForm(enrichedMetadata);
+            setKnowledgeCandidates(enrichedMetadata.knowledgeCandidates || []);
+            setSelectedKnowledgeKey(enrichedMetadata.knowledgeCandidates?.[0]?.key || '');
+            alert(enrichedMetadata.knowledgeMatched
+                ? '基本情報の自動入力が完了しました。大学データから満点・制限時間・判定ラインも補完しました。'
+                : '基本情報の自動入力が完了しました。内容を確認してください。');
+        } catch (error) {
+            console.error('Metadata extraction failed:', error);
+            alert('基本情報の自動入力に失敗しました。\n' + error.message);
+        } finally {
+            setExtractingMetadata(false);
+        }
+    };
+
     const fetchExam = async () => {
         const { data, error } = await getAdminExamById(id);
         if (error) {
@@ -175,7 +317,32 @@ function AdminExamEditor() {
         setLoading(false);
     };
 
-    const handleGenerateSection = async (sectionNum, silent = false, shouldExtractVocab = false) => {
+    const handleImportUniversityData = (e) => {
+        const selectedId = e.target.value;
+        if (!selectedId) return;
+
+        const data = universityBaseData.find(d => d.id === selectedId);
+        if (!data) return;
+
+        if (!confirm(`${data.university} ${data.faculty} の基礎データを読み込みますか？\n(満点、制限時間、合格ラインが上書きされます)`)) {
+            e.target.value = "";
+            return;
+        }
+
+        setExamData(prev => ({
+            ...prev,
+            university: prev.university || data.university,
+            faculty: prev.faculty || data.faculty,
+            max_score: data.maxScore || prev.max_score,
+            duration_minutes: data.duration || prev.duration_minutes,
+            passing_lines: data.passingLines || prev.passing_lines
+        }));
+        
+        e.target.value = "";
+        alert('データを読み込みました。');
+    };
+
+    const handleGenerateSection = async (sectionNum, silent = false, shouldExtractVocab = false, includeAnalysis = true) => {
         if (!examId) {
             if (!silent) alert('IDを入力してください。');
             return false;
@@ -244,6 +411,7 @@ function AdminExamEditor() {
 
                 newStructure[sIdx] = {
                     ...sectionResult,
+                    sectionAnalysis: includeAnalysis ? sectionResult.sectionAnalysis : '',
                     vocabulary: newStructure[sIdx].vocabulary || [], // Preserve existing if any
                     answer_pdf_path: existingA_pdf,
                     question_pdf_path: existingQ_pdf,
@@ -283,7 +451,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleGenerateOnlyExplanations = async (sectionNum) => {
+    const handleGenerateOnlyExplanations = async (sectionNum, includeAnalysis = true) => {
         const apiKey = getGeminiApiKey();
         if (!apiKey) {
             alert('Gemini API Keyが見つかりません。');
@@ -317,8 +485,30 @@ function AdminExamEditor() {
             ));
             
             console.log("=== AI Generation Result ===", result);
-            if (!result || !result.questions) {
-                alert("AIから有効な小問データが返されませんでした。もう一度お試しください。");
+            if (!result) {
+                alert("AIから有効なデータが返されませんでした。");
+                return;
+            }
+
+            let aiQuestions = [];
+            if (Array.isArray(result)) {
+                aiQuestions = result;
+            } else if (result.questions) {
+                if (Array.isArray(result.questions)) {
+                    aiQuestions = result.questions;
+                } else if (typeof result.questions === 'object') {
+                    // Handle case where AI returns an object map { "id": { ... } }
+                    aiQuestions = Object.values(result.questions);
+                    // If the object values don't have IDs, use the keys
+                    if (aiQuestions.length > 0 && !aiQuestions[0].id) {
+                        aiQuestions = Object.entries(result.questions).map(([key, val]) => ({ ...val, id: key }));
+                    }
+                }
+            }
+
+            if (aiQuestions.length === 0) {
+                alert("AIの回答から小問リストを抽出できませんでした。構造を確認してください。");
+                console.error("Failed to extract questions from AI result:", result);
                 return;
             }
 
@@ -328,18 +518,36 @@ function AdminExamEditor() {
                 const newStructure = [...(prev?.structure || [])];
                 const currentSec = newStructure[sIdx];
                 
-                // Update questions (match by ID)
-                const mergedQuestions = currentSec.questions.map(origQ => {
-                    const match = result.questions?.find(newQ => String(newQ.id) === String(origQ.id));
-                    return {
-                        ...origQ,
-                        explanation: match ? match.explanation : origQ.explanation
-                    };
+                if (!currentSec || !currentSec.questions) return prev;
+
+                // Robust update logic: Try ID match first, then index match as fallback
+                const mergedQuestions = currentSec.questions.map((origQ, idx) => {
+                    // 1. Try match by ID (exact or normalized)
+                    let match = aiQuestions.find(newQ => 
+                        String(newQ.id).trim() === String(origQ.id).trim() ||
+                        String(newQ.label).trim() === String(origQ.label).trim()
+                    );
+                    
+                    // 2. Fallback to index match only when question counts match exactly.
+                    //    If counts differ, order cannot be trusted and index matching would
+                    //    silently assign wrong explanations to wrong questions.
+                    if (!match && aiQuestions.length === currentSec.questions.length && aiQuestions[idx]) {
+                        console.warn(`ID mismatch for question ${origQ.id}. Falling back to index match.`);
+                        match = aiQuestions[idx];
+                    }
+
+                    if (match && match.explanation) {
+                        return {
+                            ...origQ,
+                            explanation: match.explanation
+                        };
+                    }
+                    return origQ;
                 });
 
                 newStructure[sIdx] = {
                     ...currentSec,
-                    sectionAnalysis: result.sectionAnalysis || currentSec.sectionAnalysis,
+                    sectionAnalysis: includeAnalysis ? (result.sectionAnalysis || currentSec.sectionAnalysis) : currentSec.sectionAnalysis,
                     questions: mergedQuestions
                 };
 
@@ -365,7 +573,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleBulkGenerateSections = async () => {
+    const handleBulkGenerateSections = async (includeAnalysis = true) => {
         if (!examId) {
             alert('IDを入力してください。');
             return;
@@ -397,7 +605,7 @@ function AdminExamEditor() {
         try {
             for (let i = 1; i <= sectionCount; i++) {
                 setBulkSectionsProgress({ current: i, total: sectionCount });
-                const success = await handleGenerateSection(i, true, bulkIncludeVocab);
+                const success = await handleGenerateSection(i, true, bulkIncludeVocab, includeAnalysis);
                 
                 if (!success) {
                     const proceed = confirm(`大問${i}の生成中にエラーが発生しました。この大問をスキップして次へ進みますか？\n(「キャンセル」を押すと一括処理を中断します)`);
@@ -1428,8 +1636,17 @@ function AdminExamEditor() {
                             <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">A</span>
                             基本情報の設定
                         </h2>
-                        <div className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-black border border-indigo-100">
-                            ID: {examId || '(未生成)'}
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleExtractMetadata}
+                                disabled={extractingMetadata || uploadingQuestion || (!questionFiles.length && !examData?.pdf_path)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2.5 px-4 rounded-xl shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50 text-xs"
+                            >
+                                {extractingMetadata ? 'AIが自動入力中...' : 'PDFから基本情報を自動入力'}
+                            </button>
+                            <div className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-black border border-indigo-100">
+                                ID: {examId || '(未生成)'}
+                            </div>
                         </div>
                     </div>
 
@@ -1510,6 +1727,33 @@ function AdminExamEditor() {
                         </div>
                     </div>
 
+                    {knowledgeCandidates.length > 0 && (
+                        <div className="mt-6 rounded-3xl border border-indigo-100 bg-indigo-50/70 p-6">
+                            <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                                <div className="flex-1">
+                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">参照する大学データ</div>
+                                    <select
+                                        value={selectedKnowledgeKey}
+                                        onChange={e => setSelectedKnowledgeKey(e.target.value)}
+                                        className="block w-full rounded-2xl border-gray-100 shadow-sm text-sm p-4 border bg-white transition-all font-bold text-navy-blue"
+                                    >
+                                        {knowledgeCandidates.map(candidate => (
+                                            <option key={candidate.key} value={candidate.key}>
+                                                {candidate.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <button
+                                    onClick={() => applyKnowledgeCandidate(knowledgeCandidates.find(candidate => candidate.key === selectedKnowledgeKey))}
+                                    className="bg-navy-blue hover:bg-navy-light text-white font-black py-3 px-5 rounded-xl shadow transition-all"
+                                >
+                                    選択した大学データを適用
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="mt-10 pt-10 border-t border-gray-50 space-y-6">
                         <div className="flex items-center justify-between">
                             <h3 className="text-sm font-black text-navy-blue tracking-tight">合格判定ボーダーライン設定</h3>
@@ -1574,6 +1818,29 @@ function AdminExamEditor() {
                     </div>
 
                     <div className="space-y-8 relative z-10">
+                        {/* Data Import from Obsidian */}
+                        <div className="bg-indigo-600 p-6 rounded-3xl border border-indigo-500 shadow-xl shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-6">
+                            <div className="flex items-center gap-4">
+                                <span className="text-3xl">📚</span>
+                                <div>
+                                    <h4 className="text-white font-black text-sm">大学データ（Obsidian）から読込</h4>
+                                    <p className="text-indigo-200 text-[10px] font-bold">収集済みの満点・配点・制限時間データを適用します</p>
+                                </div>
+                            </div>
+                            <select 
+                                onChange={handleImportUniversityData}
+                                className="w-full md:w-64 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl border border-white/20 outline-none transition-all cursor-pointer text-sm"
+                                defaultValue=""
+                            >
+                                <option value="" className="text-navy-blue">選択してください...</option>
+                                {universityBaseData.map(d => (
+                                    <option key={d.id} value={d.id} className="text-navy-blue">
+                                        {d.university} - {d.faculty} ({d.subject})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
                         {/* PDF Tools Notice */}
                         <div className="bg-amber-50/80 p-4 rounded-2xl border border-amber-200/50 flex items-start gap-3">
                             <span className="text-amber-600 mt-0.5">💡</span>
@@ -1775,19 +2042,33 @@ function AdminExamEditor() {
                                                     )}
                                                 </button>
                                                 <button
-                                                    onClick={() => handleGenerateOnlyExplanations(num)}
+                                                    onClick={() => handleGenerateOnlyExplanations(num, true)}
                                                     disabled={generatingExplanationsOnly[num] || generating}
-                                                    className="w-full mt-3 bg-white text-indigo-600 hover:bg-indigo-50 border-2 border-indigo-200 font-black py-4 px-6 rounded-xl transition-all text-sm flex items-center justify-center gap-3 disabled:opacity-50"
+                                                    className="w-full mt-3 bg-gradient-to-r from-indigo-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-6 rounded-xl shadow-lg shadow-indigo-200 transition-all text-sm flex items-center justify-center gap-3 disabled:opacity-50"
                                                 >
                                                     {generatingExplanationsOnly[num] ? (
                                                         <>
-                                                            <div className="w-5 h-5 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin"></div>
-                                                            <span>（大問 {num}）解説のみを生成中...</span>
+                                                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                            <span>（大問 {num}）全解説を生成中...</span>
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <span className="text-xl">✍️</span>
-                                                            「小問解説のみ」を一括生成する（構造は維持）
+                                                            <span className="text-xl">💎</span>
+                                                            「大問の全解説」を一括生成する（小問＋詳細）
+                                                        </>
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleGenerateOnlyExplanations(num, false)}
+                                                    disabled={generatingExplanationsOnly[num] || generating}
+                                                    className="w-full mt-2 bg-white text-gray-500 hover:bg-gray-50 border border-gray-200 font-bold py-3 px-6 rounded-xl transition-all text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {generatingExplanationsOnly[num] ? (
+                                                        <span>生成中...</span>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-sm">✍️</span>
+                                                            小問解説のみ生成（既存の構造を維持）
                                                         </>
                                                     )}
                                                 </button>
@@ -1818,20 +2099,33 @@ function AdminExamEditor() {
                                         <span className="text-xs font-black text-navy-blue">難単語（抽出）も同時に行う</span>
                                     </label>
                                 </div>
-                                <button
-                                    onClick={handleBulkGenerateSections}
-                                    disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
-                                    className="w-full sm:w-auto bg-gradient-to-r from-indigo-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-10 rounded-2xl shadow-xl shadow-indigo-200 transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3 mx-auto"
-                                >
-                                    {isBulkGeneratingSections ? (
-                                        <>
-                                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                            <span>全大問を一括生成中... ({bulkSectionsProgress.current}/{bulkSectionsProgress.total})</span>
-                                        </>
-                                    ) : (
-                                        '🚀 全ての大問を一括生成する'
-                                    )}
-                                </button>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <button
+                                        onClick={() => handleBulkGenerateSections(true)}
+                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
+                                        className="bg-gradient-to-r from-indigo-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-6 rounded-2xl shadow-xl shadow-indigo-200 transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
+                                    >
+                                        {isBulkGeneratingSections ? (
+                                            <>
+                                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                <span>一括生成中...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span className="text-xl">🚀</span>
+                                                大問構成＋詳細解説を全自動生成
+                                            </>
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={() => handleBulkGenerateSections(false)}
+                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
+                                        className="bg-white text-indigo-600 hover:bg-indigo-50 border-2 border-indigo-100 font-black py-4 px-6 rounded-2xl shadow-sm transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
+                                    >
+                                        <span className="text-lg">🏗️</span>
+                                        構成のみ一括生成（解説なし）
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

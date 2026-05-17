@@ -12,6 +12,7 @@ import Navbar from './components/Navbar';
 import AdminRoute from './components/AdminRoute';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminExamEditor from './pages/AdminExamEditor';
+import AdminExamLab from './pages/AdminExamLab';
 import AdminBannerDashboard from './pages/AdminBannerDashboard';
 import AdminBannerEditor from './pages/AdminBannerEditor';
 import AdminUserDashboard from './pages/AdminUserDashboard';
@@ -60,6 +61,7 @@ function App() {
 
           <Route element={<AdminRoute />}>
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/admin/exam-lab" element={<AdminExamLab />} />
             <Route path="/admin/users" element={<AdminUserDashboard />} />
             <Route path="/admin/exam/:id" element={<AdminExamEditor />} />
             <Route path="/admin/banners" element={<AdminBannerDashboard />} />

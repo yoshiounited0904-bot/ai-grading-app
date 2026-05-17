@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData, duplicateAdminExam } from '../services/adminExamService';
+import { extractSectionVocabulary } from '../services/adminGeminiService';
+import { geminiQueue } from '../utils/promiseQueue';
 
 function AdminDashboard() {
     const [exams, setExams] = useState([]);
@@ -37,9 +39,20 @@ function AdminDashboard() {
     };
 
     const handleCopy = async (exam) => {
-        if (window.confirm(`「${exam.university} ${exam.year}年度 ${exam.subject}」をコピーした新しいデータを作成しますか？`)) {
+        const result = window.prompt(`「${exam.university} ${exam.year}年度 ${exam.subject}」をコピーします。作成する個数を半角数字で入力してください。`, "1");
+        
+        if (result !== null) {
+            const count = parseInt(result, 10);
+            if (isNaN(count) || count < 1) {
+                alert("正しい数字（1以上の整数）を入力してください。");
+                return;
+            }
+            if (count > 50) {
+                 if(!window.confirm(`本当に${count}個もコピーを作成しますか？`)) return;
+            }
+            
             setLoading(true);
-            const { error } = await duplicateAdminExam(exam.id);
+            const { error } = await duplicateAdminExam(exam.id, count);
             if (error) {
                 console.error('Error duplicating exam:', error);
                 alert('コピーに失敗しました。');
@@ -49,6 +62,7 @@ function AdminDashboard() {
             setLoading(false);
         }
     };
+
 
     const handleCommentUpdate = async (id, comment) => {
         const { error } = await updateAdminComment(id, comment);
@@ -77,7 +91,6 @@ function AdminDashboard() {
 
     const handleCycleStatus = async (examId, currentStatus) => {
         const statuses = ['working', 'completed', 'verified'];
-        // Default to 'working' if currentStatus is not recognized or is the old boolean format
         let normalizedStatus = currentStatus;
         if (currentStatus === true || currentStatus === 'completed') normalizedStatus = 'completed';
         else if (currentStatus === false || currentStatus === 'working' || !currentStatus) normalizedStatus = 'working';
@@ -89,9 +102,21 @@ function AdminDashboard() {
         const { error } = await updateAdminFields(examId, { master_status: nextStatus });
         if (error) {
             console.error('Error updating status:', error);
-            alert('更新に失敗しました。SQLを実行して「master_status」(text) カラムをデータベース(Supabase)の exams テーブルに追加してください。');
+            alert('更新に失敗しました。');
         } else {
             setExams(prev => prev.map(e => e.id === examId ? { ...e, master_status: nextStatus } : e));
+        }
+    };
+
+    const handleTogglePublish = async (examId, currentPublished) => {
+        const nextPublished = !currentPublished;
+        const { error } = await updateAdminFields(examId, { is_published: nextPublished });
+        
+        if (error) {
+            console.error('Error toggling publish:', error);
+            alert('公開ステータスの更新に失敗しました。SQLを実行して「is_published」(boolean) カラムを追加してください。');
+        } else {
+            setExams(prev => prev.map(e => e.id === examId ? { ...e, is_published: nextPublished } : e));
         }
     };
 
@@ -170,6 +195,66 @@ function AdminDashboard() {
         });
     };
 
+    const [batchProcessing, setBatchProcessing] = useState(false);
+    const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+
+    const handleBatchVocabularyExtraction = async () => {
+        const englishExams = exams.filter(e => 
+            e.subject_en === 'english' && 
+            e.structure && 
+            e.structure.some(s => !s.vocabulary || s.vocabulary.length === 0)
+        );
+
+        if (englishExams.length === 0) {
+            alert('単語が未抽出の英語試験はありません。');
+            return;
+        }
+
+        if (!window.confirm(`${englishExams.length}件の英語試験に対して、AI単語抽出を一括実行しますか？\n（API消費量が増えますのでご注意ください）`)) {
+            return;
+        }
+
+        setBatchProcessing(true);
+        setBatchProgress({ current: 0, total: englishExams.length });
+
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
+
+        for (let i = 0; i < englishExams.length; i++) {
+            const exam = englishExams[i];
+            console.log(`[BatchVocab] Processing exam: ${exam.id}`);
+            
+            try {
+                const newStructure = [...exam.structure];
+                let changed = false;
+
+                for (let sIdx = 0; sIdx < newStructure.length; sIdx++) {
+                    const section = newStructure[sIdx];
+                    if (!section.vocabulary || section.vocabulary.length === 0) {
+                        const pdfPath = section.question_pdf_path || exam.pdf_path;
+                        if (pdfPath) {
+                            console.log(`[BatchVocab] Extracting vocab for ${exam.id} Section ${sIdx + 1}`);
+                            const vocab = await geminiQueue.add(() => extractSectionVocabulary(apiKey, [pdfPath]));
+                            newStructure[sIdx] = { ...section, vocabulary: vocab };
+                            changed = true;
+                        }
+                    }
+                }
+
+                if (changed) {
+                    await updateAdminFields(exam.id, { structure: newStructure });
+                }
+            } catch (err) {
+                console.error(`[BatchVocab] Failed for exam ${exam.id}:`, err);
+            }
+
+            setBatchProgress(prev => ({ ...prev, current: i + 1 }));
+        }
+
+        setBatchProcessing(false);
+        alert('一括単語抽出が完了しました！');
+        fetchExams();
+    };
+
     const handleImport = async () => {
         if (window.confirm('ダミーデータをSupabaseに一括登録します。よろしいですか？')) {
             setLoading(true);
@@ -209,12 +294,35 @@ function AdminDashboard() {
                         </button>
                         </div>
                     </div>
-                    <Link
-                        to="/admin/exam/new"
-                        className="bg-navy-blue hover:bg-navy-light text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
-                    >
-                        <span className="text-xl">+</span> 新規試験作成
-                    </Link>
+                    <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
+                        {batchProcessing && (
+                            <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow-sm border border-indigo-100">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
+                                <span className="text-xs font-bold text-indigo-600">
+                                    一括抽出中: {batchProgress.current} / {batchProgress.total}
+                                </span>
+                            </div>
+                        )}
+                        <Link
+                            to="/admin/exam-lab"
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
+                        >
+                            <span className="text-lg">AI</span> 自動入力ラボ
+                        </Link>
+                        <button
+                            onClick={handleBatchVocabularyExtraction}
+                            disabled={batchProcessing || loading}
+                            className="bg-white hover:bg-gray-50 text-indigo-600 font-bold py-2.5 px-6 rounded-lg shadow-sm border border-indigo-200 transition-all disabled:opacity-50 text-sm flex items-center gap-2"
+                        >
+                            <span className="text-lg">📚</span> 英単語を一括抽出
+                        </button>
+                        <Link
+                            to="/admin/exam/new"
+                            className="bg-navy-blue hover:bg-navy-light text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
+                        >
+                            <span className="text-xl">+</span> 新規試験作成
+                        </Link>
+                    </div>
                 </div>
 
                 {loading ? (
@@ -245,7 +353,19 @@ function AdminDashboard() {
                                 acc[univ].push(exam);
                                 return acc;
                             }, {})
-                        ).map(([university, universityExams]) => (
+                        )
+                        .sort(([nameA, examsA], [nameB, examsB]) => {
+                            // Get most recent update time for each university
+                            const lastA = Math.max(...examsA.map(e => new Date(e.updated_at || 0).getTime()));
+                            const lastB = Math.max(...examsB.map(e => new Date(e.updated_at || 0).getTime()));
+                            return lastB - lastA; // Latest first
+                        })
+                        .map(([university, rawExams]) => {
+                            // Sort exams by faculty within university
+                            const universityExams = [...rawExams].sort((a, b) => 
+                                (a.faculty || "").localeCompare(b.faculty || "", 'ja')
+                            );
+                            return (
                             <div key={university} className="bg-white/50 backdrop-blur-sm rounded-3xl p-6 shadow-xl shadow-indigo-100/50 border-2 border-indigo-100/30 transition-all">
                                 <div className="flex items-center gap-4 mb-6">
                                     <div className="w-1.5 h-8 bg-navy-blue rounded-full"></div>
@@ -262,6 +382,7 @@ function AdminDashboard() {
                                             <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
                                                 <th className="px-6 py-2 text-left">学部 / ID</th>
                                                 <th className="px-6 py-2 text-left">年度・科目</th>
+                                                <th className="px-6 py-2 text-center whitespace-nowrap">公開設定</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">ステータス</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
                                                 <th className="px-6 py-2 text-left">共有メモ</th>
@@ -294,6 +415,25 @@ function AdminDashboard() {
                                                 </div>
                                             </td>
                                             
+                                            {/* Publish Toggle */}
+                                            <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                                <button
+                                                    onClick={() => handleTogglePublish(exam.id, exam.is_published)}
+                                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                                                        exam.is_published ? 'bg-indigo-600' : 'bg-gray-200'
+                                                    }`}
+                                                >
+                                                    <span
+                                                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                                            exam.is_published ? 'translate-x-6' : 'translate-x-1'
+                                                        }`}
+                                                    />
+                                                </button>
+                                                <div className={`text-[9px] mt-1 font-black ${exam.is_published ? 'text-indigo-600' : 'text-gray-400'}`}>
+                                                    {exam.is_published ? '公開中' : '非公開'}
+                                                </div>
+                                            </td>
+
                                             {/* Status Badge */}
                                             <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
                                                 <button
@@ -387,7 +527,8 @@ function AdminDashboard() {
                                     </table>
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
