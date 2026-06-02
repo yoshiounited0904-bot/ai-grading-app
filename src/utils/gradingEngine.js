@@ -19,15 +19,13 @@ export const gradeObjectively = (examData, userAnswers) => {
             maxScore += q.points || 0;
 
             // Only process objective types here
-            const hasInstruction = (q.gradingInstruction && q.gradingInstruction.trim() !== '') || (q.gradingCriteria && q.gradingCriteria.trim() !== '');
             const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type, q.alternativeAnswers);
             
-            // Standard objective types
-            const isStandardObjective = ['selection', 'selection_multi'].includes(q.type) && !hasInstruction;
-            // Descriptive match (auto-pass if answer matches exactly)
-            const isDescriptiveMatch = q.type === 'descriptive' && !hasInstruction && isCorrect;
+            // Only essay/writing require AI grading. Everything else is exact-match (instant).
+            const aiRequiredTypes = ['essay', 'writing'];
+            const isObjective = !aiRequiredTypes.includes(q.type);
 
-            if (isStandardObjective || isDescriptiveMatch) {
+            if (isObjective) {
                 const feedbackItem = {
                     id: q.id,
                     userAnswer: Array.isArray(userAnswer) ? userAnswer.join(', ') : userAnswer,
@@ -69,6 +67,7 @@ export const gradeObjectively = (examData, userAnswers) => {
                     alternativeAnswers: q.alternativeAnswers || [],
                     points: q.points || 0,
                     gradingInstruction: q.gradingInstruction || q.gradingCriteria || "",
+                    scoringElements: q.scoringElements || [],
                     isSubjective: true,
                     completeGroupId: q.completeGroupId
                 };
@@ -137,8 +136,8 @@ const checkCorrectness = (userAnswer, correctAnswer, type, alternativeAnswers = 
 
     if (normUser === normCorrect) return true;
 
-    // Check alternative answers for descriptive (OR match)
-    if (type === 'descriptive' && Array.isArray(alternativeAnswers)) {
+    // Check alternative answers (OR match) for any type
+    if (Array.isArray(alternativeAnswers) && alternativeAnswers.length > 0) {
         return alternativeAnswers.some(alt => normalize(alt) === normUser);
     }
 

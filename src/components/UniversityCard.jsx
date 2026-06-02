@@ -8,9 +8,10 @@ const UniversityCard = ({ university }) => {
     const { user } = useAuth();
 
     const handleClick = () => {
-        if (!user) {
+        const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
+        if (!user && isGuestGraded) {
             document.dispatchEvent(new CustomEvent('openAuthModal', { 
-                detail: { message: '試験を解くにはログインが必要です' } 
+                detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
             }));
             return;
         }
@@ -24,7 +25,7 @@ const UniversityCard = ({ university }) => {
                 <span style={{
                     fontSize: '0.8rem',
                     padding: '0.25rem 0.75rem',
-                    borderRadius: '20px',
+                    borderRadius: '2px',
                     background: 'var(--color-bg-secondary)',
                     color: 'var(--color-text-secondary)',
                     border: '1px solid rgba(255, 255, 255, 0.1)'

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-
+import { supabase } from '../services/supabaseClient';
 import { gradeExamWithGemini } from '../services/geminiService';
 
 const ExamPage = () => {
@@ -14,13 +14,25 @@ const ExamPage = () => {
     const [selectedSectionIds, setSelectedSectionIds] = useState(null);
     const [facultyName, setFacultyName] = useState('');
 
+    // Auth check: one-time only at mount. Never re-run during grading to avoid false redirects.
+    const hasCheckedAuth = React.useRef(false);
     useEffect(() => {
-        if (!authLoading && !user) {
+        if (authLoading || hasCheckedAuth.current) return;
+        hasCheckedAuth.current = true;
+        
+        const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
+        if (!user && isGuestGraded) {
             navigate('/');
-            return;
+            setTimeout(() => {
+                document.dispatchEvent(new CustomEvent('openAuthModal', { 
+                    detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
+                }));
+            }, 100);
         }
+    }, [authLoading, user, navigate]);
 
-        // 1. Try location state
+    // Exam data loading: mount only — location.state is stable after initial navigation
+    useEffect(() => {
         if (location.state?.exam) {
             setExam(location.state.exam);
             setUniversityName(location.state.universityName || '');
@@ -30,7 +42,7 @@ const ExamPage = () => {
             return;
         }
 
-        // 2. Fallback to localStorage (e.g. on refresh)
+        // Fallback to localStorage (e.g. on refresh)
         try {
             const previewData = localStorage.getItem('previewExamData');
             if (previewData) {
@@ -38,12 +50,12 @@ const ExamPage = () => {
                 setExam(parsed.exam);
                 setUniversityName(parsed.universityName || '');
                 setUniversityId(parsed.universityId || '');
-                // Note: selectedSectionIds/facultyName might not be in previewData if from Admin
             }
         } catch (e) {
             console.error("Failed to recover exam from localStorage", e);
         }
-    }, [user, authLoading, navigate, location.state]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const [answers, setAnswers] = useState({});
     const [grading, setGrading] = useState(false);
@@ -76,8 +88,19 @@ const ExamPage = () => {
     const [activeTab, setActiveTab] = useState('pdf');
     const [isMobile, setIsMobile] = useState(false);
     const [pdfImages, setPdfImages] = useState([]);
-    const [rawImagesForGrading, setRawImagesForGrading] = useState([]); // Store raw base64 for grading
+    const [rawImagesForGrading] = useState([]); // kept for legacy refs only
     const [loadingPdf, setLoadingPdf] = useState(false);
+    const [signedPdfUrl, setSignedPdfUrl] = useState(null);
+
+    // 署名付きURLを生成（exam-pdfs バケットが Private の場合に必要）
+    useEffect(() => {
+        if (!exam?.pdfPath) return;
+        const match = exam.pdfPath.match(/\/exam-pdfs\/(.+)/);
+        if (!match) { setSignedPdfUrl(exam.pdfPath); return; }
+        supabase.storage.from('exam-pdfs').createSignedUrl(match[1], 7200)
+            .then(({ data }) => setSignedPdfUrl(data?.signedUrl || exam.pdfPath))
+            .catch(() => setSignedPdfUrl(exam.pdfPath));
+    }, [exam?.pdfPath]);
 
     // Submission Confirmation
     const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -184,15 +207,19 @@ const ExamPage = () => {
         window.addEventListener('resize', checkMobile);
 
         const loadPdfForMobile = async () => {
-            if (window.innerWidth <= 768 && exam?.type === 'pdf' && exam.pdfPath) {
+            if (window.innerWidth <= 768 && exam?.type === 'pdf' && signedPdfUrl) {
                 setLoadingPdf(true);
                 try {
                     const { convertPdfToImages } = await import('../utils/pdfUtils');
-                    const images = await convertPdfToImages(exam.pdfPath, (msg) => {
+                    const images = await convertPdfToImages(signedPdfUrl, (msg) => {
                         console.log("PDF Viewer Load:", msg);
                     });
-                    setRawImagesForGrading(images);
                     setPdfImages(images.map(img => `data:image/jpeg;base64,${img.inlineData.data}`));
+                    try {
+                        sessionStorage.setItem(`exam_pdf_images_${exam.id}`, JSON.stringify(images));
+                    } catch (e) {
+                        console.warn("PDF images too large to cache in sessionStorage:", e);
+                    }
                 } catch (err) {
                     console.error("Failed to load PDF images for viewer:", err);
                 } finally {
@@ -203,7 +230,7 @@ const ExamPage = () => {
 
         loadPdfForMobile();
         return () => window.removeEventListener('resize', checkMobile);
-    }, [exam]);
+    }, [exam, signedPdfUrl]);
 
     // Start timer function
     const startTimer = () => {
@@ -237,37 +264,54 @@ const ExamPage = () => {
     };
 
     const handleSubmit = async () => {
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY || window._GEMINI_API_KEY;
-        if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-            alert('APIキーが設定されていません。');
-            return;
-        }
+        setShowConfirmModal(false);
 
-        setShowConfirmModal(false); // Close modal
+        // -- Fake progress animation system --
+        // targetRef holds the "real" progress ceiling from the backend.
+        // The interval slowly crawls the displayed value toward it.
+        const targetRef = { current: 10 };
+        const displayRef = { current: 0 };
+        const messageStages = [
+            { at: 15, text: '解答データを整理中...' },
+            { at: 25, text: '解答データを分析中...' },
+            { at: 35, text: '模範解答と照合中...' },
+            { at: 50, text: '各問題の採点結果を分析中...' },
+            { at: 65, text: '弱点ポイントを洗い出し中...' },
+            { at: 80, text: 'フィードバックを生成中...' },
+            { at: 90, text: '全体の総評を生成中...' },
+        ];
+        let lastMsgIdx = -1;
+
+        const fakeInterval = setInterval(() => {
+            const target = targetRef.current;
+            const current = displayRef.current;
+            
+            if (current < target) {
+                // Crawl speed: faster when far from target, slower when close
+                const remaining = target - current;
+                const step = Math.max(0.3, remaining * 0.08);
+                const next = Math.min(current + step, target);
+                displayRef.current = next;
+                setGradingProgressValue(Math.round(next));
+
+                // Show stage messages based on displayed progress
+                for (let i = messageStages.length - 1; i >= 0; i--) {
+                    if (next >= messageStages[i].at && i > lastMsgIdx) {
+                        lastMsgIdx = i;
+                        setGradingProgress(messageStages[i].text);
+                        addLog(messageStages[i].text);
+                        break;
+                    }
+                }
+            }
+        }, 300);
 
         try {
             setGrading(true);
             setGradingProgressValue(0);
             setLogs(['採点を開始します...']);
-
-            // Process images for grading
-            let images = [];
-            if (rawImagesForGrading && rawImagesForGrading.length > 0) {
-                addLog("Step 1: 既にロード済みの画像を使用します（メモリ節約）。");
-                images = rawImagesForGrading;
-                setGradingProgressValue(20); // 既に画像がある場合は20%まで進める
-            } else {
-                setGradingProgress("PDFを画像に変換中...");
-                addLog("Step 1: 採点用にPDFを読み込み中...");
-                images = await import('../utils/pdfUtils').then(m => m.convertPdfToImages(
-                    exam.pdfPath, 
-                    (msg) => addLog(msg),
-                    (p) => setGradingProgressValue(Math.round(p * 0.2)) // 0-20%
-                ));
-            }
-
-            setGradingProgress("AIによる採点を実行中...");
-            addLog("Step 2: 採点データを送信中...");
+            setGradingProgress("解答を送信中...");
+            addLog("採点データをサーバーに送信中...");
 
             // Format answers for submission (join arrays with comma)
             const formattedAnswers = Object.entries(answers).reduce((acc, [key, val]) => {
@@ -280,26 +324,29 @@ const ExamPage = () => {
                 return acc + (section.questions?.reduce((qAcc, q) => qAcc + (q.points || 0), 0) || 0);
             }, 0) || examData.maxScore || 100;
 
-            let result;
-            try {
-                // Including fullMaxScore for proportional border calculation
-                const { gradeExamWithGemini } = await import('../services/geminiService');
-                result = await gradeExamWithGemini(apiKey, examData, formattedAnswers, images, fullMaxScore, (val) => {
-                    if (val < 100) {
-                        // AI採点の各セクション進捗を 20% 〜 90% にマッピング
-                        setGradingProgressValue(20 + Math.round(val * 0.7));
-                    } else {
-                        // 100% (採点完了直後) は 90% として止めておき、総評生成中であることを示す
-                        setGradingProgress('AI先生の総評を生成中...');
-                        setGradingProgressValue(90);
-                        addLog("採点完了。AI先生が全体の総評を生成しています...");
+            // Start the fake crawl toward 85% (will be overridden by real progress)
+            targetRef.current = 85;
+
+             let result;
+             try {
+                 result = await gradeExamWithGemini(examData, formattedAnswers, signedPdfUrl || exam.pdfPath, fullMaxScore, (val) => {
+                    // Real progress from backend: update the target ceiling
+                    const realValue = 10 + Math.round(val * 0.85);
+                    targetRef.current = Math.max(targetRef.current, realValue);
+                    if (val >= 90) {
+                        setGradingProgress('全体の総評を生成中...');
+                        addLog("採点完了。全体の総評を生成しています...");
                     }
                 });
+                // Done: jump to 100%
+                targetRef.current = 100;
+                displayRef.current = 100;
                 setGradingProgressValue(100);
-                console.log("Grading Result Raw:", result);
             } catch (apiError) {
                 console.error("API Error:", apiError);
                 throw new Error(`API Error: ${apiError.message}`);
+            } finally {
+                clearInterval(fakeInterval);
             }
 
             if (!result) {
@@ -313,6 +360,9 @@ const ExamPage = () => {
             sessionStorage.removeItem(`exam_timer_started_${exam.id}`);
             sessionStorage.removeItem(`exam_time_remaining_${exam.id}`);
 
+            if (!user) {
+                localStorage.setItem('smashai_guest_graded', 'true');
+            }
             setGrading(false);
             navigate('/result', {
                 state: {
@@ -321,14 +371,17 @@ const ExamPage = () => {
                     facultyName,
                     examId: exam.id,
                     examSubject: exam.subject,
-                    examStructure: examData?.structure || [], // Pass section-level master data
+                    examYear: exam.year,
+                    examDurationMinutes: exam.duration_minutes,
+                    examStructure: examData?.structure || [],
                     customLayout: examData?.custom_layout || exam?.custom_layout || [],
                     answers: formattedAnswers,
-                    pdfPath: exam.pdfPath, // Added to allow viewing PDF from ResultPage
-                    isNewResult: true // Flag to indicate this is a new result that needs saving
+                    pdfPath: exam.pdfPath,
+                    isNewResult: true
                 }
             });
         } catch (error) {
+            clearInterval(fakeInterval);
             console.error("Submit Error:", error);
             setGrading(false);
             addLog(`エラー発生: ${error.message}`);
@@ -368,7 +421,7 @@ const ExamPage = () => {
                     </button>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <h2 style={{ fontSize: '0.95rem', color: 'var(--color-accent-primary)', lineHeight: 1.2, margin: 0 }}>
-                            {universityName || exam?.university || '大学'}
+                            {universityName || exam?.university || '大学'} {facultyName || exam?.faculty || ''}
                         </h2>
                         <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
                             {exam?.year || ''}年 {exam?.subject || ''}
@@ -387,7 +440,7 @@ const ExamPage = () => {
                             fontFamily: 'monospace',
                             fontSize: '1.1rem',
                             padding: '0.2rem 0.6rem',
-                            borderRadius: '20px',
+                            borderRadius: '2px',
                             background: 'rgba(255,255,255,0.6)',
                             border: '1px solid currentColor'
                         }}>
@@ -413,8 +466,8 @@ const ExamPage = () => {
                                     gap: '0.3rem'
                                 }}
                                 onClick={() => {
-                                    if (exam?.pdfPath || exam?.pdf_path) {
-                                        window.open(exam.pdfPath || exam.pdf_path, '_blank');
+                                    if (signedPdfUrl || exam?.pdfPath || exam?.pdf_path) {
+                                        window.open(signedPdfUrl || exam.pdfPath || exam.pdf_path, '_blank');
                                     } else {
                                         alert("PDFのパスが見つかりません。");
                                     }
@@ -450,9 +503,10 @@ const ExamPage = () => {
             }}>
                 <div style={{
                     display: 'flex',
-                    background: '#f1f5f9',
+                    background: 'var(--color-bg-secondary)',
                     padding: '2px',
-                    borderRadius: '8px'
+                    border: '1px solid var(--color-silver-light)',
+                    borderRadius: '2px'
                 }}>
                     <button
                         onClick={() => setActiveTab('pdf')}
@@ -461,9 +515,9 @@ const ExamPage = () => {
                             flex: 1,
                             padding: '0.5rem',
                             border: 'none',
-                            borderRadius: '6px',
-                            background: activeTab === 'pdf' ? 'white' : 'transparent',
-                            color: activeTab === 'pdf' ? 'var(--color-accent-primary)' : 'var(--color-text-secondary)',
+                            borderRadius: '2px',
+                            background: activeTab === 'pdf' ? 'var(--color-accent-primary)' : 'transparent',
+                            color: activeTab === 'pdf' ? 'white' : 'var(--color-text-secondary)',
                             fontWeight: activeTab === 'pdf' ? '700' : '500',
                             fontSize: '0.85rem',
                             cursor: 'pointer',
@@ -481,9 +535,9 @@ const ExamPage = () => {
                             flex: 1,
                             padding: '0.5rem',
                             border: 'none',
-                            borderRadius: '6px',
-                            background: activeTab === 'answer' ? 'white' : 'transparent',
-                            color: activeTab === 'answer' ? 'var(--color-accent-primary)' : 'var(--color-text-secondary)',
+                            borderRadius: '2px',
+                            background: activeTab === 'answer' ? 'var(--color-accent-primary)' : 'transparent',
+                            color: activeTab === 'answer' ? 'white' : 'var(--color-text-secondary)',
                             fontWeight: activeTab === 'answer' ? '700' : '500',
                             fontSize: '0.85rem',
                             cursor: 'pointer',
@@ -531,7 +585,7 @@ const ExamPage = () => {
                             </div>
                         ) : (
                             <iframe
-                                src={exam?.pdfPath || exam?.pdf_path}
+                                src={signedPdfUrl || exam?.pdfPath || exam?.pdf_path}
                                 style={{ width: '100%', height: '100%', border: 'none' }}
                                 title="Exam PDF"
                             />
@@ -568,22 +622,21 @@ const ExamPage = () => {
                             padding: '2rem'
                         }}>
                             <div style={{ textAlign: 'center', maxWidth: '320px' }}>
-                                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⏱️</div>
-                                <h2 style={{ fontSize: '1.3rem', marginBottom: '1.5rem', color: '#1e293b' }}>
+                                <h2 style={{ fontSize: '1.3rem', marginBottom: '1.5rem', color: 'var(--color-text-primary)' }}>
                                     試験を開始する前に
                                 </h2>
                                 <div style={{
-                                    background: '#f8fafc',
+                                    background: 'var(--color-bg-secondary)',
                                     padding: '1.5rem',
-                                    borderRadius: '12px',
+                                    borderRadius: '2px',
                                     marginBottom: '2rem',
                                     textAlign: 'left',
-                                    border: '1px solid #e2e8f0'
+                                    border: 'var(--border-glass)'
                                 }}>
-                                    <p style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '1rem', fontWeight: '600' }}>
+                                    <p style={{ fontSize: '0.9rem', color: 'var(--color-text-primary)', marginBottom: '1rem', fontWeight: '600' }}>
                                         以下を確認してください：
                                     </p>
-                                    <ul style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: '1.8', paddingLeft: '1.2rem', margin: 0 }}>
+                                    <ul style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', lineHeight: '1.8', paddingLeft: '1.2rem', margin: 0 }}>
                                         <li>筆記用具の準備</li>
                                         <li>静かな環境の確保</li>
                                         <li>制限時間は{exam?.duration_minutes || 60}分です</li>
@@ -598,8 +651,8 @@ const ExamPage = () => {
                                         padding: '1rem 2rem',
                                         fontSize: '1.1rem',
                                         fontWeight: 'bold',
-                                        background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                                        boxShadow: '0 4px 15px rgba(59, 130, 246, 0.3)'
+                                        background: 'var(--color-accent-primary)',
+                                        boxShadow: 'none'
                                     }}
                                 >
                                     試験を開始
@@ -673,7 +726,7 @@ const ExamPage = () => {
                                                                 resize: 'vertical',
                                                                 background: 'white',
                                                                 border: '1px solid #e2e8f0',
-                                                                borderRadius: '8px',
+                                                                borderRadius: '2px',
                                                                 fontFamily: 'inherit',
                                                                 opacity: !timerStarted ? 0.5 : 1,
                                                                 cursor: !timerStarted ? 'not-allowed' : 'text'
@@ -718,7 +771,7 @@ const ExamPage = () => {
                                     <span>採点中...</span>
                                 </>
                             ) : (
-                                "AIで採点する"
+                                "提出して採点する"
                             )}
                         </button>
                     </div>
@@ -737,12 +790,12 @@ const ExamPage = () => {
                     zIndex: 2000,
                     padding: '1rem'
                 }}>
-                    <div className="glass-panel" style={{ background: 'white', padding: '2rem', maxWidth: '400px', width: '100%', textAlign: 'center' }}>
-                        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📤</div>
+                    <div className="glass-panel" style={{ background: 'white', padding: '2rem', maxWidth: '400px', width: '100%', textAlign: 'center', borderRadius: '2px' }}>
+
                         <h3 style={{ marginBottom: '1rem' }}>試験を終了して採点しますか？</h3>
                         <p style={{ color: 'var(--color-text-secondary)', marginBottom: '2rem', fontSize: '0.9rem' }}>
                             一度提出すると、解答を修正することはできません。<br />
-                            AI先生が採点と詳細な分析を開始します。
+                            採点と詳細な分析を開始します。
                         </p>
                         <div style={{ display: 'flex', gap: '1rem' }}>
                             <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowConfirmModal(false)}>
@@ -757,19 +810,18 @@ const ExamPage = () => {
             )}
             {/* Log & Progress Overlay */}
             {(logs.length > 0 || grading) && (
-                <div style={{
+                <div className="grading-overlay" style={{
                     position: 'fixed',
                     bottom: '24px',
                     right: '24px',
-                    background: 'rgba(15, 23, 42, 0.95)',
-                    backdropFilter: 'blur(12px)',
-                    color: 'white',
+                    background: 'var(--color-bg-primary)',
+                    color: 'var(--color-text-primary)',
                     padding: '1.5rem',
-                    borderRadius: '24px',
+                    borderRadius: '2px',
                     width: '360px',
-                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+                    boxShadow: 'var(--shadow-card)',
                     zIndex: 3000,
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    border: 'var(--border-glass)',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '1rem'
@@ -777,20 +829,20 @@ const ExamPage = () => {
                     {/* Progress Section (Always Visible at Top) */}
                     {grading && (
                         <div style={{ 
-                            borderBottom: '1px solid rgba(255, 255, 255, 0.1)', 
+                            borderBottom: '1px solid var(--border-glass)', 
                             paddingBottom: '1rem' 
                         }}>
                             <div style={{ 
                                 fontWeight: '900', 
                                 fontSize: '0.85rem', 
                                 marginBottom: '0.75rem', 
-                                color: '#10b981', 
+                                color: 'var(--color-accent-primary)', 
                                 display: 'flex', 
                                 justifyContent: 'space-between',
                                 alignItems: 'center'
                             }}>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                    <div className="w-2 h-2 rounded-full" style={{ background: 'var(--color-accent-primary)' }}></div>
                                     {gradingProgress || '採点中...'}
                                 </span>
                                 <span style={{ fontFamily: 'monospace', fontSize: '1rem' }}>{gradingProgressValue}%</span>
@@ -799,14 +851,14 @@ const ExamPage = () => {
                             <div style={{ 
                                 height: '6px', 
                                 width: '100%', 
-                                background: 'rgba(255,255,255,0.1)', 
-                                borderRadius: '3px', 
+                                background: 'var(--color-silver-light)', 
+                                borderRadius: '0px', 
                                 overflow: 'hidden'
                             }}>
                                 <div style={{ 
                                     height: '100%', 
                                     width: `${gradingProgressValue}%`, 
-                                    background: 'linear-gradient(90deg, #10b981 0%, #34d399 100%)',
+                                    background: 'var(--color-accent-primary)',
                                     transition: 'width 0.4s ease-out'
                                 }}></div>
                             </div>
@@ -821,7 +873,7 @@ const ExamPage = () => {
                     }} className="custom-scrollbar">
                         <div style={{ 
                             fontSize: '0.65rem', 
-                            color: 'rgba(255,255,255,0.4)', 
+                            color: 'var(--color-text-secondary)', 
                             marginBottom: '0.5rem', 
                             fontWeight: '900', 
                             textTransform: 'uppercase', 
@@ -837,7 +889,7 @@ const ExamPage = () => {
                                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                 lineHeight: '1.4'
                             }}>
-                                <span style={{ color: '#10b981', marginRight: '8px', fontWeight: 'bold' }}>&gt;</span>
+                                <span style={{ color: 'var(--color-accent-primary)', marginRight: '8px', fontWeight: 'bold' }}>&gt;</span>
                                 {log}
                             </div>
                         ))}

@@ -108,6 +108,8 @@ export const getExamsForUniversity = async (universityId) => {
                 type: exam.type,
                 pdfPath: exam.pdf_path,
                 maxScore: exam.max_score,
+                score_cap: exam.score_cap,
+                passing_lines: exam.passing_lines,
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
                 duration_minutes: exam.duration_minutes,
@@ -183,6 +185,8 @@ export const getUniversities = async () => {
                 type: exam.type,
                 pdfPath: exam.pdf_path,
                 maxScore: exam.max_score,
+                score_cap: exam.score_cap,
+                passing_lines: exam.passing_lines,
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
                 duration_minutes: exam.duration_minutes

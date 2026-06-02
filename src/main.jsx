@@ -4,6 +4,11 @@ import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext'
 
+if (import.meta.env.PROD) {
+    console.log = () => {};
+    console.warn = () => {};
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthProvider>

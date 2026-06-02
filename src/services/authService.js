@@ -1,7 +1,7 @@
 import { supabase } from './supabaseClient'
 
 // サインアップ
-export const signUp = async (email, password, username, firstChoiceUniversity, grade) => {
+export const signUp = async (email, password, username, firstChoiceUniversity, grade, termsAgreed = false) => {
     const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -19,7 +19,8 @@ export const signUp = async (email, password, username, firstChoiceUniversity, g
                     username,
                     first_choice_university: firstChoiceUniversity,
                     grade,
-                    approval_status: 'pending'
+                    approval_status: 'pending',
+                    terms_agreed_at: termsAgreed ? new Date().toISOString() : null
                 }
             ])
         if (profileError) console.error('Profile creation error:', profileError)

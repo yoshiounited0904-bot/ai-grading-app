@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData, duplicateAdminExam } from '../services/adminExamService';
+import { getAdminExams, deleteAdminExam, updateAdminComment, updateAdminFields, importMockData, duplicateAdminExam, importAogakuData, deleteAdminExamsBulk } from '../services/adminExamService';
+
 import { extractSectionVocabulary } from '../services/adminGeminiService';
 import { geminiQueue } from '../utils/promiseQueue';
+import AdminAnnouncements from '../components/AdminAnnouncements';
+import AdminFeedbacks from '../components/AdminFeedbacks';
 
 function AdminDashboard() {
     const [exams, setExams] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState('exams');
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -33,9 +37,57 @@ function AdminDashboard() {
                 console.error('Error deleting exam:', error);
                 alert('削除に失敗しました。');
             } else {
+                setSelectedExams(prev => {
+                    const next = new Set(prev);
+                    next.delete(exam.id);
+                    return next;
+                });
                 fetchExams();
             }
         }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedExams.size === 0) return;
+        if (window.confirm(`選択した${selectedExams.size}件の試験データを本当に削除しますか？\n削除すると元に戻せません。`)) {
+            setLoading(true);
+            const { error } = await deleteAdminExamsBulk(Array.from(selectedExams));
+            if (error) {
+                console.error('Error in bulk delete:', error);
+                alert('一括削除に失敗しました。');
+            } else {
+                setSelectedExams(new Set());
+                fetchExams();
+            }
+            setLoading(false);
+        }
+    };
+
+    const handleToggleSelect = (examId) => {
+        setSelectedExams(prev => {
+            const next = new Set(prev);
+            if (next.has(examId)) {
+                next.delete(examId);
+            } else {
+                next.add(examId);
+            }
+            return next;
+        });
+    };
+
+    const handleSelectAll = (universityExams) => {
+        const allIds = universityExams.map(e => e.id);
+        const allSelected = allIds.every(id => selectedExams.has(id));
+        
+        setSelectedExams(prev => {
+            const next = new Set(prev);
+            if (allSelected) {
+                allIds.forEach(id => next.delete(id));
+            } else {
+                allIds.forEach(id => next.add(id));
+            }
+            return next;
+        });
     };
 
     const handleCopy = async (exam) => {
@@ -98,13 +150,24 @@ function AdminDashboard() {
 
         const currentIndex = statuses.indexOf(normalizedStatus);
         const nextStatus = statuses[(currentIndex + 1) % statuses.length];
+        
+        // Auto-sync is_published: true if verified, false otherwise
+        const nextPublished = nextStatus === 'verified';
 
-        const { error } = await updateAdminFields(examId, { master_status: nextStatus });
+        const { error } = await updateAdminFields(examId, { 
+            master_status: nextStatus,
+            is_published: nextPublished
+        });
+
         if (error) {
             console.error('Error updating status:', error);
             alert('更新に失敗しました。');
         } else {
-            setExams(prev => prev.map(e => e.id === examId ? { ...e, master_status: nextStatus } : e));
+            setExams(prev => prev.map(e => e.id === examId ? { 
+                ...e, 
+                master_status: nextStatus,
+                is_published: nextPublished
+            } : e));
         }
     };
 
@@ -197,6 +260,7 @@ function AdminDashboard() {
 
     const [batchProcessing, setBatchProcessing] = useState(false);
     const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+    const [selectedExams, setSelectedExams] = useState(new Set());
 
     const handleBatchVocabularyExtraction = async () => {
         const englishExams = exams.filter(e => 
@@ -217,8 +281,6 @@ function AdminDashboard() {
         setBatchProcessing(true);
         setBatchProgress({ current: 0, total: englishExams.length });
 
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
-
         for (let i = 0; i < englishExams.length; i++) {
             const exam = englishExams[i];
             console.log(`[BatchVocab] Processing exam: ${exam.id}`);
@@ -233,7 +295,7 @@ function AdminDashboard() {
                         const pdfPath = section.question_pdf_path || exam.pdf_path;
                         if (pdfPath) {
                             console.log(`[BatchVocab] Extracting vocab for ${exam.id} Section ${sIdx + 1}`);
-                            const vocab = await geminiQueue.add(() => extractSectionVocabulary(apiKey, [pdfPath]));
+                            const vocab = await geminiQueue.add(() => extractSectionVocabulary([pdfPath]));
                             newStructure[sIdx] = { ...section, vocabulary: vocab };
                             changed = true;
                         }
@@ -264,6 +326,33 @@ function AdminDashboard() {
         }
     };
 
+    const handleImportAogaku = async () => {
+        if (window.confirm('Obsidianの最新データ（青学42件）をSupabaseに一括登録します。よろしいですか？')) {
+            setLoading(true);
+            const count = await importAogakuData();
+            alert(`${count}件のデータを登録しました！`);
+            fetchExams();
+        }
+    };
+
+    const handleFixSubjects = async () => {
+        if (!window.confirm('科目名から(コピー)を削除し、青学のデータをすべて「公開中」に変更しますか？')) return;
+        setLoading(true);
+        let updated = 0;
+        for (const exam of exams) {
+            if (exam.university === '青山学院大学') {
+                const newSubject = exam.subject ? exam.subject.replace(/\(コピー[0-9]*\)/g, '').trim() : exam.subject;
+                const { error } = await updateAdminFields(exam.id, { 
+                    subject: newSubject,
+                    is_published: true
+                });
+                if (!error) updated++;
+            }
+        }
+        alert(`青学のデータ ${updated}件 を修正・公開状態にしました！`);
+        fetchExams();
+    };
+
     return (
         <div className="min-h-screen bg-indigo-50/30 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto">
@@ -274,21 +363,36 @@ function AdminDashboard() {
                             <span className="text-xs bg-navy-blue text-white px-2 py-1 rounded-full font-mono">v2.1</span>
                         </h1>
                         <div className="flex gap-6 mt-2 border-b border-gray-200">
-                        <button className="pb-2 px-1 border-b-2 border-navy-blue font-bold text-navy-blue">
+                        <button 
+                            onClick={() => setActiveTab('exams')}
+                            className={`pb-2 px-1 border-b-2 font-bold transition-all ${activeTab === 'exams' ? 'border-navy-blue text-navy-blue' : 'border-transparent text-gray-400 hover:text-navy-blue'}`}
+                        >
                             試験マスター管理
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('announcements')}
+                            className={`pb-2 px-1 border-b-2 font-bold transition-all ${activeTab === 'announcements' ? 'border-navy-blue text-navy-blue' : 'border-transparent text-gray-400 hover:text-navy-blue'}`}
+                        >
+                            📢 お知らせ管理
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('feedbacks')}
+                            className={`pb-2 px-1 border-b-2 font-bold transition-all ${activeTab === 'feedbacks' ? 'border-navy-blue text-navy-blue' : 'border-transparent text-gray-400 hover:text-navy-blue'}`}
+                        >
+                            📨 お問い合わせ管理
                         </button>
                         <button 
                             onClick={() => {
                                 console.log("Navigating to Banners...");
                                 navigate('/admin/banners');
                             }}
-                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue"
+                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue border-b-2 border-transparent"
                         >
                             広告運用管理 (CMS)
                         </button>
                         <button 
                             onClick={() => navigate('/admin/users')}
-                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue"
+                            className="pb-2 px-1 text-gray-400 hover:text-navy-blue border-b-2 border-transparent"
                         >
                             ユーザー承認管理
                         </button>
@@ -316,6 +420,32 @@ function AdminDashboard() {
                         >
                             <span className="text-lg">📚</span> 英単語を一括抽出
                         </button>
+
+                        <button
+                            onClick={handleFixSubjects}
+                            disabled={loading}
+                            className="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-all flex items-center gap-2 text-sm"
+                        >
+                            <span className="text-lg">🔧</span> 青学一括公開＆コピー修復
+                        </button>
+
+                        <button
+                            onClick={handleImportAogaku}
+                            disabled={loading}
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-all flex items-center gap-2 text-sm"
+                        >
+                            <span className="text-lg">🔄</span> Obsidianデータ同期(117件)
+                        </button>
+
+                        {selectedExams.size > 0 && (
+                            <button
+                                onClick={handleBulkDelete}
+                                disabled={loading}
+                                className="bg-red-500 hover:bg-red-600 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2 animate-fade-in"
+                            >
+                                <span className="text-lg">🗑️</span> 選択項目を削除 ({selectedExams.size})
+                            </button>
+                        )}
                         <Link
                             to="/admin/exam/new"
                             className="bg-navy-blue hover:bg-navy-light text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
@@ -329,6 +459,10 @@ function AdminDashboard() {
                     <div className="flex justify-center my-20">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-navy-blue"></div>
                     </div>
+                ) : activeTab === 'announcements' ? (
+                    <AdminAnnouncements />
+                ) : activeTab === 'feedbacks' ? (
+                    <AdminFeedbacks />
                 ) : exams.length === 0 ? (
                     <div className="bg-white rounded-xl shadow-md p-10 text-center flex flex-col items-center gap-4">
                         <p className="text-gray-500 mb-2">登録されている試験データがありません。</p>
@@ -366,7 +500,7 @@ function AdminDashboard() {
                                 (a.faculty || "").localeCompare(b.faculty || "", 'ja')
                             );
                             return (
-                            <div key={university} className="bg-white/50 backdrop-blur-sm rounded-3xl p-6 shadow-xl shadow-indigo-100/50 border-2 border-indigo-100/30 transition-all">
+                            <div key={university} className="bg-white/50 backdrop-blur-sm rounded-lg p-6 shadow-xl shadow-indigo-100/50 border-2 border-indigo-100/30 transition-all">
                                 <div className="flex items-center gap-4 mb-6">
                                     <div className="w-1.5 h-8 bg-navy-blue rounded-full"></div>
                                     <h2 className="text-2xl font-black text-navy-blue tracking-tight">
@@ -380,6 +514,14 @@ function AdminDashboard() {
                                     <table className="min-w-full border-separate border-spacing-y-4">
                                         <thead>
                                             <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
+                                                <th className="px-6 py-2 text-center">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                        checked={universityExams.length > 0 && universityExams.every(e => selectedExams.has(e.id))}
+                                                        onChange={() => handleSelectAll(universityExams)}
+                                                    />
+                                                </th>
                                                 <th className="px-6 py-2 text-left">学部 / ID</th>
                                                 <th className="px-6 py-2 text-left">年度・科目</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">公開設定</th>
@@ -391,9 +533,18 @@ function AdminDashboard() {
                                         </thead>
                                         <tbody>
                                             {universityExams.map((exam) => (
-                                                <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''}`}>
+                                                <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''} ${selectedExams.has(exam.id) ? 'bg-indigo-50/50' : ''}`}>
+                                                    {/* Checkbox */}
+                                                    <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                            checked={selectedExams.has(exam.id)}
+                                                            onChange={() => handleToggleSelect(exam.id)}
+                                                        />
+                                                    </td>
                                                     {/* Faculty & ID */}
-                                                    <td className="bg-white px-6 py-5 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[200px]">
+                                                    <td className="bg-white px-6 py-5 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[200px]">
                                                         <div className="flex flex-col">
                                                             <span className="text-lg font-black text-navy-blue leading-tight">{exam.faculty}</span>
                                                             <span className="text-[10px] font-mono mt-1 text-gray-300"># {exam.id}</span>

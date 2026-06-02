@@ -10,15 +10,179 @@ import { isAdminEmail } from '../config/adminConfig';
 import { updateAdminFields, uploadAnalysisImage, getAdminExamById } from '../services/adminExamService';
 import { getAdminBanners } from '../services/adminBannerService';
 
+const EssayGradingDetail = ({ item }) => {
+    const { essayResult, scoringElements } = item;
+    const [openElements, setOpenElements] = useState({});
+    const [showGrammar, setShowGrammar] = useState(true);
+
+    if (!essayResult) return null;
+
+    const toggleElement = (elId) => {
+        setOpenElements(prev => ({
+            ...prev,
+            [elId]: !prev[elId]
+        }));
+    };
+
+    let contentSum = 0;
+    let logicSum = 0;
+    const elementResults = essayResult.elementResults || [];
+    const grammarErrors = essayResult.grammarErrors || [];
+    const overallComment = essayResult.overallComment || "";
+
+    elementResults.forEach(res => {
+        const el = (scoringElements || []).find(e => e.id === res.elementId);
+        if (!el) return;
+        let score = 0;
+        if (res.status === 'full') score = el.points;
+        else if (res.status === 'partial' && el.allowPartial) score = el.points / 2;
+
+        if (el.type === 'content') contentSum += score;
+        else if (el.type === 'logic') logicSum += score;
+    });
+
+    const grammarCount = grammarErrors.length;
+
+    return (
+        <div className="essay-grading-detail" style={{ marginTop: '1rem', background: '#fff', borderRadius: '2px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+            <div style={{ padding: '1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b' }}>英作文 採点内訳</span>
+                <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', fontWeight: '700', flexWrap: 'wrap' }}>
+                    <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '2px' }}>内容: {contentSum.toFixed(1)}点</span>
+                    <span style={{ background: '#f3e8ff', color: '#6b21a8', padding: '0.2rem 0.5rem', borderRadius: '2px' }}>論理: {logicSum.toFixed(1)}点</span>
+                    <span style={{ background: '#ffe4e6', color: '#be123c', padding: '0.2rem 0.5rem', borderRadius: '2px' }}>文法減点: -{grammarCount}点</span>
+                </div>
+            </div>
+
+            <div style={{ padding: '0.75rem' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '0.5rem', paddingLeft: '0.25rem' }}>採点基準ごとの結果</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {(scoringElements || []).map((el) => {
+                        const res = elementResults.find(r => r.elementId === el.id) || { status: 'none', reason: '判定データなし' };
+                        const isOpen = !!openElements[el.id];
+
+                        let mark = '✕';
+                        let statusColor = '#ef4444';
+                        let bgStatus = '#fef2f2';
+                        let scoreText = '0点';
+                        if (res.status === 'full') {
+                            mark = '◯';
+                            statusColor = '#10b981';
+                            bgStatus = '#ecfdf5';
+                            scoreText = `${el.points}点`;
+                        } else if (res.status === 'partial') {
+                            mark = '△';
+                            statusColor = '#f59e0b';
+                            bgStatus = '#fffbeb';
+                            scoreText = el.allowPartial ? `${el.points / 2}点 (部分点)` : '0点';
+                        }
+
+                        const typeLabel = el.type === 'content' ? '内容' : '論理';
+                        const typeBg = el.type === 'content' ? '#e0f2fe' : '#f3e8ff';
+                        const typeColor = el.type === 'content' ? '#0369a1' : '#6b21a8';
+
+                        return (
+                            <div key={el.id} style={{ border: '1px solid #f1f5f9', borderRadius: '2px', overflow: 'hidden' }}>
+                                <div 
+                                    onClick={() => toggleElement(el.id)}
+                                    style={{ 
+                                        display: 'flex', 
+                                        justifyContent: 'space-between', 
+                                        alignItems: 'center', 
+                                        padding: '0.65rem 0.75rem', 
+                                        background: bgStatus, 
+                                        cursor: 'pointer',
+                                        userSelect: 'none'
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+                                        <span style={{ fontSize: '1rem', color: statusColor, fontWeight: '800' }}>{mark}</span>
+                                        <span style={{ background: typeBg, color: typeColor, fontSize: '0.65rem', fontWeight: '800', padding: '0.1rem 0.3rem', borderRadius: '2px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                            {typeLabel}
+                                        </span>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {el.description}
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '0.5rem' }}>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: statusColor }}>{scoreText}</span>
+                                        <span style={{ fontSize: '0.6rem', color: '#94a3b8', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▼</span>
+                                    </div>
+                                </div>
+
+                                {isOpen && (
+                                    <div style={{ padding: '0.75rem', background: '#fff', borderTop: '1px solid #f8fafc', fontSize: '0.75rem', color: '#475569', lineHeight: '1.5' }}>
+                                        <strong>判定理由:</strong> {res.reason}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {grammarCount > 0 && (
+                <div style={{ padding: '0 0.75rem 0.75rem 0.75rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
+                    <div 
+                        onClick={() => setShowGrammar(!showGrammar)}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none', marginBottom: '0.5rem' }}
+                    >
+                        <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                            <span>指摘された文法エラー ({grammarCount})</span>
+                        </div>
+                        <span style={{ fontSize: '0.6rem', color: '#94a3b8', transform: showGrammar ? 'rotate(180deg)' : 'none' }}>▼</span>
+                    </div>
+
+                    {showGrammar && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
+                            {grammarErrors.map((err, idx) => (
+                                <div key={idx} style={{ background: '#fff1f2', border: '1px solid #ffe4e6', borderRadius: '2px', padding: '0.5rem 0.75rem', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                    <div style={{ color: '#be123c', fontWeight: '700' }}>
+                                        <span style={{ textDecoration: 'line-through', marginRight: '0.5rem' }}>{err.error}</span>
+                                        <span style={{ color: '#0f766e', fontWeight: '800' }}>→ {err.correction}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {overallComment && (
+                <div style={{ padding: '0.75rem', background: '#f8fafc', borderTop: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#334155', lineHeight: '1.6' }}>
+                    <strong>全体総評:</strong> {overallComment}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const ResultPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { result: initialResult, universityName, facultyName, examId, examSubject, answers, examStructure: initialStructure, customLayout: initialCustomLayout, isNewResult, isDesignMode: incomingDesignMode } = location.state || {};
+    const { result: initialResult, universityName, facultyName, examSubject, examYear, examDurationMinutes, customLayout: initialCustomLayout, isNewResult, isDesignMode: incomingDesignMode } = location.state || {};
     const { user, profile } = useAuth();
     const isAdmin = user && (isAdminEmail(user.email) || profile?.role === 'admin');
 
+    // Extract answers and embedded metadata (examId, examStructure) if accessing from Dashboard (past results)
+    const rawAnswers = location.state?.answers || [];
+    const actualAnswers = rawAnswers.items || rawAnswers;
+    const initialStructure = location.state?.examStructure || rawAnswers.examStructure;
+    const examId = location.state?.examId || rawAnswers.examId;
+
     // Local state for editable data to ensure instant feedback
-    const [resultData, setResultData] = useState(initialResult);
+    const [resultData, setResultData] = useState(() => {
+        if (!initialResult) return null;
+        return {
+            ...initialResult,
+            score: initialResult.score,
+            maxScore: typeof initialResult.maxScore !== 'undefined' ? initialResult.maxScore : initialResult.max_score,
+            passProbability: initialResult.passProbability || initialResult.pass_probability,
+            weaknessAnalysis: initialResult.weaknessAnalysis || initialResult.weakness_analysis,
+            questionFeedback: initialResult.questionFeedback || initialResult.question_feedback,
+            detailedAnalysis: initialResult.detailedAnalysis || initialResult.detailed_analysis
+        };
+    });
     const [currentStructure, setCurrentStructure] = useState(initialStructure || []);
     const [banners, setBanners] = useState([]);
 
@@ -41,17 +205,27 @@ const ResultPage = () => {
             <div className="container" style={{ padding: '2rem', textAlign: 'center' }}>
                 <h2>結果データが不正です</h2>
                 <p>採点結果の読み込みに失敗しました。</p>
-                <div style={{ background: '#f0f0f0', padding: '1rem', margin: '1rem 0', borderRadius: '8px', textAlign: 'left', fontSize: '0.8rem' }}>
-                    <strong>Debug Info:</strong>
-                    <pre>{JSON.stringify(location.state, null, 2)}</pre>
-                </div>
+                {isAdmin && (
+                    <div style={{ background: '#f0f0f0', padding: '1rem', margin: '1rem 0', borderRadius: '8px', textAlign: 'left', fontSize: '0.8rem' }}>
+                        <strong>Debug Info (管理者のみ表示):</strong>
+                        <pre>{JSON.stringify(location.state, null, 2)}</pre>
+                    </div>
+                )}
                 <button className="btn btn-primary" onClick={() => navigate('/')}>トップへ戻る</button>
             </div>
         );
     }
 
     const [chatInput, setChatInput] = useState('');
-    const [chatHistory, setChatHistory] = useState([]);
+    const [chatHistory, setChatHistory] = useState(() => {
+        if (!examId) return [];
+        try {
+            const stored = sessionStorage.getItem(`exam_chat_history_${examId}`);
+            return stored ? JSON.parse(stored) : [];
+        } catch {
+            return [];
+        }
+    });
     const [isChatting, setIsChatting] = useState(false);
     const [saved, setSaved] = useState(false);
     const [stats, setStats] = useState(null);
@@ -63,6 +237,15 @@ const ResultPage = () => {
     const [originalData, setOriginalData] = useState(null); // Backup for cancel
 
     const hasSavedRef = useRef(false);
+
+    useEffect(() => {
+        if (!examId || chatHistory.length === 0) return;
+        try {
+            sessionStorage.setItem(`exam_chat_history_${examId}`, JSON.stringify(chatHistory));
+        } catch {
+            // sessionStorage quota exceeded — ignore silently
+        }
+    }, [chatHistory, examId]);
 
     useEffect(() => {
         if (!examId) return;
@@ -130,7 +313,11 @@ const ResultPage = () => {
                         maxScore: resultData.maxScore,
                         passProbability: resultData.passProbability,
                         weaknessAnalysis: typeof resultData.weaknessAnalysis === 'string' ? resultData.weaknessAnalysis : JSON.stringify(resultData.weaknessAnalysis),
-                        answers: answers,
+                        answers: {
+                            items: actualAnswers,
+                            examId: examId,
+                            examStructure: currentStructure
+                        },
                         questionFeedback: resultData.questionFeedback
                     });
                     setSaved(true);
@@ -150,10 +337,14 @@ const ResultPage = () => {
             }
         };
         saveData();
-    }, [user, resultData, universityName, examSubject, answers, isNewResult]);
+    }, [user, resultData, universityName, examSubject, actualAnswers, isNewResult]);
 
     const handleChatSubmit = async (e) => {
         e.preventDefault();
+        if (!user) {
+            document.dispatchEvent(new CustomEvent('openAuthModal', { detail: { message: '質問チャットを利用するにはログインが必要です。' } }));
+            return;
+        }
         if (!chatInput.trim() || isChatting) return;
 
         const userMsg = chatInput;
@@ -162,8 +353,17 @@ const ResultPage = () => {
         setIsChatting(true);
 
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 || import.meta.env.VITE_GEMINI_API_KEY || window._GEMINI_API_KEY;
-            const response = await chatWithGemini(apiKey, userMsg, chatHistory, resultData);
+            const sectionSummary = currentStructure.map(s => ({
+                id: s.id,
+                title: s.title || s.name || s.id,
+                questionCount: s.questions?.length || 0,
+                totalPoints: s.allocatedPoints || s.questions?.reduce((sum, q) => sum + (q.points || 0), 0) || 0
+            }));
+            const response = await chatWithGemini(
+                userMsg, chatHistory, resultData,
+                { universityName, facultyName, examSubject, examYear, examDurationMinutes, sectionSummary },
+                location.state?.pdfPath || null
+            );
             setChatHistory(prev => [...prev, { role: 'ai', text: response }]);
         } catch (err) {
             console.error("Chat error:", err);
@@ -248,6 +448,12 @@ const ResultPage = () => {
         }
     };
 
+    const handleXShare = () => {
+        const text = `自動採点アプリで ${universityName || ''} ${facultyName || ''}の過去問を解きました！\n得点: ${resultData?.score} / ${resultData?.maxScore} 点\n合格可能性: ${resultData?.passProbability || '不明'}\n\n#大学受験 #過去問採点 #スマサイ\nhttps://smart-scoring.com`;
+        const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+        window.open(url, '_blank');
+    };
+
     const ContentBlockRenderer = ({ blocks, onUpdate, fieldName }) => {
         const handleFileChange = async (e, blockId) => {
             const file = e.target.files[0];
@@ -324,14 +530,13 @@ const ResultPage = () => {
                     <div style={{ 
                         background: '#6366f1', 
                         color: 'white', 
-                        borderRadius: '12px', 
+                        borderRadius: '2px', 
                         padding: '0 8px', 
                         fontSize: '0.7rem', 
                         fontWeight: '700', 
                         display: 'flex', 
                         gap: '8px',
                         alignItems: 'center',
-                        boxShadow: '0 2px 8px rgba(99,102,241,0.4)',
                         zIndex: 21
                     }}>
                         <span style={{ fontSize: '1rem' }}>+</span> 
@@ -355,7 +560,7 @@ const ResultPage = () => {
                             position: 'relative', 
                             border: (isDesignMode && fieldName !== 'weakness') ? '1px dashed #6366f1' : 'none', 
                             padding: (isDesignMode && fieldName !== 'weakness') ? '0.5rem' : '0', 
-                            borderRadius: '8px',
+                            borderRadius: '2px',
                             margin: '0.5rem 0'
                         }}>
                             {isDesignMode && fieldName !== 'weakness' && (
@@ -434,7 +639,7 @@ const ResultPage = () => {
                                             title="ここで文章を分割"
                                             style={{ position: 'absolute', top: 0, right: 0, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', opacity: 0.6, padding: '4px' }}
                                         >
-                                            ✂️
+                                            分割
                                         </button>
                                     )}
                                 </div>
@@ -443,7 +648,7 @@ const ResultPage = () => {
                             {block.type === 'image_left' && (
                                 <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
                                     <div style={{ flex: '0 0 200px', width: '200px' }}>
-                                        <img src={block.imageUrl} alt="Analysis" style={{ width: '100%', borderRadius: '8px', display: 'block', backgroundColor: '#f1f5f9', minHeight: '100px' }} />
+                                        <img src={block.imageUrl} alt="Analysis" style={{ width: '100%', borderRadius: '2px', display: 'block', backgroundColor: '#f1f5f9', minHeight: '100px' }} />
                                         {isDesignMode && fieldName !== 'weakness' && (
                                             <input type="file" accept="image/*" onChange={(e) => handleFileChange(e, block.id)} style={{ fontSize: '0.7rem', marginTop: '0.5rem', width: '100%' }} />
                                         )}
@@ -464,7 +669,7 @@ const ResultPage = () => {
 
                             {block.type === 'image_full' && (
                                 <div style={{ textAlign: 'center' }}>
-                                    <img src={block.imageUrl} alt="Analysis" style={{ width: '100%', borderRadius: '12px', display: 'block', backgroundColor: '#f1f5f9', minHeight: '100px' }} />
+                                    <img src={block.imageUrl} alt="Analysis" style={{ width: '100%', borderRadius: '2px', display: 'block', backgroundColor: '#f1f5f9', minHeight: '100px' }} />
                                     {isDesignMode && fieldName !== 'weakness' && (
                                         <input type="file" accept="image/*" onChange={(e) => handleFileChange(e, block.id)} style={{ fontSize: '0.7rem', marginTop: '0.5rem' }} />
                                     )}
@@ -472,11 +677,11 @@ const ResultPage = () => {
                             )}
 
                             {block.type === 'ad' && (
-                                <div style={{ position: 'relative', border: isDesignMode ? '2px dashed #6366f1' : 'none', borderRadius: '12px', padding: isDesignMode ? '1.5rem' : '0', background: isDesignMode ? 'rgba(99,102,241,0.02)' : 'none', transition: 'all 0.3s' }}>
+                                <div style={{ position: 'relative', border: isDesignMode ? '2px dashed #6366f1' : 'none', borderRadius: '2px', padding: isDesignMode ? '1.5rem' : '0', background: isDesignMode ? 'rgba(99,102,241,0.02)' : 'none', transition: 'all 0.3s' }}>
                                     {isDesignMode && (
                                         <div style={{ marginBottom: '1.5rem', borderBottom: '1px solid rgba(99,102,241,0.1)', paddingBottom: '1rem' }}>
                                             <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#6366f1', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                                <span style={{ background: '#6366f1', color: 'white', padding: '2px 6px', borderRadius: '4px' }}>AD</span> 広告ユニット設定
+                                                <span style={{ background: '#6366f1', color: 'white', padding: '2px 6px', borderRadius: '2px' }}>AD</span> 広告ユニット設定
                                             </div>
                                             
                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -488,7 +693,7 @@ const ResultPage = () => {
                                                             const next = blocks.map(b => b.id === block.id ? { ...b, content: { ...b.content, pageTarget: e.target.value, bannerId: null } } : b);
                                                             onUpdate(next);
                                                         }}
-                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.8rem', outline: 'none', background: 'white' }}
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '2px', border: '1px solid #e2e8f0', fontSize: '0.8rem', outline: 'none', background: 'white' }}
                                                     >
                                                         <option value="all">すべて</option>
                                                         <option value="result_inline">結果画面 (インライン)</option>
@@ -505,12 +710,12 @@ const ResultPage = () => {
                                                             const next = blocks.map(b => b.id === block.id ? { ...b, content: { ...b.content, bannerId: e.target.value || null } } : b);
                                                             onUpdate(next);
                                                         }}
-                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '8px', border: '1px solid #6366f1', color: '#6366f1', fontSize: '0.8rem', outline: 'none', background: 'white', fontWeight: '700' }}
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '2px', border: '1px solid #6366f1', color: '#6366f1', fontSize: '0.8rem', outline: 'none', background: 'white', fontWeight: '700' }}
                                                     >
                                                         <option value="">-- 自動配信を優先 --</option>
                                                         {banners.map(b => (
                                                             <option key={b.id} value={b.id}>
-                                                                {b.is_active ? '✅' : '❌'} {b.title} ({b.id.substring(0,6)})
+                                                                {b.is_active ? '◯' : '✕'} {b.title} ({b.id.substring(0,6)})
                                                             </option>
                                                         ))}
                                                     </select>
@@ -543,13 +748,13 @@ const ResultPage = () => {
                 <Inserter index={blocks.length} />
 
                 {isDesignMode && fieldName !== 'weakness' && blocks.length === 0 && (
-                    <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center', marginTop: '1rem', padding: '0.5rem', background: 'rgba(99,102,241,0.05)', borderRadius: '8px', flexWrap: 'wrap' }}>
-                        <button onClick={() => addBlock('heading')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 見出し</button>
-                        <button onClick={() => addBlock('subheading')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 中見出し</button>
-                        <button onClick={() => addBlock('text')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ テキスト</button>
-                        <button onClick={() => addBlock('image_left')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 画像(左)</button>
-                        <button onClick={() => addBlock('image_full')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 画像(全幅)</button>
-                        <button onClick={() => addBlock('ad')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #6366f1', background: '#6366f1', color: 'white', cursor: 'pointer' }}>+ 広告</button>
+                    <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center', marginTop: '1rem', padding: '0.5rem', background: 'rgba(99,102,241,0.05)', borderRadius: '2px', flexWrap: 'wrap' }}>
+                        <button onClick={() => addBlock('heading')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 見出し</button>
+                        <button onClick={() => addBlock('subheading')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 中見出し</button>
+                        <button onClick={() => addBlock('text')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ テキスト</button>
+                        <button onClick={() => addBlock('image_left')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 画像(左)</button>
+                        <button onClick={() => addBlock('image_full')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: 'white', color: '#6366f1', cursor: 'pointer' }}>+ 画像(全幅)</button>
+                        <button onClick={() => addBlock('ad')} style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', borderRadius: '2px', border: '1px solid #6366f1', background: '#6366f1', color: 'white', cursor: 'pointer' }}>+ 広告</button>
                     </div>
                 )}
             </div>
@@ -574,9 +779,9 @@ const ResultPage = () => {
                                 }
                                 setIsDesignMode(!isDesignMode);
                             }}
-                            style={{ padding: '0.5rem 1.5rem', background: isDesignMode ? '#ef4444' : '#6366f1', color: 'white', border: 'none', borderRadius: '20px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer', boxShadow: '0 4px 12px rgba(99,102,241,0.2)' }}
+                            style={{ padding: '0.5rem 1.5rem', background: isDesignMode ? '#ef4444' : '#6366f1', color: 'white', border: 'none', borderRadius: '2px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' }}
                         >
-                            {isDesignMode ? '⚊ 編集モードを終了' : '🎨 レイアウトを直接編集する'}
+                            {isDesignMode ? '⚊ 編集モードを終了' : 'レイアウトを直接編集する'}
                         </button>
                     </div>
                 )}
@@ -589,6 +794,11 @@ const ResultPage = () => {
                         <div style={{ fontSize: '3rem', fontWeight: '700', color: 'var(--color-accent-primary)' }}>
                             {resultData.score}<span style={{ fontSize: '1.2rem', color: 'var(--color-text-secondary)' }}>/{resultData.maxScore}</span>
                         </div>
+                        {resultData.scoreCap && (
+                            <div style={{ fontSize: '0.75rem', color: '#f97316', marginTop: '0.3rem', fontWeight: '600' }}>
+                                ※得点調整済み（素点: {resultData.rawScore}/{resultData.rawMaxScore}）
+                            </div>
+                        )}
                     </div>
                     <div style={{ flex: '1 1 120px' }}>
                         <div style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>合格可能性</div>
@@ -598,20 +808,21 @@ const ResultPage = () => {
                     </div>
                 </div>
 
-                <div className="no-print" style={{ 
+                <div className="no-print result-action-buttons" style={{ 
                     display: 'flex', 
                     gap: '1rem', 
                     justifyContent: 'center', 
                     marginTop: '2rem',
                     padding: '1rem',
-                    borderTop: '1px solid rgba(0,0,0,0.05)'
+                    borderTop: '1px solid rgba(0,0,0,0.05)',
+                    flexWrap: 'wrap'
                 }}>
                     <button 
                         onClick={() => window.print()}
                         className="btn btn-secondary"
                         style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.5rem' }}
                     >
-                        <span>🖨️</span> 結果を印刷/PDF保存
+                        結果を印刷/PDF保存
                     </button>
                     {(location.state?.pdfPath || examId) && (
                         <button 
@@ -626,9 +837,16 @@ const ResultPage = () => {
                             <span>📄</span> 原本PDFを表示
                         </button>
                     )}
+                    <button 
+                        onClick={handleXShare}
+                        className="btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.5rem', background: '#0f1419', color: 'white', border: 'none' }}
+                    >
+                        <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>𝕏</span> 結果をシェア
+                    </button>
                 </div>
 
-                <div style={{ textAlign: 'left', background: 'rgba(255,255,255,0.5)', padding: '1.25rem', borderRadius: '12px', marginTop: '2rem' }}>
+                <div style={{ textAlign: 'left', background: 'rgba(255,255,255,0.5)', padding: '1.25rem', borderRadius: '2px', marginTop: '2rem', border: '1px solid #cbd5e1' }}>
                     <h3 style={{ fontSize: '1rem', color: 'var(--color-text-primary)', marginBottom: '1rem' }}>弱点分析・アドバイス</h3>
                     <ContentBlockRenderer 
                         fieldName="weakness"
@@ -728,67 +946,123 @@ const ResultPage = () => {
                                     <div style={{ flex: '1 1 500px', minWidth: 0 }}>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                             {sectionFeedback.map((item) => (
-                                                <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${item.correct ? '#10b981' : '#ef4444'}`, background: item.correct ? 'rgba(16,185,129,0.03)' : 'rgba(239,68,68,0.03)', borderRadius: '0 8px 8px 0' }}>
+                                                <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${item.correct ? '#10b981' : '#ef4444'}`, background: item.correct ? 'rgba(16,185,129,0.03)' : 'rgba(239,68,68,0.03)', borderRadius: '0 2px 2px 0' }}>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                                                         <span style={{ fontWeight: '600' }}>{item.id}</span>
-                                                        <span style={{ color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600', padding: '0.15rem 0.6rem', borderRadius: '20px', fontSize: '0.75rem' }}>{item.correct ? '正解' : '不正解'}</span>
+                                                        <span style={{ color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600', padding: '0.15rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', border: `1px solid ${item.correct ? '#10b981' : '#ef4444'}` }}>{item.correct ? '正解' : '不正解'}</span>
                                                     </div>
                                                     <div style={{ fontSize: '0.85rem' }}>
                                                         <span style={{ fontWeight: '600' }}>解答:</span> {item.userAnswer || '(無回答)'} <span style={{ color: '#cbd5e1' }}>→</span> <span style={{ fontWeight: '600' }}>正解:</span> {item.correctAnswer}
                                                     </div>
-                                                    {item.explanation && <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>{item.explanation}</p>}
-                                                    <div style={{ textAlign: 'right' }}><button onClick={() => setReportingItem(item)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>採点ミスを報告</button></div>
+                                                    {item.essayResult ? (
+                                                        <EssayGradingDetail item={item} />
+                                                    ) : (
+                                                        item.explanation && <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap' }}>{item.explanation}</p>
+                                                    )}
+                                                    <div style={{ textAlign: 'right' }}><button onClick={() => {
+                                                         if (!user) {
+                                                             document.dispatchEvent(new CustomEvent('openAuthModal', { detail: { message: '採点ミスの報告にはログインが必要です。' } }));
+                                                             return;
+                                                         }
+                                                         setReportingItem(item);
+                                                     }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>採点ミスを報告</button></div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
-                                    <div style={{ 
-                                        flex: '1 1 500px', 
-                                        minWidth: 0, 
-                                        position: window.innerWidth > 768 ? 'sticky' : 'relative', 
-                                        top: '1rem', 
-                                        alignSelf: 'flex-start', 
-                                        maxHeight: window.innerWidth > 768 ? '70vh' : 'auto', 
-                                        overflowY: window.innerWidth > 768 ? 'auto' : 'visible', 
-                                        background: 'rgba(99,102,241,0.04)', 
-                                        borderRadius: '12px', 
-                                        padding: '1rem', 
-                                        border: isDesignMode ? '1px dashed #6366f1' : 'none' 
-                                    }}>
-                                        <p style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6366f1', marginBottom: '0.75rem' }}>📝 大問全体の詳細解説</p>
-                                        <ContentBlockRenderer 
-                                            fieldName="section"
-                                            blocks={parseBlocks(section.sectionAnalysis)}
-                                            onUpdate={(updateFn) => {
-                                                setCurrentStructure(prev => {
-                                                    const next = [...prev];
-                                                    const idx = next.findIndex(s => s.id === sectionId);
-                                                    if (idx !== -1) {
-                                                        const currentBlocks = parseBlocks(next[idx].sectionAnalysis);
-                                                        next[idx] = { 
-                                                            ...next[idx], 
-                                                            sectionAnalysis: typeof updateFn === 'function' ? updateFn(currentBlocks) : updateFn 
-                                                        };
-                                                    }
-                                                    return next;
-                                                });
-                                            }}
-                                        />
-                                    </div>
+                                    {window.innerWidth > 768 ? (
+                                        <div style={{
+                                            flex: '1 1 500px',
+                                            minWidth: 0,
+                                            position: 'sticky',
+                                            top: '1rem',
+                                            alignSelf: 'flex-start',
+                                            maxHeight: '70vh',
+                                            overflowY: 'auto',
+                                            background: 'rgba(99,102,241,0.04)',
+                                            borderRadius: '2px',
+                                            padding: '1rem',
+                                            border: isDesignMode ? '1px dashed #6366f1' : 'none'
+                                        }}>
+                                            <p style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6366f1', marginBottom: '0.75rem' }}>大問全体の詳細解説</p>
+                                            <ContentBlockRenderer
+                                                fieldName="section"
+                                                blocks={parseBlocks(section.sectionAnalysis)}
+                                                onUpdate={(updateFn) => {
+                                                    setCurrentStructure(prev => {
+                                                        const next = [...prev];
+                                                        const idx = next.findIndex(s => s.id === sectionId);
+                                                        if (idx !== -1) {
+                                                            const currentBlocks = parseBlocks(next[idx].sectionAnalysis);
+                                                            next[idx] = {
+                                                                ...next[idx],
+                                                                sectionAnalysis: typeof updateFn === 'function' ? updateFn(currentBlocks) : updateFn
+                                                            };
+                                                        }
+                                                        return next;
+                                                    });
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <details style={{
+                                            width: '100%',
+                                            background: 'rgba(99,102,241,0.04)',
+                                            borderRadius: '2px',
+                                            overflow: 'hidden',
+                                            border: isDesignMode ? '1px dashed #6366f1' : '1px solid #e2e8f0'
+                                        }}>
+                                            <summary style={{
+                                                padding: '0.75rem 1rem',
+                                                cursor: 'pointer',
+                                                fontWeight: '700',
+                                                fontSize: '0.8rem',
+                                                color: '#6366f1',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                listStyle: 'none',
+                                                outline: 'none',
+                                                userSelect: 'none'
+                                            }}>
+                                                <span>大問全体の詳細解説を表示</span>
+                                                <span className="details-arrow" style={{ transition: 'transform 0.3s ease' }}>▼</span>
+                                            </summary>
+                                            <div style={{ padding: '0 1rem 1rem' }}>
+                                                <ContentBlockRenderer
+                                                    fieldName="section"
+                                                    blocks={parseBlocks(section.sectionAnalysis)}
+                                                    onUpdate={(updateFn) => {
+                                                        setCurrentStructure(prev => {
+                                                            const next = [...prev];
+                                                            const idx = next.findIndex(s => s.id === sectionId);
+                                                            if (idx !== -1) {
+                                                                const currentBlocks = parseBlocks(next[idx].sectionAnalysis);
+                                                                next[idx] = {
+                                                                    ...next[idx],
+                                                                    sectionAnalysis: typeof updateFn === 'function' ? updateFn(currentBlocks) : updateFn
+                                                                };
+                                                            }
+                                                            return next;
+                                                        });
+                                                    }}
+                                                />
+                                            </div>
+                                        </details>
+                                    )}
                                 </div>
                                 {section.vocabulary && section.vocabulary.length > 0 && (
                                     <div style={{ marginTop: '1.5rem' }}>
-                                        <details open style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', transition: 'all 0.3s ease' }}>
-                                            <summary style={{ padding: '1rem', cursor: 'pointer', fontWeight: 'bold', color: '#1e3a8a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', outline: 'none', listStyle: 'none' }}>
+                                        <details open style={{ background: '#f8fafc', borderRadius: '2px', border: '1px solid #e2e8f0', overflow: 'hidden', transition: 'all 0.3s ease' }}>
+                                            <summary style={{ padding: '1rem', cursor: 'pointer', fontWeight: 'bold', color: 'var(--color-accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', outline: 'none', listStyle: 'none' }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                                    <span style={{ fontSize: '1.2rem' }}>📖</span>
                                                     <span style={{ fontSize: '0.95rem' }}>この大問で出題された難単語 ({section.vocabulary.length}語)</span>
                                                 </div>
                                                 <span className="details-arrow" style={{ transition: 'transform 0.3s ease' }}>▼</span>
                                             </summary>
                                             <div style={{ padding: '0 1rem 1rem 1rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                                 {section.vocabulary.map((vocab, vIdx) => (
-                                                    <span key={vIdx} style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '8px', fontSize: '0.85rem' }}>
+                                                    <span key={vIdx} style={{ background: 'white', border: '1px solid #cbd5e1', padding: '0.4rem 0.8rem', borderRadius: '2px', fontSize: '0.85rem' }}>
                                                         <span style={{ fontWeight: 'bold', color: '#1e293b', marginRight: '0.4rem' }}>{vocab.word}</span>
                                                         <span style={{ color: '#64748b' }}>{vocab.meaning}</span>
                                                     </span>
@@ -805,44 +1079,78 @@ const ResultPage = () => {
                 )}
             </div>
 
-            {resultData.detailedAnalysis && (
-                <div style={{ marginTop: '3rem' }}>
-                    <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>AI先生による思考プロセス解説</h2>
-                    <div className="glass-panel" style={{ padding: '2rem', background: 'white', border: isDesignMode ? '1px dashed #6366f1' : 'none' }}>
-                        <ContentBlockRenderer 
-                            fieldName="detailed"
-                            blocks={parseBlocks(resultData.detailedAnalysis)}
-                            onUpdate={(updateFn) => {
-                                setResultData(prev => ({ 
-                                    ...prev, 
-                                    detailedAnalysis: typeof updateFn === 'function' ? updateFn(parseBlocks(prev.detailedAnalysis)) : updateFn 
-                                }));
-                            }}
-                        />
-                    </div>
-                </div>
-            )}
+
 
             <RecruitmentBanner />
 
             <div style={{ marginTop: '3rem' }}>
-                <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>AI先生に質問する</h2>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                    <h2 style={{ fontSize: '1.5rem' }}>解説についてAIに質問する</h2>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', borderLeft: '1px solid var(--color-silver-light)', paddingLeft: '1rem' }}>
+                        会話履歴はこのタブを閉じると消えます。アカウントには保存されません。
+                    </span>
+                </div>
                 <div className="glass-panel" style={{ padding: '1.5rem' }}>
                     <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        {chatHistory.length === 0 && (
+                            <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', textAlign: 'center', margin: '1rem 0', lineHeight: '1.6' }}>
+                                解説でわからなかった点について、AIアシスタントに自由に質問してください。<br />
+                                <span style={{ fontSize: '0.75rem', color: '#ef4444', fontWeight: 'bold' }}>※相手はAIです。回答が不正確な場合がありますのでご注意ください。</span>
+                            </p>
+                        )}
                         {chatHistory.map((msg, i) => (
-                            <div key={i} style={{ alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start', background: msg.role === 'user' ? 'var(--color-accent-primary)' : '#f1f5f9', color: msg.role === 'user' ? 'white' : '#333', padding: '0.75rem 1rem', borderRadius: '12px', maxWidth: '80%' }}>{msg.text}</div>
+                            <div key={i} style={{ 
+                                display: 'flex', 
+                                flexDirection: 'column', 
+                                alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                                maxWidth: '80%'
+                            }}>
+                                <span style={{ 
+                                    fontSize: '0.7rem', 
+                                    color: 'var(--color-text-secondary)', 
+                                    marginBottom: '0.2rem',
+                                    textAlign: msg.role === 'user' ? 'right' : 'left',
+                                    fontWeight: 'bold'
+                                }}>
+                                    {msg.role === 'user' ? 'あなた' : 'AIアシスタント'}
+                                </span>
+                                <div style={{ 
+                                    background: msg.role === 'user' ? 'var(--color-accent-primary)' : '#f1f5f9', 
+                                    color: msg.role === 'user' ? 'white' : '#333', 
+                                    padding: '0.75rem 1rem', 
+                                    borderRadius: '2px' 
+                                }}>
+                                    {msg.text}
+                                </div>
+                            </div>
                         ))}
                     </div>
-                    <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
-                        <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="質問を入力..." style={{ flex: 1, padding: '0.75rem', borderRadius: '8px', border: '1px solid #e2e8f0' }} disabled={isChatting} />
+                    <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <input 
+                            type="text" 
+                            value={chatInput} 
+                            onChange={(e) => setChatInput(e.target.value)} 
+                            placeholder={user ? "AIへの質問を入力..." : "AIに質問するにはログインが必要です"} 
+                            style={{ flex: 1, minWidth: '200px', padding: '0.75rem', borderRadius: '2px', border: '1px solid #e2e8f0' }} 
+                            disabled={isChatting} 
+                            onClick={(e) => {
+                                if (!user) {
+                                    e.preventDefault();
+                                    document.dispatchEvent(new CustomEvent('openAuthModal', { detail: { message: 'AIに質問するにはログインが必要です。' } }));
+                                }
+                            }}
+                        />
                         <button type="submit" className="btn btn-primary" disabled={isChatting}>送信</button>
                     </form>
+                    <p style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '0.75rem', marginBottom: 0 }}>
+                        ※ 自動生成AIによる回答です。解答内容等に間違いがないか、必ずご自身でも確認を行ってください。
+                    </p>
                 </div>
             </div>
 
             {isDesignMode && (
-                <div style={{ position: 'fixed', bottom: '2rem', left: '50%', transform: 'translateX(-50%)', background: 'white', padding: '1rem 2rem', borderRadius: '50px', boxShadow: '0 10px 40px rgba(0,0,0,0.2)', display: 'flex', gap: '1.5rem', alignItems: 'center', zIndex: 1000, border: '1px solid #eee' }}>
-                    <p style={{ fontSize: '0.8rem', fontWeight: '700', color: '#666' }}>⚡ デザイン編集中</p>
+                <div style={{ position: 'fixed', bottom: '2rem', left: '50%', transform: 'translateX(-50%)', background: 'white', padding: '1rem 2rem', borderRadius: '2px', display: 'flex', gap: '1.5rem', alignItems: 'center', zIndex: 1000, border: '2px solid #6366f1' }}>
+                    <p style={{ fontSize: '0.8rem', fontWeight: '700', color: '#666' }}>デザイン編集中</p>
                     <button 
                         onClick={() => {
                             // Restore from backup
@@ -859,11 +1167,11 @@ const ResultPage = () => {
                             }
                             setIsDesignMode(false);
                         }} 
-                        style={{ padding: '0.5rem 1.5rem', border: '1px solid #ddd', background: 'none', borderRadius: '25px', fontSize: '0.8rem', cursor: 'pointer' }}
+                        style={{ padding: '0.5rem 1.5rem', border: '1px solid #ddd', background: 'none', borderRadius: '2px', fontSize: '0.8rem', cursor: 'pointer' }}
                     >
                         キャンセル
                     </button>
-                    <button onClick={handleSaveLayout} style={{ padding: '0.5rem 2rem', border: 'none', background: '#6366f1', color: 'white', borderRadius: '25px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' }}>保存して確定</button>
+                    <button onClick={handleSaveLayout} style={{ padding: '0.5rem 2rem', border: 'none', background: '#6366f1', color: 'white', borderRadius: '2px', fontSize: '0.8rem', fontWeight: '700', cursor: 'pointer' }}>保存して確定</button>
                 </div>
             )}
 
@@ -876,7 +1184,7 @@ const ResultPage = () => {
                     <div className="glass-panel" style={{ background: 'white', padding: '2rem', maxWidth: '500px', width: '100%' }}>
                         <h3 style={{ marginBottom: '1rem' }}>採点ミスの報告</h3>
                         <textarea value={reportComment} onChange={(e) => setReportComment(e.target.value)} placeholder="理由を教えてください..." style={{ width: '100%', height: '120px', padding: '0.75rem', marginBottom: '1.5rem' }} />
-                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                             <button className="btn btn-secondary" onClick={() => setReportingItem(null)}>キャンセル</button>
                             <button className="btn btn-primary" onClick={handleReportSubmit} disabled={isReporting}>{isReporting ? '送信中...' : '報告を送信'}</button>
                         </div>

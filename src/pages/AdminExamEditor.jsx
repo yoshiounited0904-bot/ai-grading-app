@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
 import { findUniversityMetadataKnowledge, listUniversityMetadataKnowledgeCandidates } from '../data/universityMetadataKnowledge';
@@ -53,6 +54,11 @@ function AdminExamEditor() {
     const [activeTab, setActiveTab] = useState('master');
     const [customLayout, setCustomLayout] = useState([]);
 
+    const [aiChats, setAiChats] = useState({});
+    const [chatInputs, setChatInputs] = useState({});
+    const [chatLoading, setChatLoading] = useState({});
+    const [activeScoringEditor, setActiveScoringEditor] = useState(null);
+
     // Form states
     const [examId, setExamId] = useState('');
     const [university, setUniversity] = useState('');
@@ -82,6 +88,58 @@ function AdminExamEditor() {
         pdf_path: '',
         passing_lines: { A: 80, B: 70, C: 60, D: 40 }
     } : null);
+
+    const scoringModalStyles = {
+        overlay: {
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            background: 'rgba(15, 23, 42, 0.68)',
+            backdropFilter: 'blur(6px)'
+        },
+        shell: {
+            width: 'min(1180px, 96vw)',
+            height: '88vh',
+            background: '#fff',
+            borderRadius: '24px',
+            boxShadow: '0 28px 80px rgba(15, 23, 42, 0.35)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+        },
+        header: {
+            padding: '16px 24px',
+            background: 'var(--color-navy-blue, #0f172a)',
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px'
+        },
+        body: {
+            flex: 1,
+            minHeight: 0,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+            overflow: 'hidden'
+        },
+        pane: {
+            minHeight: 0,
+            overflowY: 'auto',
+            padding: '24px'
+        },
+        footer: {
+            padding: '16px 24px',
+            background: '#f8fafc',
+            borderTop: '1px solid #e5e7eb',
+            display: 'flex',
+            justifyContent: 'flex-end'
+        }
+    };
 
 
 
@@ -402,7 +460,6 @@ function AdminExamEditor() {
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
             const sectionResult = await geminiQueue.add(() => generateSingleSectionData(
-                apiKey,
                 subjectEn,
                 sectionNum,
                 finalQFiles,
@@ -440,7 +497,7 @@ function AdminExamEditor() {
                 const sIdx = sectionNum - 1;
                 setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: true }));
                 try {
-                    const vocabResult = await geminiQueue.add(() => extractSectionVocabulary(apiKey, finalQFiles));
+                    const vocabResult = await geminiQueue.add(() => extractSectionVocabulary(finalQFiles));
                     setExamData(prev => {
                         const newStructure = [...(prev?.structure || [])];
                         newStructure[sIdx].vocabulary = vocabResult;
@@ -491,7 +548,6 @@ function AdminExamEditor() {
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
             const result = await geminiQueue.add(() => generateSectionQuestionsExplanations(
-                apiKey,
                 subjectEn,
                 sectionData,
                 finalQFiles,
@@ -686,7 +742,6 @@ function AdminExamEditor() {
             }
 
             const result = await geminiQueue.add(() => generateExamMasterData(
-                apiKey,
                 subjectEn,
                 finalQFiles,
                 questionFilesBySection,
@@ -719,6 +774,47 @@ function AdminExamEditor() {
             alert('生成中にエラーが発生しました。\n' + error.message);
         } finally {
             setGenerating(false);
+        }
+    };
+
+    const handleCopyStructureExplanations = () => {
+        if (!examData) return;
+        const copyData = {
+            structure: examData.structure || [],
+            detailed_analysis: examData.detailed_analysis || ''
+        };
+        navigator.clipboard.writeText(JSON.stringify(copyData, null, 2))
+            .then(() => {
+                alert('問題の構造と詳細解説をクリップボードにコピーしました！');
+            })
+            .catch(err => {
+                console.error('Failed to copy data:', err);
+                alert('コピーに失敗しました。');
+            });
+    };
+
+    const handlePasteStructureExplanations = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            const pasteData = JSON.parse(text);
+            if (!pasteData || (!pasteData.structure && !pasteData.detailed_analysis)) {
+                alert('無効なコピーデータです。');
+                return;
+            }
+            if (confirm('クリップボードのデータで「問題の構造」と「詳細解説」を上書きしますか？（※その他の大学名や配点合計などは変更されません）')) {
+                setExamData(prev => ({
+                    ...prev,
+                    structure: pasteData.structure || prev?.structure || [],
+                    detailed_analysis: pasteData.detailed_analysis || prev?.detailed_analysis || ''
+                }));
+                if (pasteData.structure && pasteData.structure.length > 0) {
+                    setSectionCount(Math.max(3, pasteData.structure.length));
+                }
+                alert('移植が完了しました。保存ボタンを押すと変更が確定します。');
+            }
+        } catch (err) {
+            console.error('Failed to paste data:', err);
+            alert('ペーストに失敗しました。クリップボードに正しいJSON形式のデータがあるか確認してください。');
         }
     };
 
@@ -983,6 +1079,334 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
+    const handleSendChatMessage = async (sectionIdx, qIdx, q) => {
+        const chatKey = `${sectionIdx}_${qIdx}`;
+        const input = (chatInputs[chatKey] || '').trim();
+        if (!input) return;
+
+        const userMsg = { role: 'user', text: input };
+        const updatedHistory = [...(aiChats[chatKey] || []), userMsg];
+        
+        setAiChats(prev => ({ ...prev, [chatKey]: updatedHistory }));
+        setChatInputs(prev => ({ ...prev, [chatKey]: '' }));
+        setChatLoading(prev => ({ ...prev, [chatKey]: true }));
+
+        try {
+            console.log("[ScoringChat] Consulting scoring elements with context...");
+            const examMeta = { university, faculty, subject, year };
+            const questionData = {
+                id: q.id,
+                points: q.points,
+                label: q.label,
+                correctAnswer: q.correctAnswer,
+                gradingInstruction: q.gradingInstruction,
+                scoringElements: q.scoringElements || []
+            };
+
+            const response = await consultScoringElements(examMeta, questionData, input, updatedHistory);
+            
+            const aiMsg = { role: 'ai', text: response };
+            setAiChats(prev => ({
+                ...prev,
+                [chatKey]: [...updatedHistory, aiMsg]
+            }));
+        } catch (error) {
+            console.error("[ScoringChat] Chat consult failed:", error);
+            setAiChats(prev => ({
+                ...prev,
+                [chatKey]: [...updatedHistory, { role: 'ai', text: `⚠️ エラーが発生しました: ${error.message}` }]
+            }));
+        } finally {
+            setChatLoading(prev => ({ ...prev, [chatKey]: false }));
+        }
+    };
+
+    const handleResetChat = (sectionIdx, qIdx) => {
+        const chatKey = `${sectionIdx}_${qIdx}`;
+        if (confirm("会話履歴をリセットしますか？")) {
+            setAiChats(prev => ({ ...prev, [chatKey]: [] }));
+            setChatInputs(prev => ({ ...prev, [chatKey]: '' }));
+        }
+    };
+
+    const normalizeScoringElements = (value) => {
+        return Array.isArray(value) ? value : [];
+    };
+
+    const renderScoringModal = () => {
+        if (!activeScoringEditor) {
+            return null;
+        }
+
+        console.log("[ScoringModal] rendering. activeScoringEditor state:", activeScoringEditor);
+        const { sectionIdx, qIdx } = activeScoringEditor;
+        const q = examData?.structure?.[sectionIdx]?.questions?.[qIdx] || activeScoringEditor.question;
+        
+        console.log("[ScoringModal] q data resolved:", q);
+        if (!q) {
+            console.warn("[ScoringModal] question 'q' not found in examData.structure or activeScoringEditor snapshot!");
+            return createPortal(
+                <div style={scoringModalStyles.overlay}>
+                    <div style={{ ...scoringModalStyles.shell, width: 'min(520px, 94vw)', height: 'auto', padding: '32px' }}>
+                        <h3 className="font-black text-navy-blue mb-3">採点要素エディタを開けませんでした</h3>
+                        <p className="text-sm text-gray-500 leading-relaxed mb-6">
+                            対象の小問データを取得できませんでした。画面を再読み込みしてからもう一度試してください。
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => setActiveScoringEditor(null)}
+                            className="bg-navy-blue text-white text-xs font-black px-5 py-3 rounded-xl"
+                        >
+                            閉じる
+                        </button>
+                    </div>
+                </div>,
+                document.body
+            );
+        }
+
+        const chatKey = `${sectionIdx}_${qIdx}`;
+        const elements = normalizeScoringElements(q.scoringElements);
+        const totalPoints = elements.reduce((sum, item) => sum + (item.points || 0), 0);
+        const isMatch = totalPoints === (q.points || 0);
+
+        return createPortal(
+            <div style={scoringModalStyles.overlay}>
+                <div style={scoringModalStyles.shell}>
+                    {/* Modal Header */}
+                    <div className="px-6 py-4 bg-navy-blue text-white flex justify-between items-center" style={scoringModalStyles.header}>
+                        <div className="flex items-center gap-3">
+                            <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Essay Scoring</span>
+                            <h3 className="font-black text-sm">
+                                大問 {sectionIdx + 1} 小問 {q.id} : 採点要素設定 & AIアシスタント
+                            </h3>
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={() => {
+                                console.log("[ScoringModal] Close button clicked");
+                                setActiveScoringEditor(null);
+                            }}
+                            className="text-gray-300 hover:text-white font-bold text-xl transition-colors px-2"
+                        >
+                            ×
+                        </button>
+                    </div>
+
+                    {/* Modal Body */}
+                    <div className="flex-1 flex overflow-hidden" style={scoringModalStyles.body}>
+                        {/* Left Side: Scoring Elements config */}
+                        <div className="w-1/2 overflow-y-auto p-6 border-r border-gray-100 flex flex-col gap-5" style={{ ...scoringModalStyles.pane, borderRight: '1px solid #eef2f7' }}>
+                            <div>
+                                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">設問本文 (配点: {q.points || 0}点)</h4>
+                                <div className="p-3 bg-gray-50 rounded-xl text-xs font-bold text-navy-blue whitespace-pre-wrap leading-relaxed max-h-[100px] overflow-y-auto">
+                                    {q.label || "問題文未入力"}
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">解答例・解説</h4>
+                                <div className="p-3 bg-gray-50 rounded-xl text-xs text-gray-600 whitespace-pre-wrap leading-relaxed max-h-[100px] overflow-y-auto">
+                                    {q.correctAnswer || "解答例未入力"}
+                                </div>
+                            </div>
+
+                            {/* Scoring Elements Manager */}
+                            <div className="flex-1 flex flex-col min-h-[300px]">
+                                <div className="flex justify-between items-center mb-3">
+                                    <span className="text-[10px] font-black text-orange-700 uppercase tracking-wider">
+                                        採点判定要素 ({elements.length} / 7)
+                                    </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const newElements = [...elements];
+                                            if (newElements.length >= 7) {
+                                                alert("要素数は最大7個までです。");
+                                                return;
+                                            }
+                                            newElements.push({
+                                                id: `e${newElements.length + 1}`,
+                                                description: "",
+                                                points: 1,
+                                                allowPartial: false,
+                                                type: "content"
+                                            });
+                                            handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                        }}
+                                        className="text-[10px] font-black text-orange-600 hover:text-orange-800 bg-orange-50 px-3 py-1.5 rounded-lg border border-orange-100 transition-colors"
+                                    >
+                                        ＋ 新しい判定要素を追加
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                                    {elements.length === 0 ? (
+                                        <div className="text-center py-12 bg-orange-50/20 border border-dashed border-orange-100 rounded-2xl text-gray-400 text-xs flex flex-col items-center gap-2">
+                                            <span className="text-2xl">📝</span>
+                                            <span className="font-bold">採点要素がまだ登録されていません</span>
+                                            <span className="text-[10px] text-gray-400 max-w-[250px]">
+                                                AI採点はここで設定された個別の要素基準のみを用いて客観的に評価を行います。
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        elements.map((el, elIdx) => (
+                                            <div key={elIdx} className="bg-white p-4 rounded-xl border border-orange-100 shadow-sm text-xs space-y-3">
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-mono bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded text-[10px]">{el.id}</span>
+                                                    <input
+                                                        type="text"
+                                                        value={el.description}
+                                                        onChange={(e) => {
+                                                            const newElements = [...elements];
+                                                            newElements[elIdx].description = e.target.value;
+                                                            handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                        }}
+                                                        placeholder="基準（例: 「AIが進化する理由」について具体的に言及している）"
+                                                        className="flex-1 p-2 border border-gray-200 rounded-lg outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const newElements = elements.filter((_, i) => i !== elIdx)
+                                                                .map((item, idx) => ({ ...item, id: `e${idx + 1}` }));
+                                                            handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                        }}
+                                                        className="text-red-400 hover:text-red-600 font-bold px-2 text-sm"
+                                                        title="要素を削除"
+                                                    >
+                                                        ×
+                                                    </button>
+                                                </div>
+
+                                                <div className="flex flex-wrap items-center gap-4 text-[10px] text-gray-500 font-bold bg-gray-50 p-2 rounded-lg">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span>配点:</span>
+                                                        <input
+                                                            type="number"
+                                                            value={el.points}
+                                                            onChange={(e) => {
+                                                                const newElements = [...elements];
+                                                                newElements[elIdx].points = Math.max(1, parseInt(e.target.value) || 0);
+                                                                handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                            }}
+                                                            className="w-12 p-1 border border-gray-300 rounded text-center text-navy-blue"
+                                                        />
+                                                        <span>点</span>
+                                                    </div>
+
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Points check info */}
+                            {elements.length > 0 && (
+                                <div className={`text-xs font-black p-3 rounded-xl ${isMatch ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
+                                    {isMatch ? (
+                                        <span>✓ 要素の合計配点（{totalPoints}点）が設問の配点（{q.points}点）と完全に一致しています。</span>
+                                    ) : (
+                                        <span>⚠️ 不一致：要素の合計（{totalPoints}点）が設問の配点（{q.points}点）と異なります。</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Right Side: AI Assistant Chat */}
+                        <div className="w-1/2 bg-indigo-50/15 flex flex-col p-6" style={{ ...scoringModalStyles.pane, background: '#f8faff', display: 'flex', flexDirection: 'column' }}>
+                            <div className="flex justify-between items-center mb-3">
+                                <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-1.5">
+                                    ✨ AI採点基準アシスタント
+                                </span>
+                                <button
+                                    onClick={() => handleResetChat(sectionIdx, qIdx)}
+                                    className="text-[9px] font-black text-gray-400 hover:text-indigo-600 bg-white px-2 py-1 rounded border border-gray-100 transition-colors shadow-sm"
+                                >
+                                    会話をリセット
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto bg-white border border-indigo-100/50 rounded-2xl p-4 text-xs space-y-3 mb-4 max-h-[500px]">
+                                {(!aiChats[chatKey] || aiChats[chatKey].length === 0) ? (
+                                    <div className="text-gray-400 text-center py-16 space-y-3 h-full flex flex-col justify-center items-center">
+                                        <div className="text-3xl animate-bounce">💡</div>
+                                        <p className="font-bold text-xs text-gray-600">
+                                            AIと対話しながら採点基準を作成
+                                        </p>
+                                        <p className="text-[10px] text-gray-400 max-w-[280px] leading-normal text-center">
+                                            AIは設問の内容や模範解答、現在の要素設定を熟知しています。「採点要素を提案して」「解説から要素に落とし込んで」など、お気軽にご相談ください。
+                                        </p>
+                                    </div>
+                                ) : (
+                                    aiChats[chatKey].map((msg, mIdx) => (
+                                        <div key={mIdx} className={`p-3 rounded-2xl ${msg.role === 'user' ? 'bg-indigo-50 text-indigo-900 border border-indigo-100/50 ml-6' : 'bg-gray-50 text-gray-800 border border-gray-100 mr-6'}`}>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="font-black text-[9px] uppercase tracking-widest text-indigo-600">
+                                                    {msg.role === 'user' ? 'あなた' : 'AI'}
+                                                </span>
+                                            </div>
+                                            <div className="whitespace-pre-wrap font-medium leading-relaxed">{msg.text}</div>
+                                        </div>
+                                    ))
+                                )}
+                                {chatLoading[chatKey] && (
+                                    <div className="flex items-center justify-center gap-2 py-4 text-indigo-500/80 text-[10px] font-black italic">
+                                        <span className="animate-bounce">●</span>
+                                        <span className="animate-bounce [animation-delay:0.2s]">●</span>
+                                        <span className="animate-bounce [animation-delay:0.4s]">●</span>
+                                        <span>検討中...</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Chat Input */}
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={chatInputs[chatKey] || ''}
+                                    onChange={(e) => setChatInputs({ ...chatInputs, [chatKey]: e.target.value })}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleSendChatMessage(sectionIdx, qIdx, q);
+                                        }
+                                    }}
+                                    placeholder="例: この解答例に適合する採点項目を3個提案して"
+                                    className="flex-1 p-3 border border-indigo-100 rounded-xl outline-none text-xs focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 bg-white"
+                                    disabled={chatLoading[chatKey]}
+                                />
+                                <button
+                                    onClick={() => handleSendChatMessage(sectionIdx, qIdx, q)}
+                                    disabled={chatLoading[chatKey] || !(chatInputs[chatKey] || '').trim()}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-3 rounded-xl disabled:opacity-40 transition-all shadow-sm"
+                                >
+                                    送信
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-3" style={scoringModalStyles.footer}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                console.log("[ScoringModal] setting activeScoringEditor to null");
+                                setActiveScoringEditor(null);
+                            }}
+                            className="bg-navy-blue text-white hover:bg-navy-blue/90 text-xs font-black px-6 py-2.5 rounded-xl shadow-md transition-all"
+                        >
+                            設定を適用して閉じる
+                        </button>
+                    </div>
+                </div>
+            </div>,
+            document.body
+        );
+    };
+
     const handleAddGenerationSection = () => {
         const newCount = sectionCount + 1;
         setSectionCount(newCount);
@@ -1050,7 +1474,6 @@ function AdminExamEditor() {
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
             const newExplanation = await geminiQueue.add(() => regenerateQuestionExplanation(
-                apiKey,
                 q,
                 finalQFiles,
                 finalAFiles
@@ -1105,7 +1528,6 @@ function AdminExamEditor() {
                     const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
                     const newExplanation = await geminiQueue.add(() => regenerateQuestionExplanation(
-                        apiKey,
                         q,
                         finalQFiles,
                         finalAFiles
@@ -1212,7 +1634,6 @@ function AdminExamEditor() {
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
             const newAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
-                apiKey,
                 subjectEn,
                 section,
                 finalQFiles,
@@ -1243,7 +1664,7 @@ function AdminExamEditor() {
                 throw new Error("単語を抽出するための問題データがありません。");
             }
 
-            const newVocabulary = await geminiQueue.add(() => extractSectionVocabulary(apiKey, finalQFiles));
+            const newVocabulary = await geminiQueue.add(() => extractSectionVocabulary(finalQFiles));
             handleStructureChange(sIdx, null, 'vocabulary', newVocabulary);
             alert(`第${section.id}問の英単語抽出が完了しました！`);
         } catch (error) {
@@ -1252,6 +1673,49 @@ function AdminExamEditor() {
             setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: false }));
         }
     };
+    const handleRemoveAllAsterisks = () => {
+        if (!examData) {
+            alert('マスターデータが存在しません。');
+            return;
+        }
+        if (!confirm('試験内のすべての詳細解説・大問全体の分析・小問解説からアスタリスク（*）を一括削除しますか？')) return;
+
+        let cleanedDetailed = examData.detailed_analysis || '';
+        cleanedDetailed = cleanedDetailed.replace(/\*/g, '');
+
+        const newStructure = (examData.structure || []).map(section => {
+            let cleanedSecAnalysis = section.sectionAnalysis || '';
+            cleanedSecAnalysis = cleanedSecAnalysis.replace(/\*/g, '');
+
+            const newQuestions = (section.questions || []).map(q => {
+                let cleanedExpl = q.explanation || '';
+                cleanedExpl = cleanedExpl.replace(/\*/g, '');
+                
+                let cleanedGrading = q.gradingInstruction || '';
+                cleanedGrading = cleanedGrading.replace(/\*/g, '');
+
+                return {
+                    ...q,
+                    explanation: cleanedExpl,
+                    gradingInstruction: cleanedGrading
+                };
+            });
+
+            return {
+                ...section,
+                sectionAnalysis: cleanedSecAnalysis,
+                questions: newQuestions
+            };
+        });
+
+        setExamData({
+            ...examData,
+            detailed_analysis: cleanedDetailed,
+            structure: newStructure
+        });
+        alert('すべての解説テキストからアスタリスク（*）を一括削除しました！\n（忘れずに「保存」してください）');
+    };
+
     const handleRegenerateDetailedAnalysis = async () => {
         if (!examData) {
             alert('マスターデータが存在しません。');
@@ -1277,7 +1741,6 @@ function AdminExamEditor() {
             }
 
             const newAnalysis = await geminiQueue.add(() => regenerateDetailedAnalysis(
-                apiKey,
                 subjectEn,
                 examData,
                 finalQFiles,
@@ -1311,7 +1774,6 @@ function AdminExamEditor() {
             }
 
             const newStructure = await geminiQueue.add(() => regeneratePointsAllocation(
-                apiKey,
                 subjectEn,
                 examData,
                 questionFiles,
@@ -1556,6 +2018,30 @@ function AdminExamEditor() {
                     <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
                         {examData && (
                             <>
+                                <button 
+                                    onClick={handleCopyStructureExplanations}
+                                    className="bg-white hover:bg-gray-50 text-indigo-600 font-bold py-3 px-6 rounded-xl border border-indigo-100 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer"
+                                >
+                                    📋 構造＆解説コピー
+                                </button>
+                                <button 
+                                    onClick={handlePasteStructureExplanations}
+                                    className="bg-white hover:bg-gray-50 text-indigo-600 font-bold py-3 px-6 rounded-xl border border-indigo-100 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer"
+                                >
+                                    📋 構造＆解説ペースト
+                                </button>
+                                <button 
+                                    onClick={handleRemoveAllAsterisks}
+                                    className="bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold py-3 px-6 rounded-xl border border-amber-200 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer"
+                                >
+                                    🧹 アスタリスク(*)を一括消去
+                                </button>
+                                <button 
+                                    onClick={() => navigate(`/admin/exam/${examId}/verify`)}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-emerald-200 transition-all active:scale-95 text-sm flex items-center gap-2"
+                                >
+                                    🔍 解答照合 (正解・配点)
+                                </button>
                                 <button onClick={handleSaveAndPreview} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50 text-sm flex items-center gap-2">
                                     {saving ? '保存中...' : '保存してプレビュー'}
                                 </button>
@@ -2215,7 +2701,12 @@ function AdminExamEditor() {
                                             placeholder="大問ラベル"
                                         />
                                     </div>
-                                    <button onClick={() => handleDeleteSection(sIdx)} className="text-[10px] font-black text-red-200 hover:text-red-500 transition-colors">大問を削除</button>
+                                    <button 
+                                        onClick={() => handleDeleteSection(sIdx)} 
+                                        className="text-[10px] font-black text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/80 border border-red-200/50 px-3 py-1.5 rounded-xl shadow-sm transition-all"
+                                    >
+                                        🗑️ 大問を削除
+                                    </button>
                                 </div>
 
                                 <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-6">
@@ -2312,6 +2803,41 @@ function AdminExamEditor() {
                                                             <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">採点基準・指示</span>
                                                             <textarea value={q.gradingInstruction || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'gradingInstruction', e.target.value)} placeholder="例: 部分点5点とする基準..." className="w-full p-4 rounded-xl border border-navy-blue/5 text-[10px] leading-relaxed min-h-[40px] bg-navy-blue/5 outline-none" />
                                                         </div>
+                                                        {q.type === 'essay' && (() => {
+                                                            const elements = normalizeScoringElements(q.scoringElements);
+                                                            const totalPoints = elements.reduce((sum, item) => sum + (item.points || 0), 0);
+                                                            const isMatch = totalPoints === (q.points || 0);
+                                                            return (
+                                                                <div className="mt-3 p-3 bg-indigo-50/30 border border-indigo-100/50 rounded-xl flex flex-wrap items-center justify-between gap-3">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">
+                                                                            要素採点設定:
+                                                                        </span>
+                                                                        {elements.length === 0 ? (
+                                                                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-700 animate-pulse">
+                                                                                ⚠️ 未設定 (要設定)
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isMatch ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                                                {elements.length}個の要素設定中 ({totalPoints} / {q.points || 0}点)
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.preventDefault();
+                                                                            e.stopPropagation();
+                                                                            console.log("[TriggerButton] clicked for sIdx:", sIdx, "qIdx:", qIdx, "q:", q);
+                                                                            setActiveScoringEditor({ sectionIdx: sIdx, qIdx, question: q });
+                                                                        }}
+                                                                        className="text-[9px] font-black text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg shadow-sm transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
+                                                                    >
+                                                                        ✨ 採点要素・AIアシスタントを開く
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </td>
                                                     <td className="px-6 py-4">
                                                         <div className="flex flex-col items-center gap-2">
@@ -2320,7 +2846,13 @@ function AdminExamEditor() {
                                                                 <button onClick={() => handleMoveQuestion(sIdx, qIdx, 'down')} disabled={qIdx === section.questions.length - 1} className="text-gray-300 hover:text-indigo-500 disabled:opacity-30 disabled:hover:text-gray-300 transition-colors" title="下に移動">↓</button>
                                                             </div>
                                                             <button onClick={() => handleAddQuestion(sIdx, qIdx)} className="text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 w-6 h-6 rounded-full flex items-center justify-center transition-all text-sm font-black bg-white border border-gray-100 shadow-sm" title="この上に小問を追加">＋</button>
-                                                            <button onClick={() => handleDeleteQuestion(sIdx, qIdx)} className="text-gray-300 hover:text-red-500 transition-colors text-lg" title="小問を削除">×</button>
+                                                            <button 
+                                                                onClick={() => handleDeleteQuestion(sIdx, qIdx)} 
+                                                                className="text-red-500 hover:text-white bg-red-50 hover:bg-red-500 w-7 h-7 rounded-full flex items-center justify-center transition-all border border-red-200/50 shadow-sm text-base font-bold" 
+                                                                title="小問を削除"
+                                                            >
+                                                                ×
+                                                            </button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -2353,6 +2885,7 @@ function AdminExamEditor() {
                                                         {generatingVocabulary[sIdx] ? '抽出中...' : '📚 英検準1級単語を抽出'}
                                                     </button>
                                                 )}
+
                                                 <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5">
                                                     {generatingSectionAnalysis[sIdx] ? '再生成中...' : '✨ AIで解説生成'}
                                                 </button>
@@ -2451,6 +2984,7 @@ function AdminExamEditor() {
                     />
                 </div>
             )}
+            {renderScoringModal()}
         </div>
     );
 }
@@ -2463,10 +2997,7 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
         // Add Hero
         blocks.push({ id: 'hero-' + Date.now(), type: 'hero', content: {} });
         
-        // Add detailed analysis
-        if (examData.detailed_analysis) {
-            blocks.push({ id: 'text-' + Date.now(), type: 'text', content: examData.detailed_analysis });
-        }
+
         
         // Add sections
         examData.structure?.forEach((sec, idx) => {

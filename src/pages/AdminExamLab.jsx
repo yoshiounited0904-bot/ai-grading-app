@@ -18,12 +18,6 @@ function AdminExamLab() {
         getUniversityList().then(data => setUniversitiesData(data || []));
     }, []);
 
-    const getGeminiApiKey = () => {
-        return import.meta.env.VITE_GEMINI_API_KEY_V2 ||
-            import.meta.env.VITE_GEMINI_API_KEY ||
-            window._GEMINI_API_KEY;
-    };
-
     const findMatches = (result) => {
         const matchedUniversity = universitiesData.find(u => u.name === result.university);
         const matchedFaculty = matchedUniversity?.faculties.find(f => f.name === result.faculty);
@@ -61,17 +55,11 @@ function AdminExamLab() {
             return;
         }
 
-        const apiKey = getGeminiApiKey();
-        if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-            setErrorMessage('Gemini APIキーが見つかりません。');
-            return;
-        }
-
         setExtracting(true);
         setErrorMessage('');
 
         try {
-            const result = await geminiQueue.add(() => extractExamMetadata(apiKey, questionFiles));
+            const result = await geminiQueue.add(() => extractExamMetadata(questionFiles));
             const matched = findMatches(result);
             setMetadata(matched);
             setKnowledgeSelection(matched.knowledgeCandidates?.[0]?.key || '');
@@ -213,7 +201,7 @@ function AdminExamLab() {
                     </div>
 
                     {metadata?.knowledgeCandidates?.length > 0 && (
-                        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5 space-y-4">
+                        <div className="rounded-md border border-indigo-100 bg-indigo-50/60 p-5 space-y-4">
                             <div className="text-sm font-black text-navy-blue">参照する大学データを選択</div>
                             <div className="flex flex-col md:flex-row gap-3">
                                 <select
@@ -238,7 +226,7 @@ function AdminExamLab() {
                     )}
 
                     {errorMessage && (
-                        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+                        <div className="rounded-md border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
                             {errorMessage}
                         </div>
                     )}
@@ -273,7 +261,7 @@ function AdminExamLab() {
                             {metadata ? JSON.stringify(metadata, null, 2) : '{\n  "status": "waiting"\n}'}
                         </pre>
                         {metadata?.resolvedPassingLines && (
-                            <div className="rounded-2xl bg-slate-900/80 border border-slate-800 p-4">
+                            <div className="rounded-md bg-slate-900/80 border border-slate-800 p-4">
                                 <div className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-3">補完された判定ライン</div>
                                 <div className="grid grid-cols-5 gap-2 text-center">
                                     {Object.entries(metadata.resolvedPassingLines).map(([grade, score]) => (
@@ -286,7 +274,7 @@ function AdminExamLab() {
                             </div>
                         )}
                         {metadata?.knowledgeMatched && metadata.knowledgeNotes?.length > 0 && (
-                            <div className="rounded-2xl bg-slate-900/80 border border-slate-800 p-4">
+                            <div className="rounded-md bg-slate-900/80 border border-slate-800 p-4">
                                 <div className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-3">大学データ備考</div>
                                 <ul className="space-y-2 text-xs text-slate-200">
                                     {metadata.knowledgeNotes.map((note) => (
@@ -317,18 +305,18 @@ function AdminExamLab() {
                     </div>
 
                     {copyStatus && (
-                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700">
+                        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-bold text-emerald-700">
                             {copyStatus}
                         </div>
                     )}
 
                     {draft ? (
                         <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-6">
-                            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-5">
+                            <div className="rounded-md border border-gray-100 bg-gray-50/70 p-5">
                                 <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">保存ファイル名候補</div>
                                 <div className="text-sm font-bold text-navy-blue break-all">{draft.fileName}.md</div>
                             </div>
-                            <div className="rounded-2xl bg-slate-950 p-6 shadow-inner">
+                            <div className="rounded-md bg-slate-950 p-6 shadow-inner">
                                 <pre className="text-xs leading-6 text-slate-200 whitespace-pre-wrap break-all overflow-auto min-h-[280px]">
                                     {draft.markdown}
                                 </pre>
@@ -345,7 +333,7 @@ function AdminExamLab() {
 
 function FieldCard({ label, value }) {
     return (
-        <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+        <div className="rounded-md border border-gray-100 bg-gray-50/70 p-4">
             <div className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">{label}</div>
             <div className="text-sm font-bold text-navy-blue break-words">{value || '未抽出'}</div>
         </div>

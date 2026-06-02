@@ -10,13 +10,13 @@ const RecruitmentBanner = ({ sticky = false }) => {
         padding: '1.2rem 3rem',
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'flex-start', // Ensure left alignment
-        gap: '0.5rem', // Reduced gap between sections
+        justifyContent: 'flex-start',
+        gap: '0.5rem',
         animation: 'slideUp 0.6s cubic-bezier(0.22, 1, 0.36, 1)',
         borderRadius: '0',
-        borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-        backdropFilter: 'blur(20px)',
-        background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%)',
+        borderTop: '2px solid var(--color-accent-primary)',
+        background: '#ffffff',
+        color: 'var(--color-text-primary)',
     } : {
         marginTop: '4rem',
         padding: '3.5rem 2rem',
@@ -26,9 +26,11 @@ const RecruitmentBanner = ({ sticky = false }) => {
         width: '100%',
         maxWidth: '1100px',
         margin: '6rem auto',
-        borderRadius: '32px',
-        background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+        borderRadius: '2px',
+        background: 'var(--color-bg-primary)',
+        border: '1px solid var(--border-glass)',
+        boxShadow: 'var(--shadow-card)',
+        color: 'var(--color-text-primary)',
     };
 
     return (
@@ -74,7 +76,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
               .line-btn {
                 padding: 0.5rem 1rem !important;
                 font-size: 0.75rem !important;
-                border-radius: 8px !important;
+                border-radius: 2px !important;
               }
               .cta-section {
                 display: none !important;
@@ -87,28 +89,15 @@ const RecruitmentBanner = ({ sticky = false }) => {
                 display: 'flex',
                 position: 'relative',
                 overflow: 'hidden',
-                color: 'white',
                 ...bannerStyle
             }}>
-                {/* Decorative Elements */}
-                <div style={{
-                    position: 'absolute',
-                    top: '-50%',
-                    left: '-10%',
-                    width: '40%',
-                    height: '200%',
-                    background: 'radial-gradient(circle, rgba(251, 191, 36, 0.05) 0%, transparent 70%)',
-                    transform: 'rotate(-15deg)',
-                    pointerEvents: 'none'
-                }} />
-
                 {/* Logo & Main Text Section */}
                 <div className="banner-content" style={{
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '0.6rem',
                     zIndex: 1,
-                    flex: 'none', // Changed from sticky ? '1.5' : 'none' to 'none'
+                    flex: 'none',
                     minWidth: 'fit-content'
                 }}>
                     <div className="banner-logo-text" style={{
@@ -118,19 +107,19 @@ const RecruitmentBanner = ({ sticky = false }) => {
                         marginBottom: '0.2rem'
                     }}>
                         <div style={{
-                            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+                            background: '#fbbf24',
                             color: '#0f172a',
                             padding: '0.25rem 0.75rem',
-                            borderRadius: '8px',
+                            borderRadius: '2px',
                             fontWeight: '900',
                             fontSize: sticky ? '0.9rem' : '1.1rem',
-                            boxShadow: '0 4px 12px rgba(251, 191, 36, 0.4)'
+                            border: '1px solid #d97706'
                         }}>SE</div>
                         <span style={{
                             fontSize: sticky ? '1.1rem' : '1.6rem',
                             fontWeight: '800',
                             letterSpacing: '0.03em',
-                            color: '#f8fafc'
+                            color: 'var(--color-text-primary)'
                         }}>Success Edge</span>
                     </div>
 
@@ -139,26 +128,20 @@ const RecruitmentBanner = ({ sticky = false }) => {
                         fontWeight: '900',
                         margin: '0',
                         lineHeight: '1.1',
-                        background: 'linear-gradient(to right, #fff, #e2e8f0)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent'
+                        color: 'var(--color-text-primary)'
                     }}>
-                        早慶GMARCH合格率 <span style={{ color: '#fbbf24', textShadow: '0 0 20px rgba(251, 191, 36, 0.3)' }}>140%</span>
+                        早慶GMARCH合格率 <span style={{ color: 'var(--color-accent-primary)' }}>140%</span>
                     </h3>
 
                     <div className="banner-sub-text" style={{
-                        fontSize: sticky ? '1.1rem' : '1.4rem', // Increased font size
-                        color: '#fbbf24',
+                        fontSize: sticky ? '1.1rem' : '1.4rem',
+                        color: 'var(--color-accent-primary)',
                         fontWeight: '800',
                         marginTop: '0.4rem',
                         letterSpacing: '0.02em',
-                        textShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                        background: 'linear-gradient(to right, #fbbf24, #f59e0b)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
                         display: 'inline-block'
                     }}>
-                        どこまでも寄り添う異次元の指導力で<span style={{ borderBottom: '2px solid #fbbf24', paddingBottom: '2px' }}>”確信する合格へ”</span>
+                        どこまでも寄り添う異次元の指導力で<span style={{ borderBottom: '2px solid var(--color-accent-primary)', paddingBottom: '2px' }}>”確信する合格へ”</span>
                     </div>
                 </div>
 
@@ -169,13 +152,12 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     alignItems: 'center',
                     gap: '1.5rem',
                     padding: sticky ? '1rem 2rem' : '2rem 3rem',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    borderRadius: '28px',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    flex: 'none', // Changed from sticky ? '1' : 'none' to 'none' to prevent growing
-                    margin: sticky ? '0' : '0', // Removed margin to stick to left
+                    background: 'var(--color-bg-secondary)',
+                    borderRadius: '2px',
+                    border: '1px solid var(--border-glass)',
+                    flex: 'none',
+                    margin: sticky ? '0' : '0',
                     transition: 'all 0.3s ease',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
                 }}>
                     <div className="line-icon-wrapper" style={{ position: 'relative', flexShrink: 0 }}>
                         <img
@@ -184,20 +166,18 @@ const RecruitmentBanner = ({ sticky = false }) => {
                             style={{
                                 width: sticky ? '52px' : '72px',
                                 height: sticky ? '52px' : '72px',
-                                borderRadius: '14px',
-                                boxShadow: '0 8px 25px rgba(6, 199, 85, 0.3)'
+                                borderRadius: '2px',
                             }}
                         />
                         <div style={{
                             position: 'absolute',
-                            top: '-6px',
-                            right: '-6px',
-                            width: '14px',
-                            height: '14px',
+                            top: '-3px',
+                            right: '-3px',
+                            width: '10px',
+                            height: '10px',
                             background: '#06c755',
-                            borderRadius: '50%',
-                            border: '3px solid #1e293b',
-                            boxShadow: '0 0 10px rgba(6, 199, 85, 0.5)'
+                            borderRadius: '2px',
+                            border: '2px solid #1e293b'
                         }} />
                     </div>
 
@@ -205,34 +185,24 @@ const RecruitmentBanner = ({ sticky = false }) => {
                         <div className="line-text-wrapper" style={{
                             fontSize: sticky ? '1rem' : '1.3rem',
                             fontWeight: '800',
-                            color: '#fff',
+                            color: 'var(--color-text-primary)',
                             whiteSpace: 'nowrap'
                         }}>
-                            <span style={{ color: '#06c755', marginRight: '0.5rem' }}>●</span>
+                            <span style={{ color: '#06c755', marginRight: '0.5rem' }}>■</span>
                             無料LINE合格戦略相談
                         </div>
                         <button
                             className="line-btn"
                             style={{
-                                background: 'linear-gradient(135deg, #06c755 0%, #05b34c 100%)',
+                                background: '#06c755',
                                 color: 'white',
                                 border: 'none',
                                 padding: sticky ? '0.6rem 1.5rem' : '0.8rem 2.2rem',
-                                borderRadius: '14px',
+                                borderRadius: '2px',
                                 fontSize: sticky ? '0.9rem' : '1rem',
                                 fontWeight: '900',
                                 cursor: 'pointer',
-                                transition: 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-                                boxShadow: '0 6px 20px rgba(6, 199, 85, 0.4)',
                                 whiteSpace: 'nowrap'
-                            }}
-                            onMouseOver={(e) => {
-                                e.currentTarget.style.transform = 'scale(1.05) translateY(-2px)';
-                                e.currentTarget.style.boxShadow = '0 8px 25px rgba(6, 199, 85, 0.5)';
-                            }}
-                            onMouseOut={(e) => {
-                                e.currentTarget.style.transform = 'scale(1) translateY(0)';
-                                e.currentTarget.style.boxShadow = '0 6px 20px rgba(6, 199, 85, 0.4)';
                             }}
                             onClick={() => window.open('https://lin.ee/ihaPWfv', '_blank')}
                         >
@@ -248,16 +218,16 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     alignItems: 'center',
                     gap: '0.5rem',
                     minWidth: '160px',
-                    justifyContent: 'flex-start' // Changed to flex-start
+                    justifyContent: 'flex-start'
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <button
                             style={{
-                                background: 'rgba(255, 255, 255, 0.08)',
-                                color: '#fff',
-                                border: '1px solid rgba(255, 255, 255, 0.2)',
-                                padding: sticky ? '0.6rem 1.5rem' : '0.8rem 2.2rem', // Slightly reduced padding for stacked layout
-                                borderRadius: '14px',
+                                background: 'var(--color-bg-primary)',
+                                color: 'var(--color-text-primary)',
+                                border: '1px solid var(--border-glass)',
+                                padding: sticky ? '0.6rem 1.5rem' : '0.8rem 2.2rem',
+                                borderRadius: '2px',
                                 fontSize: sticky ? '0.9rem' : '1rem',
                                 fontWeight: '700',
                                 cursor: 'pointer',
@@ -266,14 +236,10 @@ const RecruitmentBanner = ({ sticky = false }) => {
                                 textAlign: 'center'
                             }}
                             onMouseOver={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.background = 'var(--color-bg-secondary)';
                             }}
                             onMouseOut={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                                e.currentTarget.style.transform = 'translateY(0)';
+                                e.currentTarget.style.background = 'var(--color-bg-primary)';
                             }}
                             onClick={() => window.open('https://www.success-edge.net/contact/', '_blank')}
                         >
@@ -281,27 +247,22 @@ const RecruitmentBanner = ({ sticky = false }) => {
                         </button>
                         <button
                             style={{
-                                background: 'rgba(255, 255, 255, 0.08)',
-                                color: '#fff',
-                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                background: 'var(--color-bg-primary)',
+                                color: 'var(--color-text-primary)',
+                                border: '1px solid var(--border-glass)',
                                 padding: sticky ? '0.6rem 1.5rem' : '0.8rem 2.2rem',
-                                borderRadius: '14px',
+                                borderRadius: '2px',
                                 fontSize: sticky ? '0.9rem' : '1rem',
                                 fontWeight: '700',
                                 cursor: 'pointer',
-                                transition: 'all 0.2s',
                                 whiteSpace: 'nowrap',
                                 textAlign: 'center'
                             }}
                             onMouseOver={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                e.currentTarget.style.background = 'var(--color-bg-secondary)';
                             }}
                             onMouseOut={(e) => {
-                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                                e.currentTarget.style.transform = 'translateY(0)';
+                                e.currentTarget.style.background = 'var(--color-bg-primary)';
                             }}
                             onClick={() => window.open('https://www.success-edge.net/about/', '_blank')}
                         >
@@ -310,12 +271,11 @@ const RecruitmentBanner = ({ sticky = false }) => {
                     </div>
 
                     <div style={{
-                        height: sticky ? '100px' : '120px', // Further increased height
-                        width: sticky ? '150px' : '180px', // Further increased width
-                        borderRadius: '12px',
+                        height: sticky ? '100px' : '120px',
+                        width: sticky ? '150px' : '180px',
+                        borderRadius: '2px',
                         overflow: 'hidden',
-                        boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
-                        border: '1px solid rgba(255, 255, 255, 0.2)'
+                        border: '1px solid var(--border-glass)'
                     }}>
                         <img
                             src="/images/student-writing.jpg"

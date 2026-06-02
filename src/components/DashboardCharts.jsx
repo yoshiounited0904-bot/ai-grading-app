@@ -66,7 +66,7 @@ const DashboardCharts = ({ results }) => {
 
             {/* Row 1: Score Trend */}
             <div className="glass-panel" style={{ padding: '2rem' }}>
-                <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>📈 得点率の推移</h3>
+                <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>得点率の推移</h3>
                 <div style={{ height: '300px', width: '100%' }}>
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={trendData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
@@ -89,7 +89,7 @@ const DashboardCharts = ({ results }) => {
 
                 {/* Pass Probability Pie Chart */}
                 <div className="glass-panel" style={{ padding: '2rem' }}>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>🎯 合格判定の割合</h3>
+                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>合格判定の割合</h3>
                     <div style={{ height: '300px', width: '100%' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -115,7 +115,7 @@ const DashboardCharts = ({ results }) => {
 
                 {/* Subject Radar Chart */}
                 <div className="glass-panel" style={{ padding: '2rem' }}>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>📊 科目別平均得点率</h3>
+                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1.5rem', color: '#1e293b' }}>科目別平均得点率</h3>
                     <div style={{ height: '300px', width: '100%' }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>

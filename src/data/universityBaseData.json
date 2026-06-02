@@ -1,5 +1,1205 @@
 [
   {
+    "id": "中央大学_商学部（5学部共通選抜）_英語",
+    "fileName": "中央大学_商学部（5学部共通選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "商学部（5学部共通選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_商学部（会計／学部別選抜）_英語",
+    "fileName": "中央大学_商学部（会計／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "商学部（会計／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_商学部（国際マーケティング／学部別選抜）_英語",
+    "fileName": "中央大学_商学部（国際マーケティング／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "商学部（国際マーケティング／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_商学部（経営／学部別選抜）_英語",
+    "fileName": "中央大学_商学部（経営／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "商学部（経営／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_商学部（金融／学部別選抜）_英語",
+    "fileName": "中央大学_商学部（金融／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "商学部（金融／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_国際情報学部（学部別選抜）_英語",
+    "fileName": "中央大学_国際情報学部（学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "国際情報学部（学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_国際経営学部（学部別選抜）_英語",
+    "fileName": "中央大学_国際経営学部（学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "国際経営学部（学部別選抜）",
+    "subject": "英語",
+    "maxScore": 200,
+    "duration": 90,
+    "passingLines": {
+      "A": 160,
+      "B": 150,
+      "C": 140,
+      "D": 130,
+      "E": 120
+    }
+  },
+  {
+    "id": "中央大学_文学部（5学部共通選抜）_英語",
+    "fileName": "中央大学_文学部（5学部共通選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "文学部（5学部共通選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_文学部（学部別選抜）_英語",
+    "fileName": "中央大学_文学部（学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "文学部（学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_法学部（5学部共通選抜）_英語",
+    "fileName": "中央大学_法学部（5学部共通選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "法学部（5学部共通選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_法学部（学部別選抜）_英語",
+    "fileName": "中央大学_法学部（学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "法学部（学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_理工学部（ビジネスデータサイエンス学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（ビジネスデータサイエンス学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（ビジネスデータサイエンス学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（人間総合理工学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（人間総合理工学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（人間総合理工学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（応用化学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（応用化学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（応用化学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（情報工学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（情報工学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（情報工学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（数学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（数学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（数学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（物理学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（物理学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（物理学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（生命科学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（生命科学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（生命科学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（精密機械工学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（精密機械工学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（精密機械工学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（都市環境学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（都市環境学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（都市環境学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_理工学部（電気電子情報通信工学科／学部別選抜）_英語",
+    "fileName": "中央大学_理工学部（電気電子情報通信工学科／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "理工学部（電気電子情報通信工学科／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 80,
+    "passingLines": {
+      "A": 80,
+      "B": 75,
+      "C": 70,
+      "D": 65,
+      "E": 60
+    }
+  },
+  {
+    "id": "中央大学_経済学部（5学部共通選抜）_英語",
+    "fileName": "中央大学_経済学部（5学部共通選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（5学部共通選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_経済学部（公共・環境経済／学部別選抜）_英語",
+    "fileName": "中央大学_経済学部（公共・環境経済／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（公共・環境経済／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_経済学部（国際経済／学部別選抜）_英語",
+    "fileName": "中央大学_経済学部（国際経済／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（国際経済／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_経済学部（経済 2月14日／学部別選抜）_英語",
+    "fileName": "中央大学_経済学部（経済 2月14日／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（経済 2月14日／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_経済学部（経済 2月15日／学部別選抜）_英語",
+    "fileName": "中央大学_経済学部（経済 2月15日／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（経済 2月15日／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_経済学部（経済情報システム／学部別選抜）_英語",
+    "fileName": "中央大学_経済学部（経済情報システム／学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "経済学部（経済情報システム／学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_総合政策学部（5学部共通選抜）_英語",
+    "fileName": "中央大学_総合政策学部（5学部共通選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "総合政策学部（5学部共通選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "中央大学_総合政策学部（学部別選抜）_英語",
+    "fileName": "中央大学_総合政策学部（学部別選抜）_英語.md",
+    "university": "中央大学",
+    "faculty": "総合政策学部（学部別選抜）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 120,
+      "B": 113,
+      "C": 105,
+      "D": 98,
+      "E": 90
+    }
+  },
+  {
+    "id": "明治大学_商学部_英語",
+    "fileName": "明治大学_商学部_英語.md",
+    "university": "明治大学",
+    "faculty": "商学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 80,
+    "passingLines": {
+      "A": 120,
+      "B": 105,
+      "C": 98,
+      "D": 90,
+      "E": 75
+    }
+  },
+  {
+    "id": "明治大学_国際日本学部_英語",
+    "fileName": "明治大学_国際日本学部_英語.md",
+    "university": "明治大学",
+    "faculty": "国際日本学部",
+    "subject": "英語",
+    "maxScore": 200,
+    "duration": 80,
+    "passingLines": {
+      "A": 160,
+      "B": 140,
+      "C": 130,
+      "D": 120,
+      "E": 100
+    }
+  },
+  {
+    "id": "明治大学_情報コミュニケーション学部_英語",
+    "fileName": "明治大学_情報コミュニケーション学部_英語.md",
+    "university": "明治大学",
+    "faculty": "情報コミュニケーション学部",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 60,
+    "passingLines": {
+      "A": 80,
+      "B": 70,
+      "C": 65,
+      "D": 60,
+      "E": 50
+    }
+  },
+  {
+    "id": "明治大学_政治経済学部_英語",
+    "fileName": "明治大学_政治経済学部_英語.md",
+    "university": "明治大学",
+    "faculty": "政治経済学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 60,
+    "passingLines": {
+      "A": 120,
+      "B": 105,
+      "C": 98,
+      "D": 90,
+      "E": 75
+    }
+  },
+  {
+    "id": "明治大学_文学部_英語",
+    "fileName": "明治大学_文学部_英語.md",
+    "university": "明治大学",
+    "faculty": "文学部",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 60,
+    "passingLines": {
+      "A": 80,
+      "B": 70,
+      "C": 65,
+      "D": 60,
+      "E": 50
+    }
+  },
+  {
+    "id": "明治大学_法学部_英語",
+    "fileName": "明治大学_法学部_英語.md",
+    "university": "明治大学",
+    "faculty": "法学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 70,
+    "passingLines": {
+      "A": 120,
+      "B": 105,
+      "C": 98,
+      "D": 90,
+      "E": 75
+    }
+  },
+  {
+    "id": "明治大学_理工学部_英語",
+    "fileName": "明治大学_理工学部_英語.md",
+    "university": "明治大学",
+    "faculty": "理工学部",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "明治大学_経営学部_英語",
+    "fileName": "明治大学_経営学部_英語.md",
+    "university": "明治大学",
+    "faculty": "経営学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 70,
+    "passingLines": {
+      "A": 120,
+      "B": 105,
+      "C": 98,
+      "D": 90,
+      "E": 75
+    }
+  },
+  {
+    "id": "明治大学_総合数理学部_英語",
+    "fileName": "明治大学_総合数理学部_英語.md",
+    "university": "明治大学",
+    "faculty": "総合数理学部",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "明治大学_農学部 生命科学科_英語",
+    "fileName": "明治大学_農学部 生命科学科_英語.md",
+    "university": "明治大学",
+    "faculty": "農学部 生命科学科",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "明治大学_農学部 農学科_英語",
+    "fileName": "明治大学_農学部 農学科_英語.md",
+    "university": "明治大学",
+    "faculty": "農学部 農学科",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "明治大学_農学部 農芸化学科_英語",
+    "fileName": "明治大学_農学部 農芸化学科_英語.md",
+    "university": "明治大学",
+    "faculty": "農学部 農芸化学科",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "明治大学_農学部 食料環境政策学科_英語",
+    "fileName": "明治大学_農学部 食料環境政策学科_英語.md",
+    "university": "明治大学",
+    "faculty": "農学部 食料環境政策学科",
+    "subject": "英語",
+    "maxScore": 120,
+    "duration": 60,
+    "passingLines": {
+      "A": 96,
+      "B": 84,
+      "C": 78,
+      "D": 72,
+      "E": 60
+    }
+  },
+  {
+    "id": "法政大学_キャリアデザイン学部_英語",
+    "fileName": "法政大学_キャリアデザイン学部_英語.md",
+    "university": "法政大学",
+    "faculty": "キャリアデザイン学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_スポーツ健康学部_英語",
+    "fileName": "法政大学_スポーツ健康学部_英語.md",
+    "university": "法政大学",
+    "faculty": "スポーツ健康学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_デザイン工学部_英語",
+    "fileName": "法政大学_デザイン工学部_英語.md",
+    "university": "法政大学",
+    "faculty": "デザイン工学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 43
+    }
+  },
+  {
+    "id": "法政大学_デザイン工学部（建築学科）_英語",
+    "fileName": "法政大学_デザイン工学部（建築学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "デザイン工学部（建築学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_人間環境学部_英語",
+    "fileName": "法政大学_人間環境学部_英語.md",
+    "university": "法政大学",
+    "faculty": "人間環境学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_人間環境学部（人間環境学科）_英語",
+    "fileName": "法政大学_人間環境学部（人間環境学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "人間環境学部（人間環境学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 77,
+      "B": 71,
+      "C": 65,
+      "D": 57,
+      "E": 48
+    }
+  },
+  {
+    "id": "法政大学_国際文化学部_英語",
+    "fileName": "法政大学_国際文化学部_英語.md",
+    "university": "法政大学",
+    "faculty": "国際文化学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_情報科学部_英語",
+    "fileName": "法政大学_情報科学部_英語.md",
+    "university": "法政大学",
+    "faculty": "情報科学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 43
+    }
+  },
+  {
+    "id": "法政大学_情報科学部（コンピュータ科学科）_英語",
+    "fileName": "法政大学_情報科学部（コンピュータ科学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "情報科学部（コンピュータ科学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_文学部（史学科）_英語",
+    "fileName": "法政大学_文学部（史学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（史学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_文学部（哲学科）_英語",
+    "fileName": "法政大学_文学部（哲学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（哲学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_文学部（地理学科）_英語",
+    "fileName": "法政大学_文学部（地理学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（地理学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_文学部（心理学科）_英語",
+    "fileName": "法政大学_文学部（心理学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（心理学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_文学部（日本文学科）_英語",
+    "fileName": "法政大学_文学部（日本文学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（日本文学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 60,
+    "passingLines": {
+      "A": 76,
+      "B": 70,
+      "C": 65,
+      "D": 58,
+      "E": 50
+    }
+  },
+  {
+    "id": "法政大学_文学部（英文学科）_英語",
+    "fileName": "法政大学_文学部（英文学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "文学部（英文学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_法学部_英語",
+    "fileName": "法政大学_法学部_英語.md",
+    "university": "法政大学",
+    "faculty": "法学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_現代福祉学部_英語",
+    "fileName": "法政大学_現代福祉学部_英語.md",
+    "university": "法政大学",
+    "faculty": "現代福祉学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_現代福祉学部（現代福祉学科）_英語",
+    "fileName": "法政大学_現代福祉学部（現代福祉学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "現代福祉学部（現代福祉学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 77,
+      "B": 71,
+      "C": 65,
+      "D": 57,
+      "E": 48
+    }
+  },
+  {
+    "id": "法政大学_理工学部_英語",
+    "fileName": "法政大学_理工学部_英語.md",
+    "university": "法政大学",
+    "faculty": "理工学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 43
+    }
+  },
+  {
+    "id": "法政大学_理工学部（創生科学科）_英語",
+    "fileName": "法政大学_理工学部（創生科学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "理工学部（創生科学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_理工学部（経営システム工学科）_英語",
+    "fileName": "法政大学_理工学部（経営システム工学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "理工学部（経営システム工学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_理工学部（電気電子工学科）_英語",
+    "fileName": "法政大学_理工学部（電気電子工学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "理工学部（電気電子工学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_生命科学部_英語",
+    "fileName": "法政大学_生命科学部_英語.md",
+    "university": "法政大学",
+    "faculty": "生命科学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 43
+    }
+  },
+  {
+    "id": "法政大学_生命科学部（応用植物科学科）_英語",
+    "fileName": "法政大学_生命科学部（応用植物科学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "生命科学部（応用植物科学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_生命科学部（環境応用化学科）_英語",
+    "fileName": "法政大学_生命科学部（環境応用化学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "生命科学部（環境応用化学科）",
+    "subject": "英語",
+    "maxScore": 100,
+    "duration": 90,
+    "passingLines": {
+      "A": 73,
+      "B": 66,
+      "C": 60,
+      "D": 53,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_社会学部_英語",
+    "fileName": "法政大学_社会学部_英語.md",
+    "university": "法政大学",
+    "faculty": "社会学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_社会学部（メディア社会学科）_英語",
+    "fileName": "法政大学_社会学部（メディア社会学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "社会学部（メディア社会学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 77,
+      "B": 71,
+      "C": 65,
+      "D": 57,
+      "E": 48
+    }
+  },
+  {
+    "id": "法政大学_社会学部（社会政策科学科）_英語",
+    "fileName": "法政大学_社会学部（社会政策科学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "社会学部（社会政策科学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 77,
+      "B": 71,
+      "C": 65,
+      "D": 57,
+      "E": 48
+    }
+  },
+  {
+    "id": "法政大学_経営学部_英語",
+    "fileName": "法政大学_経営学部_英語.md",
+    "university": "法政大学",
+    "faculty": "経営学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_経営学部（経営学科）_英語",
+    "fileName": "法政大学_経営学部（経営学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "経営学部（経営学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 77,
+      "B": 71,
+      "C": 65,
+      "D": 57,
+      "E": 48
+    }
+  },
+  {
+    "id": "法政大学_経済学部_英語",
+    "fileName": "法政大学_経済学部_英語.md",
+    "university": "法政大学",
+    "faculty": "経済学部",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 75,
+      "B": 68,
+      "C": 62,
+      "D": 55,
+      "E": 45
+    }
+  },
+  {
+    "id": "法政大学_経済学部（国際経済学科）_英語",
+    "fileName": "法政大学_経済学部（国際経済学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "経済学部（国際経済学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 78,
+      "B": 72,
+      "C": 66,
+      "D": 58,
+      "E": 49
+    }
+  },
+  {
+    "id": "法政大学_経済学部（現代ビジネス学科）_英語",
+    "fileName": "法政大学_経済学部（現代ビジネス学科）_英語.md",
+    "university": "法政大学",
+    "faculty": "経済学部（現代ビジネス学科）",
+    "subject": "英語",
+    "maxScore": 150,
+    "duration": 90,
+    "passingLines": {
+      "A": 78,
+      "B": 72,
+      "C": 66,
+      "D": 58,
+      "E": 49
+    }
+  },
+  {
     "id": "青山学院大学_コミュニティ人間科学部（全学部日程）_英語",
     "fileName": "青山学院大学_コミュニティ人間科学部（全学部日程）_英語.md",
     "university": "青山学院大学",
@@ -81,13 +1281,14 @@
     "university": "青山学院大学",
     "faculty": "文学部（文／英米文(A) 個別学部日程）",
     "subject": "英語",
-    "maxScore": 200,
+    "maxScore": 150,
     "duration": 70,
     "passingLines": {
-      "A": 170,
-      "B": 156,
-      "C": 146,
-      "D": 125
+      "A": 130,
+      "B": 118,
+      "C": 108,
+      "D": 92,
+      "E": 72
     }
   },
   {
@@ -99,10 +1300,11 @@
     "maxScore": 150,
     "duration": 80,
     "passingLines": {
-      "A": 123,
-      "B": 113,
+      "A": 128,
+      "B": 115,
       "C": 105,
-      "D": 90
+      "D": 90,
+      "E": 70
     }
   },
   {
@@ -117,7 +1319,8 @@
       "A": 156,
       "B": 144,
       "C": 134,
-      "D": 115
+      "D": 115,
+      "E": 90
     }
   },
   {
@@ -205,12 +1408,13 @@
     "faculty": "理工学部（化学・生命科(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 113,
-      "B": 102,
-      "C": 92,
-      "D": 79
+      "A": 120,
+      "B": 106,
+      "C": 96,
+      "D": 83,
+      "E": 65
     }
   },
   {
@@ -235,12 +1439,13 @@
     "faculty": "理工学部（情報テクノロジー(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 116,
-      "B": 105,
-      "C": 95,
-      "D": 80
+      "A": 121,
+      "B": 108,
+      "C": 98,
+      "D": 85,
+      "E": 66
     }
   },
   {
@@ -265,12 +1470,13 @@
     "faculty": "理工学部（数理サイエンス(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 112,
-      "B": 101,
-      "C": 91,
-      "D": 78
+      "A": 118,
+      "B": 105,
+      "C": 95,
+      "D": 82,
+      "E": 65
     }
   },
   {
@@ -295,12 +1501,13 @@
     "faculty": "理工学部（機械創造工(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 110,
-      "B": 100,
-      "C": 90,
-      "D": 75
+      "A": 115,
+      "B": 103,
+      "C": 93,
+      "D": 80,
+      "E": 62
     }
   },
   {
@@ -325,12 +1532,13 @@
     "faculty": "理工学部（物理科(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 122,
-      "B": 110,
-      "C": 100,
-      "D": 85
+      "A": 125,
+      "B": 112,
+      "C": 102,
+      "D": 88,
+      "E": 70
     }
   },
   {
@@ -355,12 +1563,13 @@
     "faculty": "理工学部（経営システム工(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 108,
-      "B": 98,
-      "C": 88,
-      "D": 74
+      "A": 114,
+      "B": 102,
+      "C": 92,
+      "D": 79,
+      "E": 61
     }
   },
   {
@@ -385,12 +1594,13 @@
     "faculty": "理工学部（電気電子工(A) 個別学部日程）",
     "subject": "英語",
     "maxScore": 150,
-    "duration": 90,
+    "duration": 80,
     "passingLines": {
-      "A": 105,
-      "B": 95,
-      "C": 85,
-      "D": 72
+      "A": 112,
+      "B": 100,
+      "C": 90,
+      "D": 78,
+      "E": 60
     }
   },
   {
@@ -467,7 +1677,8 @@
       "A": 150,
       "B": 138,
       "C": 126,
-      "D": 110
+      "D": 110,
+      "E": 85
     }
   },
   {
@@ -491,13 +1702,14 @@
     "university": "青山学院大学",
     "faculty": "社会情報学部（社会情報／C 個別学部日程）",
     "subject": "英語",
-    "maxScore": 100,
-    "duration": 60,
+    "maxScore": 200,
+    "duration": 90,
     "passingLines": {
-      "A": 78,
-      "B": 70,
-      "C": 62,
-      "D": 50
+      "A": 145,
+      "B": 132,
+      "C": 120,
+      "D": 105,
+      "E": 80
     }
   },
   {
@@ -506,13 +1718,14 @@
     "university": "青山学院大学",
     "faculty": "社会情報学部（社会情報／D 個別学部日程）",
     "subject": "英語",
-    "maxScore": 100,
-    "duration": 60,
+    "maxScore": 200,
+    "duration": 90,
     "passingLines": {
-      "A": 83,
-      "B": 75,
-      "C": 68,
-      "D": 55
+      "A": 158,
+      "B": 146,
+      "C": 136,
+      "D": 118,
+      "E": 92
     }
   },
   {
@@ -555,10 +1768,11 @@
     "maxScore": 150,
     "duration": 90,
     "passingLines": {
-      "A": 125,
+      "A": 126,
       "B": 115,
-      "C": 108,
-      "D": 92
+      "C": 105,
+      "D": 90,
+      "E": 70
     }
   },
   {
@@ -601,10 +1815,11 @@
     "maxScore": 150,
     "duration": 90,
     "passingLines": {
-      "A": 123,
-      "B": 112,
-      "C": 102,
-      "D": 86
+      "A": 120,
+      "B": 108,
+      "C": 98,
+      "D": 83,
+      "E": 64
     }
   },
   {
@@ -616,10 +1831,11 @@
     "maxScore": 150,
     "duration": 90,
     "passingLines": {
-      "A": 110,
-      "B": 100,
-      "C": 90,
-      "D": 76
+      "A": 116,
+      "B": 105,
+      "C": 95,
+      "D": 80,
+      "E": 62
     }
   },
   {

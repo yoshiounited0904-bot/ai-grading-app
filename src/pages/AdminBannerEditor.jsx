@@ -275,7 +275,7 @@ const AdminBannerEditor = () => {
                         </div>
                     </div>
 
-                    <div className={`bg-gray-200 rounded-2xl p-4 overflow-hidden border-4 border-gray-300 transition-all duration-300 flex items-center justify-center ${previewMode === 'mobile' ? 'w-[320px] h-[500px] mx-auto' : 'w-full h-[400px]'}`}>
+                    <div className={`bg-gray-200 rounded-md p-4 overflow-hidden border-4 border-gray-300 transition-all duration-300 flex items-center justify-center ${previewMode === 'mobile' ? 'w-[320px] h-[500px] mx-auto' : 'w-full h-[400px]'}`}>
                         <div className="w-full h-full bg-white rounded shadow-inner p-4 overflow-y-auto relative">
                             {/* モックコンテンツ */}
                             <div className="w-full h-8 bg-gray-100 mb-4 rounded"></div>

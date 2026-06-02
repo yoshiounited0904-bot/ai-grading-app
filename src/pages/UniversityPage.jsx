@@ -11,9 +11,17 @@ const UniversityPage = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!authLoading && !user) {
-            navigate('/');
-            return;
+        if (!authLoading) {
+            const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
+            if (!user && isGuestGraded) {
+                navigate('/');
+                // Wait slightly for Home component to mount before dispatching event
+                setTimeout(() => {
+                    document.dispatchEvent(new CustomEvent('openAuthModal', { 
+                        detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
+                    }));
+                }, 100);
+            }
         }
     }, [user, authLoading, navigate]);
 
@@ -99,12 +107,20 @@ const UniversityPage = () => {
 
     // Extract unique years and subjects for the matrix
     const years = [...new Set(allExams.map(e => e.year))].sort((a, b) => b - a);
-    const subjects = [...new Set(allExams.map(e => e.subject))];
+    const SUBJECT_ORDER = ['英語', '数学', '国語', '日本史', '世界史', '地理', '物理', '化学', '生物', '社会'];
+    const subjects = [...new Set(allExams.map(e => e.subject))].sort((a, b) => {
+        const ai = SUBJECT_ORDER.indexOf(a);
+        const bi = SUBJECT_ORDER.indexOf(b);
+        if (ai === -1 && bi === -1) return a.localeCompare(b, 'ja');
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
 
     return (
         <div className="container" style={{ maxWidth: '800px' }}>
-            <header style={{ marginBottom: '3rem', textAlign: 'center' }}>
-                <h1 style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>{university.name}</h1>
+            <header style={{ marginBottom: '2rem', textAlign: 'center', marginTop: '1rem' }}>
+                <h1 style={{ marginBottom: '0.5rem' }}>{university.name}</h1>
                 <p style={{ color: 'var(--color-text-secondary)' }}>学部を選択してください</p>
             </header>
 
@@ -147,7 +163,7 @@ const UniversityPage = () => {
                                                                 style={{
                                                                     fontSize: '0.8rem',
                                                                     padding: '0.4rem 1rem',
-                                                                    borderRadius: '20px',
+                                                                    borderRadius: '2px',
                                                                     width: '100%',
                                                                     maxWidth: '100px'
                                                                 }}
@@ -220,8 +236,7 @@ const UniversityPage = () => {
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.6)',
-                    backdropFilter: 'blur(8px)',
+                    backgroundColor: 'rgba(0,0,0,0.5)',
                     zIndex: 1000,
                     display: 'flex',
                     alignItems: 'center',
@@ -233,8 +248,7 @@ const UniversityPage = () => {
                         maxWidth: '500px',
                         padding: '2.5rem',
                         position: 'relative',
-                        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-                        border: '1px solid rgba(255,255,255,0.2)'
+                        border: '1px solid #cbd5e1'
                     }}>
                         <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem', color: 'var(--color-text-primary)' }}>解答範囲の選択</h2>
                         <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '2rem' }}>解きたい大問にチェックを入れてください</p>
@@ -244,7 +258,7 @@ const UniversityPage = () => {
                                 style={{ 
                                     padding: '1rem', 
                                     backgroundColor: 'rgba(var(--color-accent-primary-rgb), 0.05)',
-                                    borderRadius: '12px',
+                                    borderRadius: '2px',
                                     marginBottom: '1rem',
                                     cursor: 'pointer',
                                     display: 'flex',
@@ -276,7 +290,7 @@ const UniversityPage = () => {
                                     style={{ 
                                         padding: '1rem', 
                                         backgroundColor: 'white',
-                                        borderRadius: '12px',
+                                        borderRadius: '2px',
                                         marginBottom: '0.5rem',
                                         cursor: 'pointer',
                                         display: 'flex',

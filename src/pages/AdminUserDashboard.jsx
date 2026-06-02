@@ -86,7 +86,7 @@ function AdminUserDashboard() {
                         <p className="text-gray-500">該当するユーザーはいません。</p>
                     </div>
                 ) : (
-                    <div className="bg-white/50 backdrop-blur-sm rounded-2xl p-4 shadow-inner border-2 border-indigo-100/50">
+                    <div className="bg-white/50 backdrop-blur-sm rounded-md p-4 shadow-inner border-2 border-indigo-100/50">
                         <div className="overflow-x-auto">
                             <table className="min-w-full border-separate border-spacing-y-3">
                                 <thead>

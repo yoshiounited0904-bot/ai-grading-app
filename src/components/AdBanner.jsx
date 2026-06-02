@@ -51,10 +51,10 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => handleClick(banner.id)}
-                    className="block bg-navy-blue/5 border border-navy-blue/20 p-4 rounded-xl text-center hover:bg-navy-blue/10 transition-colors"
+                    className="block bg-navy-blue/5 border border-navy-blue/20 p-4 rounded-sm text-center hover:bg-navy-blue/10 transition-colors"
                 >
                     <p className="text-navy-blue font-bold text-sm md:text-base">
-                        <span className="bg-navy-blue text-white text-[10px] px-2 py-0.5 rounded-full mr-2 align-middle">PR</span>
+                        <span className="bg-navy-blue text-white text-[10px] px-2 py-0.5 rounded-sm mr-2 align-middle">PR</span>
                         {banner.title}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">詳細はこちらをクリック →</p>
@@ -70,7 +70,7 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => handleClick(banner.id)}
-                className={`block relative group overflow-hidden rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all ${isSquare ? 'max-w-xs mx-auto aspect-square' : 'w-full min-h-[60px] aspect-[16/3] md:aspect-[1200/300]'}`}
+                className={`block relative group overflow-hidden rounded-sm shadow-sm border border-gray-200 hover:shadow-md transition-all ${isSquare ? 'max-w-xs mx-auto aspect-square' : 'w-full min-h-[60px] aspect-[16/3] md:aspect-[1200/300]'}`}
             >
                 <img
                     src={banner.image_url}
@@ -78,10 +78,10 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     style={{ minHeight: '60px' }}
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
                     <span className="text-white text-xs font-bold drop-shadow-md">詳細を見る →</span>
                 </div>
-                <div className="absolute top-2 right-2 bg-black/50 text-white text-[8px] px-1.5 py-0.5 rounded backdrop-blur-sm">広告</div>
+                <div className="absolute top-2 right-2 bg-black/75 text-white text-[8px] px-1.5 py-0.5 rounded-sm">広告</div>
             </a>
         );
     };

@@ -12,9 +12,16 @@ const FacultyPage = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!authLoading && !user) {
-            navigate('/');
-            return;
+        if (!authLoading) {
+            const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
+            if (!user && isGuestGraded) {
+                navigate('/');
+                setTimeout(() => {
+                    document.dispatchEvent(new CustomEvent('openAuthModal', { 
+                        detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
+                    }));
+                }, 100);
+            }
         }
     }, [user, authLoading, navigate]);
 
@@ -63,7 +70,7 @@ const FacultyPage = () => {
                                         background: '#e0f2fe',
                                         color: '#0369a1',
                                         padding: '0.2rem 0.6rem',
-                                        borderRadius: '12px',
+                                        borderRadius: '2px',
                                         fontWeight: '600'
                                     }}>
                                         PDF採点対応

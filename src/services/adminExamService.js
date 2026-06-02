@@ -1,5 +1,83 @@
 import { supabase } from './supabaseClient';
 import { universities } from '../data/mockData';
+import universityBaseData from '../data/universityBaseData.json';
+
+export const importAogakuData = async () => {
+    let count = 0;
+    
+    for (const item of universityBaseData) {
+        const uniName = item.university || '青山学院大学';
+        
+        // Resolve university_id (2260 for Aoyama, 2680 for Chuo, 3050 for Hosei, 2270 for Meiji, fallback to passnavi url extraction)
+        let uniId = 2260;
+        if (uniName === '中央大学') uniId = 2680;
+        else if (uniName === '法政大学') uniId = 3050;
+        else if (uniName === '明治大学') uniId = 2270;
+        else if (uniName === '青山学院大学') uniId = 2260;
+        else {
+            const passnaviMatch = (item.sources || []).find(s => s.includes('passnavi.obunsha.co.jp/univ/'));
+            if (passnaviMatch) {
+                const match = passnaviMatch.match(/univ\/(\d+)/);
+                if (match) uniId = parseInt(match[1]);
+            }
+        }
+
+        const safeFac = item.faculty.replace(/[^a-zA-Z0-9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/g, '').toLowerCase();
+        let uniPrefix = 'aoyama-';
+        if (uniName === '中央大学') uniPrefix = 'chuo-';
+        else if (uniName === '法政大学') uniPrefix = 'hosei-';
+        else if (uniName === '明治大学') uniPrefix = 'meiji-';
+        const examId = `${uniPrefix}${safeFac}-2025-${item.subject_en || 'english'}`.toLowerCase();
+        
+        // Generate a stable faculty ID based on the safe faculty name to prevent random regenerations
+        const stableFacId = `fac-${safeFac.substring(0, 10)}`;
+
+        const record = {
+            id: examId,
+            university: uniName,
+            university_id: uniId,
+            faculty: item.faculty,
+            faculty_id: stableFacId,
+            year: 2025,
+            subject: item.subject,
+            subject_en: item.subject_en || 'english',
+            type: 'pdf',
+            max_score: item.maxScore || 100,
+            duration_minutes: item.duration || item.durationMinutes || 60,
+            passing_lines: item.passingLines || {},
+            is_published: true,
+            master_status: '未着手',
+            structure: []
+        };
+
+        // SAFETY SHIELD: Retrieve existing exam first so we NEVER overwrite detailed structure or PDF paths
+        const { data: existing } = await supabase
+            .from('exams')
+            .select('structure, pdf_path, master_status, is_published, faculty_id')
+            .eq('id', examId)
+            .maybeSingle();
+
+        if (existing) {
+            record.structure = existing.structure || [];
+            record.pdf_path = existing.pdf_path || '';
+            record.master_status = existing.master_status || '未着手';
+            record.is_published = existing.is_published !== undefined ? existing.is_published : true;
+            record.faculty_id = existing.faculty_id || stableFacId;
+        }
+
+        const { error } = await supabase
+            .from('exams')
+            .upsert(record, { onConflict: 'id' });
+
+        if (!error) {
+            count++;
+        } else {
+            console.error("Failed to insert university data", record.id, error.message);
+        }
+    }
+    
+    return count;
+};
 
 export const importMockData = async () => {
     let count = 0;
@@ -22,6 +100,7 @@ export const importMockData = async () => {
                     pdf_path: exam.pdfPath || null,
                     max_score: exam.maxScore || 100,
                     detailed_analysis: exam.detailedAnalysis || null,
+                    is_published: true,
                     structure: exam.structure || []
                 };
 
@@ -94,6 +173,14 @@ export const deleteAdminExam = async (id) => {
         .from('exams')
         .delete()
         .eq('id', id);
+    return { error };
+};
+
+export const deleteAdminExamsBulk = async (ids) => {
+    const { error } = await supabase
+        .from('exams')
+        .delete()
+        .in('id', ids);
     return { error };
 };
 
@@ -188,6 +275,7 @@ export const duplicateAdminExam = async (examId, count = 1) => {
             ...cleanData,
             subject: count > 1 ? `${cleanData.subject}(コピー${i + 1})` : `${cleanData.subject}(コピー)`,
             master_status: 'working', // Reset status for the copy
+            is_published: true, // Make sure duplicates are published by default
             id: `copy_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}` 
         });
     }

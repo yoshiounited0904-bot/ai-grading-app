@@ -165,7 +165,7 @@ const data = [
   }
 ];
 
-const obsidianPath = '/Users/yoshitakaosawa/Library/CloudStorage/GoogleDrive-yoshitaka0904@keio.jp/マイドライブ/Obsidian Vault/スマサイ開発/大学データ';
+const obsidianPath = '/Users/yoshitakaosawa/Library/CloudStorage/GoogleDrive-yoshitaka0904@keio.jp/.shortcut-targets-by-id/1nRs2-ZtmgeGo8mQDUGQVOOPgSC01-hAY/Obsidian Vault/スマサイ開発/大学データ';
 
 data.forEach(item => {
   // Replace / with - in filename
