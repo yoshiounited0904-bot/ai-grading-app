@@ -69,6 +69,7 @@ function AdminResultAnalytics() {
     const navigate = useNavigate();
     const [days, setDays] = useState('30');
     const [searchQuery, setSearchQuery] = useState('');
+    const [roleFilter, setRoleFilter] = useState('all');
     const [userFilter, setUserFilter] = useState('all');
     const [universityFilter, setUniversityFilter] = useState('all');
     const [analytics, setAnalytics] = useState({ users: [], results: [] });
@@ -139,6 +140,8 @@ function AdminResultAnalytics() {
     const filteredResults = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return analytics.results.filter((result) => {
+            if (roleFilter === 'students' && result.isAdminResult) return false;
+            if (roleFilter === 'admin' && !result.isAdminResult) return false;
             if (userFilter !== 'all' && result.user_id !== userFilter) return false;
             if (universityFilter !== 'all' && result.university_name !== universityFilter) return false;
             if (!query) return true;
@@ -159,9 +162,10 @@ function AdminResultAnalytics() {
 
             return normalizeSearchText(searchable).includes(query);
         });
-    }, [analytics.results, searchQuery, universityFilter, userFilter]);
+    }, [analytics.results, roleFilter, searchQuery, universityFilter, userFilter]);
 
     const summary = useMemo(() => {
+        const studentUsers = analytics.users.filter(u => u?.role !== 'admin');
         const activeUserIds = new Set(filteredResults.map(result => result.user_id).filter(Boolean));
         const rates = filteredResults
             .map(result => result.scoreRate)
@@ -172,13 +176,13 @@ function AdminResultAnalytics() {
         const newest = filteredResults[0]?.created_at || null;
 
         return {
-            registeredUsers: analytics.users.length,
+            registeredUsers: studentUsers.length || analytics.users.length,
             activeUsers: activeUserIds.size,
             resultCount: filteredResults.length,
             averageRate,
             newest
         };
-    }, [analytics.users.length, filteredResults]);
+    }, [analytics.users, filteredResults]);
 
     return (
         <div className="space-y-5">
@@ -203,7 +207,7 @@ function AdminResultAnalytics() {
                 </div>
             )}
             <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4">
-                <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_220px_220px_auto] gap-3 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-[130px_130px_1fr_180px_180px_auto] gap-3 items-end">
                     <label className="flex flex-col gap-1">
                         <span className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em]">期間</span>
                         <select
@@ -215,6 +219,18 @@ function AdminResultAnalytics() {
                             <option value="30">過去30日</option>
                             <option value="90">過去90日</option>
                             <option value="all">全期間</option>
+                        </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                        <span className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em]">種別</span>
+                        <select
+                            value={roleFilter}
+                            onChange={(e) => setRoleFilter(e.target.value)}
+                            className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-navy-blue outline-none focus:border-navy-blue/40 focus:bg-white"
+                        >
+                            <option value="all">全答案</option>
+                            <option value="students">生徒のみ</option>
+                            <option value="admin">管理者テスト</option>
                         </select>
                     </label>
                     <label className="flex flex-col gap-1">
@@ -235,7 +251,9 @@ function AdminResultAnalytics() {
                         >
                             <option value="all">全ユーザー</option>
                             {usersWithResults.map(user => (
-                                <option key={user.id} value={user.id}>{user.username || user.id.slice(0, 8)}</option>
+                                <option key={user.id} value={user.id}>
+                                    {user.username || user.id.slice(0, 8)} {user.role === 'admin' ? '(管理者)' : ''}
+                                </option>
                             ))}
                         </select>
                     </label>
@@ -256,6 +274,7 @@ function AdminResultAnalytics() {
                         type="button"
                         onClick={() => {
                             setSearchQuery('');
+                            setRoleFilter('all');
                             setUserFilter('all');
                             setUniversityFilter('all');
                         }}
@@ -323,7 +342,14 @@ function AdminResultAnalytics() {
                                         </td>
                                         <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm min-w-[180px]">
                                             <div className="flex flex-col">
-                                                <span className="font-black text-navy-blue group-hover:text-indigo-600 transition-colors">{result.userName}</span>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="font-black text-navy-blue group-hover:text-indigo-600 transition-colors">{result.userName}</span>
+                                                    {result.isAdminResult && (
+                                                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                                                            管理者テスト
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <span className="text-[10px] text-gray-400 font-mono">{String(result.user_id || '').slice(0, 8)}...</span>
                                                 {(result.userGrade || result.userFirstChoice) && (
                                                     <span className="text-[10px] text-gray-400 font-bold mt-1">

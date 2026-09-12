@@ -144,12 +144,8 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         return { data: null, error: resultsResult.error };
     }
 
-    const visibleUsers = profilesData.filter(user => user?.role !== 'admin');
     const usersById = new Map(profilesData.map(user => [user.id, user]));
-    const results = (resultsResult.data || []).filter(result => {
-        const user = usersById.get(result.user_id) || null;
-        return user?.role !== 'admin';
-    }).map(result => {
+    const results = (resultsResult.data || []).map(result => {
         const user = usersById.get(result.user_id) || null;
         const score = Number(result.score);
         const maxScore = Number(result.max_score);
@@ -160,17 +156,18 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         return {
             ...result,
             scoreRate,
-            userName: user?.username || (result.user_id ? `生徒 (${result.user_id.slice(0, 8)})` : '名前なし'),
+            userName: user?.username || (result.user_id ? `ユーザー (${result.user_id.slice(0, 8)})` : '名前なし'),
             userGrade: user?.grade || '',
             userFirstChoice: user?.first_choice_university || '',
             userPlan: user?.plan || 'free',
-            userRole: user?.role || 'user'
+            userRole: user?.role || 'user',
+            isAdminResult: user?.role === 'admin'
         };
     });
 
     return {
         data: {
-            users: visibleUsers,
+            users: profilesData,
             results
         },
         error: null
