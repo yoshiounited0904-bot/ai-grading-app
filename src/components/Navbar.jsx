@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { isAdminEmail } from '../config/adminConfig';
 import { signOut } from '../services/authService';
 import { getAnnouncements } from '../services/announcementService';
+import { getUserPlan } from '../services/usageLimitService';
 import FeedbackForm from './FeedbackForm';
 
 const Navbar = () => {
@@ -20,6 +21,10 @@ const Navbar = () => {
     });
     const navigate = useNavigate();
     const { profile, user } = useAuth();
+    const isLoggedIn = Boolean(user);
+    const currentPlan = getUserPlan(profile);
+    const isPremiumMember = currentPlan === 'premium' || currentPlan === 'admin';
+    const premiumBadgeLabel = currentPlan === 'admin' ? 'ADMIN' : 'PREMIUM';
 
     React.useEffect(() => {
         const fetchA = async () => {
@@ -31,8 +36,8 @@ const Navbar = () => {
 
     const toggleMenu = () => setIsOpen(!isOpen);
     
-    // Check if there are any announcements marked is_new that are NOT in the readIds list
-    const hasNewAnnouncements = announcementsData.some(a => a.is_new && !readIds.includes(a.id));
+    // Guest users can read announcements, but only logged-in users get unread markers.
+    const hasNewAnnouncements = isLoggedIn && announcementsData.some(a => a.is_new && !readIds.includes(a.id));
 
     const toggleAnnouncements = () => {
         setShowAnnouncements(!showAnnouncements);
@@ -40,6 +45,7 @@ const Navbar = () => {
     };
 
     const markAsRead = (id) => {
+        if (!isLoggedIn) return;
         if (readIds.includes(id)) return;
         const newReadIds = [...readIds, id];
         setReadIds(newReadIds);
@@ -47,13 +53,14 @@ const Navbar = () => {
     };
 
     const markAllAsRead = () => {
+        if (!isLoggedIn) return;
         const allIds = announcementsData.map(a => a.id);
         setReadIds(allIds);
         localStorage.setItem('read_announcement_ids', JSON.stringify(allIds));
     };
 
     return (
-        <nav style={{
+        <nav className="site-navbar" style={{
             background: '#ffffff',
             borderBottom: '1px solid var(--color-silver-light)',
             position: 'sticky',
@@ -63,7 +70,7 @@ const Navbar = () => {
             display: 'flex',
             alignItems: 'center'
         }}>
-            <div className="container" style={{
+            <div className="container site-navbar-inner" style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -72,7 +79,7 @@ const Navbar = () => {
                 width: '100%'
             }}>
                 {/* Logo */}
-                <Link to="/" style={{
+                <Link to="/" className="site-navbar-brand" style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: '0.75rem',
@@ -82,15 +89,18 @@ const Navbar = () => {
                         width: '32px',
                         height: '32px',
                         background: 'var(--color-accent-primary)',
-                        borderRadius: '2px',
+                        borderRadius: '7px',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         color: 'white',
-                        fontWeight: 'bold',
-                        fontSize: '1.2rem'
+                        fontWeight: '800',
+                        fontSize: '1.25rem',
+                        lineHeight: 1,
+                        letterSpacing: 0,
+                        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)'
                     }}>
-                        A
+                        S
                     </div>
                     <span style={{
                         fontFamily: 'var(--font-heading)',
@@ -101,6 +111,21 @@ const Navbar = () => {
                     }}>
                         スマサイ
                     </span>
+                    {isPremiumMember && (
+                        <span style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 900,
+                            color: '#92400e',
+                            background: 'linear-gradient(135deg, #fff7ed 0%, #fef3c7 100%)',
+                            border: '1px solid #f59e0b',
+                            borderRadius: '999px',
+                            padding: '0.18rem 0.5rem',
+                            letterSpacing: '0.08em',
+                            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.18)'
+                        }}>
+                            {premiumBadgeLabel}
+                        </span>
+                    )}
                 </Link>
 
                 {/* Desktop Navigation */}
@@ -110,7 +135,7 @@ const Navbar = () => {
                     alignItems: 'center'
                 }}>
                     <Link to="/" style={{ fontWeight: '600', color: 'var(--color-text-primary)' }}>ホーム</Link>
-                    {profile && (
+                    {isLoggedIn && (
                         <Link to="/dashboard" style={{ fontWeight: '600', color: 'var(--color-text-primary)' }}>マイページ</Link>
                     )}
                     {(profile?.role === 'admin' || isAdminEmail(user?.email)) && (
@@ -131,9 +156,6 @@ const Navbar = () => {
                     >
                         お問い合わせ
                     </button>
-                    <Link to="/terms" style={{ fontFamily: 'inherit', fontWeight: '500', color: 'var(--color-text-primary)', fontSize: '1rem' }}>利用規約</Link>
-                    <Link to="/privacy" style={{ fontFamily: 'inherit', fontWeight: '500', color: 'var(--color-text-primary)', fontSize: '1rem' }}>プライバシーポリシー</Link>
-
                     {/* Announcements Icon (Desktop) */}
                     <div style={{ position: 'relative' }}>
                         <button 
@@ -168,7 +190,7 @@ const Navbar = () => {
                         </button>
                     </div>
 
-                    {profile ? (
+                    {isLoggedIn ? (
                         <button
                             className="btn btn-secondary"
                             style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', background: 'transparent', border: '1px solid var(--color-silver-light)' }}
@@ -250,7 +272,7 @@ const Navbar = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>
                         <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--color-navy-blue)' }}>お知らせ</h3>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            {announcementsData.some(a => a.is_new && !readIds.includes(a.id)) && (
+                            {hasNewAnnouncements && (
                                 <button 
                                     onClick={markAllAsRead}
                                     style={{
@@ -273,7 +295,7 @@ const Navbar = () => {
                         <p style={{ color: '#666', textAlign: 'center', margin: '1rem 0' }}>現在お知らせはありません</p>
                     ) : (
                         announcementsData.map(item => {
-                            const isUnread = item.is_new && !readIds.includes(item.id);
+                            const isUnread = isLoggedIn && item.is_new && !readIds.includes(item.id);
                             return (
                                 <div 
                                     key={item.id} 
@@ -334,7 +356,7 @@ const Navbar = () => {
 
             {/* Mobile Menu Overlay */}
             {isOpen && (
-                <div style={{
+                <div className="site-mobile-menu" style={{
                     position: 'fixed',
                     top: '64px',
                     left: 0,
@@ -381,10 +403,9 @@ const Navbar = () => {
                         )}
                     </button>
 
-                    {profile && (
+                    {isLoggedIn && (
                         <>
                             <Link to="/dashboard" onClick={toggleMenu} style={{ fontSize: '1.1rem', fontWeight: '600' }}>マイページ</Link>
-                            <Link to="/weakness" onClick={toggleMenu} style={{ fontSize: '1.1rem', fontWeight: '600' }}>弱点分析</Link>
                         </>
                     )}
                     {(profile?.role === 'admin' || isAdminEmail(user?.email)) && (
@@ -410,10 +431,7 @@ const Navbar = () => {
                     >
                         お問い合わせ
                     </button>
-                    <Link to="/terms" onClick={toggleMenu} style={{ fontFamily: 'inherit', fontSize: '1.1rem', fontWeight: '500', color: 'var(--color-text-primary)' }}>利用規約</Link>
-                    <Link to="/privacy" onClick={toggleMenu} style={{ fontFamily: 'inherit', fontSize: '1.1rem', fontWeight: '500', color: 'var(--color-text-primary)' }}>プライバシーポリシー</Link>
-
-                    {profile ? (
+                    {isLoggedIn ? (
                         <button
                             className="btn btn-secondary btn-mobile-full"
                             style={{ background: 'transparent', border: '1px solid var(--color-silver-light)', marginTop: '1rem' }}

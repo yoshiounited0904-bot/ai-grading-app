@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { signOut } from '../services/authService';
 import RecruitmentBanner from '../components/RecruitmentBanner';
 import AdBanner from '../components/AdBanner';
+import { MARKETING_CONFIG } from '../config/marketingConfig';
 
 const Home = () => {
     const { user, profile, loading } = useAuth();
@@ -14,17 +15,39 @@ const Home = () => {
     const navigate = useNavigate();
     const [universities, setUniversities] = useState([]);
     const [loadingUniversities, setLoadingUniversities] = useState(true);
+    const [universityLoadError, setUniversityLoadError] = useState('');
 
     const displayName = profile?.username || user?.user_metadata?.username || user?.email?.split('@')[0] || 'ユーザー';
     const displayInitial = displayName.charAt(0).toUpperCase();
 
     useEffect(() => {
+        let isMounted = true;
         const fetchUniversities = async () => {
-            const data = await getUniversityList();
-            setUniversities(data);
-            setLoadingUniversities(false);
+            setLoadingUniversities(true);
+            setUniversityLoadError('');
+            try {
+                const data = await Promise.race([
+                    getUniversityList(),
+                    new Promise((_, reject) => window.setTimeout(() => reject(new Error('大学一覧の取得がタイムアウトしました。')), 30000))
+                ]);
+                if (!isMounted) return;
+                setUniversities(Array.isArray(data) ? data : []);
+            } catch (err) {
+                console.error('Failed to load university list:', err);
+                if (!isMounted) return;
+                setUniversities([]);
+                setUniversityLoadError(err.message || '大学一覧の取得に失敗しました。');
+            } finally {
+                if (isMounted) {
+                    setLoadingUniversities(false);
+                }
+            }
         };
         fetchUniversities();
+
+        return () => {
+            isMounted = false;
+        };
     }, []);
 
     const openAuthModal = () => {
@@ -32,7 +55,7 @@ const Home = () => {
     };
 
     return (
-        <div className="container">
+        <div className="container home-page">
             {user && (
                 <div className="mobile-padding-sm" style={{
                     display: 'flex',
@@ -129,22 +152,16 @@ const Home = () => {
                         一人ひとりの弱点に寄り添う詳細なフィードバックで、合格への最短ルートをサポート。
                     </p>
 
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', padding: '0 1rem' }}>
-                        <button
-                            className="btn btn-primary btn-mobile-full"
-                            style={{ padding: '1rem 2.5rem', fontSize: '1.1rem' }}
-                            onClick={() => {
-                                const el = document.getElementById('university-list');
-                                if (el) el.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                        >
-                            大学を選択して開始
-                        </button>
-                    </div>
-
                     {/* Banner Ad */}
-                    <AdBanner pageTarget="home" className="mt-6 md:mt-12 max-w-4xl mx-auto" />
+                    <AdBanner
+                        slot="home_hero"
+                        pageTarget="home"
+                        context={{ audience: user ? (profile?.plan || profile?.subscription_plan || 'free') : 'guest' }}
+                        audience={user ? (profile?.plan || profile?.subscription_plan || 'free') : 'guest'}
+                        className="mt-6 md:mt-12 max-w-4xl mx-auto"
+                    />
                 </div>
+
 
                 {/* Steps Grid */}
                 <div className="home-steps-grid" style={{
@@ -180,11 +197,11 @@ const Home = () => {
                         boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)'
                     }}>
                         <h2 style={{ marginBottom: '1.5rem', color: 'var(--color-accent-primary)', lineHeight: '1.4' }}>
-                            学習データを保存して、成長を可視化しよう
+                            無料会員登録で、もっと使いやすく
                         </h2>
                         <p style={{ fontSize: '1rem', color: '#94a3b8', marginBottom: '2rem', maxWidth: '700px', marginLeft: 'auto', marginRight: 'auto', lineHeight: '1.8' }}>
-                            無料の会員登録をすると、採点結果が自動で保存され、<br className="hide-on-mobile" />
-                            過去の成績推移や詳細な分析レポートをいつでも確認できます。
+                            会員はゲストより詳細なフィードバックが見れます。<br className="hide-on-mobile" />
+                            メールアドレスだけで登録して、すぐに志望校の過去問採点を始めましょう。
                         </p>
                         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                             <button
@@ -205,11 +222,11 @@ const Home = () => {
             <h2 id="university-list" style={{ marginBottom: '1.5rem', textAlign: 'center', marginTop: '4rem' }}>
                 対応大学一覧
             </h2>
-            <div className="grid-responsive" style={{
+            <div className="grid-responsive home-university-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
                 gap: '1.5rem',
-                paddingBottom: '350px'
+                paddingBottom: MARKETING_CONFIG.enableRecruitmentBanner ? '350px' : '4rem'
             }}>
                 {loadingUniversities ? (
                     Array.from({ length: 6 }).map((_, i) => (
@@ -217,7 +234,7 @@ const Home = () => {
                     ))
                 ) : universities.length === 0 ? (
                     <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: '#888' }}>
-                        大学データが見つかりません。
+                        {universityLoadError || '大学データが見つかりません。'}
                     </div>
                 ) : (
                     universities.map(uni => (

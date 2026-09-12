@@ -1,6 +1,9 @@
 import React from 'react';
+import { MARKETING_CONFIG } from '../config/marketingConfig';
 
 const RecruitmentBanner = ({ sticky = false }) => {
+    if (!MARKETING_CONFIG.enableRecruitmentBanner) return null;
+
     const bannerStyle = sticky ? {
         position: 'fixed',
         bottom: '0',
@@ -176,7 +179,7 @@ const RecruitmentBanner = ({ sticky = false }) => {
                             width: '10px',
                             height: '10px',
                             background: '#06c755',
-                            borderRadius: '2px',
+                            borderRadius: '9999px',
                             border: '2px solid #1e293b'
                         }} />
                     </div>
@@ -188,7 +191,15 @@ const RecruitmentBanner = ({ sticky = false }) => {
                             color: 'var(--color-text-primary)',
                             whiteSpace: 'nowrap'
                         }}>
-                            <span style={{ color: '#06c755', marginRight: '0.5rem' }}>■</span>
+                            <span style={{
+                                display: 'inline-block',
+                                width: sticky ? '0.7rem' : '0.85rem',
+                                height: sticky ? '0.7rem' : '0.85rem',
+                                background: '#06c755',
+                                borderRadius: '9999px',
+                                marginRight: '0.65rem',
+                                verticalAlign: '-0.05em'
+                            }} />
                             無料LINE合格戦略相談
                         </div>
                         <button

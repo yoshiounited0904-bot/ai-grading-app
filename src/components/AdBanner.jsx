@@ -1,19 +1,38 @@
 import React, { useState, useEffect } from 'react';
-import { getActiveBanners, incrementClick, getBannerById } from '../services/adminBannerService';
+import { clampBannerWidthPercent, getActiveBanners, incrementClick, getBannerById } from '../services/adminBannerService';
+import { MARKETING_CONFIG } from '../config/marketingConfig';
 
-const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
+const AdBanner = ({
+    pageTarget = 'all',
+    slot = null,
+    bannerId = null,
+    className = '',
+    context = {},
+    audience = null,
+    widthPercentOverride = null
+}) => {
     const [banners, setBanners] = useState([]);
     const [loading, setLoading] = useState(true);
+    const resolvedSlot = slot || pageTarget || 'all';
 
     useEffect(() => {
+        if (!MARKETING_CONFIG.enableAdBanners) {
+            setLoading(false);
+            return;
+        }
+
         const fetchBanners = async () => {
             try {
                 if (bannerId) {
                     const data = await getBannerById(bannerId);
                     setBanners([data]);
                 } else {
-                    let data = await getActiveBanners(pageTarget);
-                    // Fallback: If no banners for specific target, try 'all'
+                    let data = await getActiveBanners(resolvedSlot, {
+                        pageTarget,
+                        context,
+                        audience,
+                        limit: 1
+                    });
                     if ((!data || data.length === 0) && pageTarget !== 'all') {
                         console.log(`No banners for target "${pageTarget}", falling back to "all"`);
                         data = await getActiveBanners('all');
@@ -28,7 +47,7 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
         };
 
         fetchBanners();
-    }, [pageTarget, bannerId]);
+    }, [pageTarget, resolvedSlot, bannerId, audience, JSON.stringify(context)]);
 
     const handleClick = async (id) => {
         try {
@@ -38,39 +57,19 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
         }
     };
 
-    if (loading || banners.length === 0) return null;
+    if (!MARKETING_CONFIG.enableAdBanners || loading || banners.length === 0) return null;
 
-    // For simplicity, we show the most recent banner that matches
     const banner = banners[0];
+    const widthPercent = clampBannerWidthPercent(widthPercentOverride || banner.width_percent || 100);
 
     const renderBanner = () => {
-        if (banner.layout_type === 'text') {
-            return (
-                <a
-                    href={banner.target_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => handleClick(banner.id)}
-                    className="block bg-navy-blue/5 border border-navy-blue/20 p-4 rounded-sm text-center hover:bg-navy-blue/10 transition-colors"
-                >
-                    <p className="text-navy-blue font-bold text-sm md:text-base">
-                        <span className="bg-navy-blue text-white text-[10px] px-2 py-0.5 rounded-sm mr-2 align-middle">PR</span>
-                        {banner.title}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">詳細はこちらをクリック →</p>
-                </a>
-            );
-        }
-
-        const isSquare = banner.layout_type === 'square';
-
         return (
             <a
                 href={banner.target_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => handleClick(banner.id)}
-                className={`block relative group overflow-hidden rounded-sm shadow-sm border border-gray-200 hover:shadow-md transition-all ${isSquare ? 'max-w-xs mx-auto aspect-square' : 'w-full min-h-[60px] aspect-[16/3] md:aspect-[1200/300]'}`}
+                className="block relative group overflow-hidden rounded-sm shadow-sm border border-gray-200 hover:shadow-md transition-all w-full min-h-[60px] aspect-[16/3] md:aspect-[1200/300]"
             >
                 <img
                     src={banner.image_url}
@@ -79,7 +78,7 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
                     style={{ minHeight: '60px' }}
                 />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                    <span className="text-white text-xs font-bold drop-shadow-md">詳細を見る →</span>
+                    <span className="text-white text-xs font-bold drop-shadow-md">{banner.title}</span>
                 </div>
                 <div className="absolute top-2 right-2 bg-black/75 text-white text-[8px] px-1.5 py-0.5 rounded-sm">広告</div>
             </a>
@@ -88,7 +87,16 @@ const AdBanner = ({ pageTarget = 'all', bannerId = null, className = '' }) => {
 
     return (
         <div className={`ad-banner-widget py-2 md:py-4 ${className}`}>
-            {renderBanner()}
+            <div
+                className="mx-auto"
+                style={{
+                    width: `${widthPercent}%`,
+                    minWidth: '160px',
+                    maxWidth: '100%'
+                }}
+            >
+                {renderBanner()}
+            </div>
         </div>
     );
 };

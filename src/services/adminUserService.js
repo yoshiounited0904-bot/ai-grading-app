@@ -2,7 +2,6 @@ import { supabase } from './supabaseClient';
 
 /**
  * すべてのユーザープロフィールを取得する
- * （管理者が承認待ちリストを確認するために使用）
  */
 export const getAdminProfiles = async () => {
     const { data, error } = await supabase
@@ -13,23 +12,21 @@ export const getAdminProfiles = async () => {
 };
 
 /**
- * ユーザーの承認ステータスを更新する
+ * ユーザーを管理者として追加・削除する（ role の更新 ）
  */
-export const updateUserApprovalStatus = async (userId, status) => {
-    const { data, error } = await supabase
-        .from('profiles')
-        .update({ approval_status: status })
-        .eq('id', userId);
+export const updateUserRole = async (userId, role) => {
+    const { data, error } = await supabase.functions.invoke('admin-update-profile', {
+        body: { userId, role }
+    });
     return { data, error };
 };
 
 /**
- * ユーザーを管理者として追加・削除する（ role の更新 ）
+ * ユーザーの課金プランを更新する
  */
-export const updateUserRole = async (userId, role) => {
-    const { data, error } = await supabase
-        .from('profiles')
-        .update({ role: role })
-        .eq('id', userId);
+export const updateUserPlan = async (userId, plan) => {
+    const { data, error } = await supabase.functions.invoke('admin-update-profile', {
+        body: { userId, plan }
+    });
     return { data, error };
 };

@@ -1,29 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getExamsForUniversity } from '../data/examRegistry';
-import { useAuth } from '../contexts/AuthContext';
 
 const FacultyPage = () => {
     const { universityId, facultyId } = useParams();
     const navigate = useNavigate();
-    const { user, loading: authLoading } = useAuth();
     const [university, setUniversity] = useState(null);
     const [faculty, setFaculty] = useState(null);
     const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        if (!authLoading) {
-            const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
-            if (!user && isGuestGraded) {
-                navigate('/');
-                setTimeout(() => {
-                    document.dispatchEvent(new CustomEvent('openAuthModal', { 
-                        detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
-                    }));
-                }, 100);
-            }
-        }
-    }, [user, authLoading, navigate]);
 
     useEffect(() => {
         const fetchFaculty = async () => {
@@ -98,7 +82,8 @@ const FacultyPage = () => {
                                         state: {
                                             exam,
                                             universityName: university.name,
-                                            universityId: university.id
+                                            universityId: university.id,
+                                            facultyName: faculty.name
                                         }
                                     })}
                                 >

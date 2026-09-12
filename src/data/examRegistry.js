@@ -1,5 +1,23 @@
 import { supabase } from '../services/supabaseClient';
 
+const normalizeFacultyKey = (value = '') => {
+    return String(value)
+        .trim()
+        .replace(/[（）]/g, (char) => (char === '（' ? '(' : ')'))
+        .replace(/[／]/g, '/')
+        .replace(/\s+/g, '')
+        .replace(/学部(?=[(/]|$)/g, '');
+};
+
+const shouldPreferFacultyName = (currentName = '', nextName = '') => {
+    if (!currentName) return true;
+    if (!nextName) return false;
+    const currentHasGakubu = currentName.includes('学部');
+    const nextHasGakubu = nextName.includes('学部');
+    if (currentHasGakubu !== nextHasGakubu) return !nextHasGakubu;
+    return nextName.length < currentName.length;
+};
+
 /**
  * Fetches a summary list of unique universities (lightweight).
  */
@@ -31,11 +49,20 @@ export const getUniversityList = async () => {
                 mergedUniversities.push(university);
             }
 
-            if (!university.faculties.find(f => f.id === exam.faculty_id || f.name === exam.faculty)) {
+            const facultyKey = normalizeFacultyKey(exam.faculty);
+            const existingFaculty = university.faculties.find(f =>
+                f.id === exam.faculty_id ||
+                f.name === exam.faculty ||
+                normalizeFacultyKey(f.name) === facultyKey
+            );
+
+            if (!existingFaculty) {
                 university.faculties.push({
                     id: exam.faculty_id,
                     name: exam.faculty
                 });
+            } else if (shouldPreferFacultyName(existingFaculty.name, exam.faculty)) {
+                existingFaculty.name = exam.faculty;
             }
         });
 
@@ -85,7 +112,12 @@ export const getExamsForUniversity = async (universityId) => {
         };
 
         exams.forEach(exam => {
-            let faculty = university.faculties.find(f => f.id === exam.faculty_id || f.name === exam.faculty);
+            const facultyKey = normalizeFacultyKey(exam.faculty);
+            let faculty = university.faculties.find(f =>
+                f.id === exam.faculty_id ||
+                f.name === exam.faculty ||
+                normalizeFacultyKey(f.name) === facultyKey
+            );
 
             if (!faculty) {
                 faculty = {
@@ -94,6 +126,8 @@ export const getExamsForUniversity = async (universityId) => {
                     exams: []
                 };
                 university.faculties.push(faculty);
+            } else if (shouldPreferFacultyName(faculty.name, exam.faculty)) {
+                faculty.name = exam.faculty;
             }
 
             const formattedExam = {
@@ -113,6 +147,7 @@ export const getExamsForUniversity = async (universityId) => {
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
                 duration_minutes: exam.duration_minutes,
+                master_status: exam.master_status,
                 is_published: exam.is_published
             };
 
@@ -160,7 +195,12 @@ export const getUniversities = async () => {
                 mergedUniversities.push(university);
             }
 
-            let faculty = university.faculties.find(f => f.id === exam.faculty_id || f.name === exam.faculty);
+            const facultyKey = normalizeFacultyKey(exam.faculty);
+            let faculty = university.faculties.find(f =>
+                f.id === exam.faculty_id ||
+                f.name === exam.faculty ||
+                normalizeFacultyKey(f.name) === facultyKey
+            );
 
             if (!faculty) {
                 // Create new faculty if it doesn't exist
@@ -170,6 +210,8 @@ export const getUniversities = async () => {
                     exams: []
                 };
                 university.faculties.push(faculty);
+            } else if (shouldPreferFacultyName(faculty.name, exam.faculty)) {
+                faculty.name = exam.faculty;
             }
 
             // Map DB fields back to the format components expect
@@ -189,7 +231,8 @@ export const getUniversities = async () => {
                 passing_lines: exam.passing_lines,
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
-                duration_minutes: exam.duration_minutes
+                duration_minutes: exam.duration_minutes,
+                master_status: exam.master_status
             };
 
             // Add exam if not already present

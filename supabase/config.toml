@@ -1,0 +1,16 @@
+project_id = "ijlaveuzloctsbpoyzkd"
+
+[functions.gemini-admin]
+verify_jwt = false
+
+[functions.admin-consultation-requests]
+verify_jwt = true
+
+[functions.create-checkout-session]
+verify_jwt = true
+
+[functions.create-billing-portal-session]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false

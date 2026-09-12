@@ -2,6 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam } from '../services/adminExamService';
 
+const isLargeSequentialNumericOptions = (options) => (
+    Array.isArray(options) &&
+    options.length > 10 &&
+    options.every((option, idx) => String(option).trim() === String(idx + 1))
+);
+
 const normalizeStructure = (structure) => {
     if (!Array.isArray(structure)) return [];
     const sorted = [...structure].sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
@@ -16,10 +22,15 @@ const normalizeStructure = (structure) => {
                 } else if (!Array.isArray(options)) {
                     options = [];
                 }
+                if (isLargeSequentialNumericOptions(options)) {
+                    options = [];
+                }
                 return {
                     ...q,
                     options,
-                    type: q.type || 'selection',
+                    type: options.length === 0 && ['selection', 'selection_multi', 'ordering'].includes(q.type)
+                        ? 'descriptive'
+                        : q.type || 'selection',
                     correctAnswer: (q.correctAnswer !== undefined && q.correctAnswer !== null && typeof q.correctAnswer !== 'object')
                         ? String(q.correctAnswer)
                         : '',
@@ -45,7 +56,13 @@ export default function AnswerVerifyPage() {
         const fetch = async () => {
             const { data, error } = await getAdminExamById(id);
             if (error || !data) { alert('データ取得失敗'); navigate('/admin'); return; }
-            setExamMeta({ university: data.university, faculty: data.faculty, subject: data.subject, year: data.year });
+            setExamMeta({
+                university: data.university,
+                faculty: data.faculty,
+                subject: data.subject,
+                year: data.year,
+                maxScore: data.max_score,
+            });
             setFullExamData(data);
             setSections(normalizeStructure(data.structure));
             setLoading(false);
@@ -86,17 +103,36 @@ export default function AnswerVerifyPage() {
 
     const section = sections[selectedSectionIdx];
     const pdfUrl = section?.answer_pdf_path || null;
+    const totalQuestionPoints = sections.reduce((sectionSum, sec) =>
+        sectionSum + (Array.isArray(sec.questions)
+            ? sec.questions.reduce((questionSum, q) => questionSum + (parseInt(q.points) || 0), 0)
+            : 0), 0);
+    const totalAllocatedPoints = sections.reduce((sum, sec) => sum + (parseInt(sec.allocatedPoints) || 0), 0);
+    const maxScore = parseInt(examMeta?.maxScore) || totalAllocatedPoints || totalQuestionPoints || 0;
+    const selectedSectionPoints = Array.isArray(section?.questions)
+        ? section.questions.reduce((sum, q) => sum + (parseInt(q.points) || 0), 0)
+        : 0;
 
     return (
         // 100vh - Navbar(64px) を占有し、内部でflexcolumn
-        <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="answer-verify-page" style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
             {/* Header — 高さ auto、縮まない */}
-            <div style={{ flexShrink: 0 }} className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-4 shadow-sm">
+            <div style={{ flexShrink: 0 }} className="answer-verify-header bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-4 shadow-sm">
                 <button onClick={() => navigate(`/admin/exam/${id}`)} className="text-gray-400 hover:text-gray-600 text-sm font-black transition-colors">← 編集に戻る</button>
                 <div className="h-4 w-px bg-gray-200" />
-                <div className="text-sm font-black text-gray-700 flex-1">
-                    {examMeta?.university} {examMeta?.faculty} {examMeta?.year}年 {examMeta?.subject} — 解答照合
+                <div className="text-sm font-black text-gray-700 flex-1 min-w-0">
+                    <div className="truncate">
+                        {examMeta?.university} {examMeta?.faculty} {examMeta?.year}年 {examMeta?.subject} — 解答照合
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-black">
+                        <span className={`px-2 py-1 rounded-lg ${maxScore > 0 && totalQuestionPoints !== maxScore ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'}`}>
+                            合計得点: {totalQuestionPoints}{maxScore > 0 ? ` / ${maxScore}` : ''}点
+                        </span>
+                        <span className={`px-2 py-1 rounded-lg ${totalAllocatedPoints !== totalQuestionPoints ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-500'}`}>
+                            大問配点合計: {totalAllocatedPoints}点
+                        </span>
+                    </div>
                 </div>
                 {isDirty && <span className="text-xs font-black text-amber-500">未保存の変更あり</span>}
                 <button
@@ -109,7 +145,7 @@ export default function AnswerVerifyPage() {
             </div>
 
             {/* Section Tabs — 高さ auto、縮まない */}
-            <div style={{ flexShrink: 0 }} className="bg-white border-b border-gray-100 px-6 flex gap-2 overflow-x-auto">
+            <div style={{ flexShrink: 0 }} className="answer-verify-tabs bg-white border-b border-gray-100 px-6 flex gap-2 overflow-x-auto">
                 {sections.map((sec, idx) => (
                     <button
                         key={sec.id || idx}
@@ -126,16 +162,19 @@ export default function AnswerVerifyPage() {
             </div>
 
             {/* Split View — 残りの高さをすべて占有 */}
-            <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+            <div className="answer-verify-split" style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
 
                 {/* Left: 正解データ — 独立してスクロール */}
-                <div style={{ width: '50%', height: '100%', overflowY: 'auto' }} className="border-r border-gray-200 bg-white p-6">
+                <div style={{ width: '50%', height: '100%', overflowY: 'auto' }} className="answer-verify-data-pane border-r border-gray-200 bg-white p-6">
                     <div className="mb-4">
                         <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">正解データ</h2>
                         <div className="text-base font-black text-gray-800">{section?.label || `第${selectedSectionIdx + 1}問`}</div>
                         {section?.allocatedPoints > 0 && (
                             <div className="text-xs text-indigo-500 font-black mt-0.5">目標配点: {section.allocatedPoints}点</div>
                         )}
+                        <div className={`text-xs font-black mt-1 ${section?.allocatedPoints > 0 && selectedSectionPoints !== section.allocatedPoints ? 'text-red-500' : 'text-gray-400'}`}>
+                            表示中の合計得点: {selectedSectionPoints}{section?.allocatedPoints > 0 ? ` / ${section.allocatedPoints}` : ''}点
+                        </div>
                     </div>
 
                     {!section?.questions?.length ? (
@@ -251,7 +290,7 @@ export default function AnswerVerifyPage() {
                 </div>
 
                 {/* Right: Answer PDF — iframeがすべて占有 */}
-                <div style={{ width: '50%', height: '100%', position: 'relative' }}>
+                <div style={{ width: '50%', height: '100%', position: 'relative' }} className="answer-verify-pdf-pane">
                     {pdfUrl ? (
                         <>
                             <iframe

@@ -13,16 +13,56 @@ CREATE TABLE IF NOT EXISTS user_feedbacks (
 -- RLS
 ALTER TABLE user_feedbacks ENABLE ROW LEVEL SECURITY;
 
--- 誰でもINSERT可能
+DROP POLICY IF EXISTS "Anyone can insert feedback" ON user_feedbacks;
+DROP POLICY IF EXISTS "Authenticated users can view feedbacks" ON user_feedbacks;
+DROP POLICY IF EXISTS "Authenticated users can update feedbacks" ON user_feedbacks;
+DROP POLICY IF EXISTS "Admins can view feedbacks" ON user_feedbacks;
+DROP POLICY IF EXISTS "Admins can update feedbacks" ON user_feedbacks;
+DROP POLICY IF EXISTS "Admins can delete feedbacks" ON user_feedbacks;
+
+-- 誰でもINSERT可能。ただしログインユーザーIDを詐称できないようにする。
 CREATE POLICY "Anyone can insert feedback" 
 ON user_feedbacks FOR INSERT 
-WITH CHECK (true);
+TO anon, authenticated
+WITH CHECK (user_id IS NULL OR user_id = auth.uid());
 
--- ログイン済みのユーザーならSELECT可能（アプリ側で管理者画面にのみ表示するよう制御）
-CREATE POLICY "Authenticated users can view feedbacks" 
+-- 閲覧・更新・削除は管理者のみ。
+CREATE POLICY "Admins can view feedbacks" 
 ON user_feedbacks FOR SELECT 
-USING (auth.role() = 'authenticated');
+TO authenticated
+USING (
+    EXISTS (
+        SELECT 1 FROM profiles
+        WHERE profiles.id = auth.uid()
+          AND profiles.role = 'admin'
+    )
+);
 
-CREATE POLICY "Authenticated users can update feedbacks" 
+CREATE POLICY "Admins can update feedbacks" 
 ON user_feedbacks FOR UPDATE 
-USING (auth.role() = 'authenticated');
+TO authenticated
+USING (
+    EXISTS (
+        SELECT 1 FROM profiles
+        WHERE profiles.id = auth.uid()
+          AND profiles.role = 'admin'
+    )
+)
+WITH CHECK (
+    EXISTS (
+        SELECT 1 FROM profiles
+        WHERE profiles.id = auth.uid()
+          AND profiles.role = 'admin'
+    )
+);
+
+CREATE POLICY "Admins can delete feedbacks" 
+ON user_feedbacks FOR DELETE
+TO authenticated
+USING (
+    EXISTS (
+        SELECT 1 FROM profiles
+        WHERE profiles.id = auth.uid()
+          AND profiles.role = 'admin'
+    )
+);

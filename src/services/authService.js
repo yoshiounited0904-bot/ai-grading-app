@@ -6,13 +6,20 @@ const withAuthTimeout = async (promise, label) => {
     let timeoutId
     const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
-            reject(new Error(`${label}がタイムアウトしました。少し待ってから再試行してください。`))
+            reject(new Error(`${label}がタイムアウトしました。Supabase Authへの接続が不安定です。少し待ってから再試行してください。`))
         }, AUTH_TIMEOUT_MS)
     })
 
     try {
         return await Promise.race([promise, timeoutPromise])
     } catch (error) {
+        const rawMessage = String(error?.message || error || '')
+        if (/load failed|failed to fetch|networkerror|network request failed/i.test(rawMessage)) {
+            return {
+                data: null,
+                error: new Error('Supabase Authへの接続に失敗しました。ネットワーク、Supabaseプロジェクトの状態、または一時的な接続障害を確認してください。')
+            }
+        }
         return { data: null, error }
     } finally {
         clearTimeout(timeoutId)
@@ -21,10 +28,13 @@ const withAuthTimeout = async (promise, label) => {
 
 // サインアップ
 export const signUp = async (email, password, username, firstChoiceUniversity, grade, termsAgreed = false) => {
-    const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-    })
+    const { data, error } = await withAuthTimeout(
+        supabase.auth.signUp({
+            email,
+            password,
+        }),
+        '新規登録'
+    )
 
     if (error) return { data, error }
 
@@ -38,7 +48,6 @@ export const signUp = async (email, password, username, firstChoiceUniversity, g
                     username,
                     first_choice_university: firstChoiceUniversity,
                     grade,
-                    approval_status: 'pending',
                     terms_agreed_at: termsAgreed ? new Date().toISOString() : null
                 }
             ])
@@ -50,10 +59,13 @@ export const signUp = async (email, password, username, firstChoiceUniversity, g
 
 // ログイン
 export const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-    })
+    const { data, error } = await withAuthTimeout(
+        supabase.auth.signInWithPassword({
+            email,
+            password,
+        }),
+        'ログイン'
+    )
     return { data, error }
 }
 
@@ -120,6 +132,7 @@ export const updatePassword = async (password) => {
     )
     return { data, error }
 }
+
 
 // ログアウト
 export const signOut = async () => {

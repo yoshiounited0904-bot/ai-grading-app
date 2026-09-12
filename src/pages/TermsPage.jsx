@@ -8,20 +8,19 @@ export default function TermsPage() {
                 <Link to="/" className="text-sm text-gray-400 hover:text-gray-600 font-black transition-colors">← トップに戻る</Link>
             </div>
             <h1 className="text-2xl font-black text-gray-900 mb-2">利用規約</h1>
-            <p className="text-xs text-gray-400 mb-10">最終更新日: 2026年6月3日</p>
+            <p className="text-xs text-gray-400 mb-10">最終更新日: 2026年8月23日</p>
 
             <div className="space-y-8 text-sm text-gray-600 leading-relaxed">
                 <section>
                     <h2 className="text-base font-black text-gray-800 mb-3">第1条（サービスの概要）</h2>
-                    <p>本サービスは、大学入試問題の採点・解説を提供する学習支援ツールです。本サービスは、運営者が認めた登録ユーザーのほか、会員登録前のゲストユーザー（以下「ゲスト」）がお試しとして1回に限り採点及び詳細解説の閲覧を利用できます。</p>
+                    <p>本サービスは、大学入試問題の採点・解説を提供する学習支援ツールです。本サービスは、登録ユーザーのほか、会員登録前のゲストユーザー（以下「ゲスト」）がお試しとして利用できます。</p>
                 </section>
 
                 <section>
                     <h2 className="text-base font-black text-gray-800 mb-3">第2条（利用資格）</h2>
                     <ul className="list-disc pl-5 space-y-1">
-                        <li>本サービスは、ゲスト利用時を除き、運営者が承認した登録ユーザーのみ利用できます。</li>
+                        <li>登録ユーザーは、本サービス所定の無料プランまたは有料プランの範囲内で利用できます。</li>
                         <li>18歳未満の方は、保護者の同意を得た上でご利用ください。</li>
-                        <li>承認前の登録アカウントは本サービスを利用できません。</li>
                     </ul>
                 </section>
 
@@ -39,7 +38,7 @@ export default function TermsPage() {
 
                 <section>
                     <h2 className="text-base font-black text-gray-800 mb-3">第4条（著作権）</h2>
-                    <p>本サービスで表示される入試問題の著作権は各大学その他の権利者に帰属します。本サービスはこれらのコンテンツについて、個人学習目的での参照利用のみを許諾するものであり、いかなる権利も保証しません。自動生成解説の著作権は運営者に帰属し、無断転載を禁じます。</p>
+                    <p>本サービスで表示される入試問題・本文・図表等の著作権は、各大学、出版社、著作者その他の権利者に帰属します。本サービスは学習支援を目的として表示・採点補助を行うものであり、利用者に対して入試問題等の転載、複製、配布、公開、二次利用を許諾するものではありません。自動生成解説および本サービス独自の表示内容の無断転載・二次配布も禁止します。</p>
                 </section>
 
                 <section className="bg-red-50 border border-red-200 rounded-sm p-4">
@@ -60,12 +59,22 @@ export default function TermsPage() {
                 </section>
 
                 <section>
-                    <h2 className="text-base font-black text-gray-800 mb-3">第7条（退会・アカウント削除）</h2>
+                    <h2 className="text-base font-black text-gray-800 mb-3">第7条（有料プラン・解約・返金）</h2>
+                    <ul className="list-disc pl-5 space-y-1">
+                        <li>有料プランはStripeの決済画面に表示される料金、更新周期、支払条件に基づく継続課金です。</li>
+                        <li>契約内容の確認、支払方法の変更、解約は、サービス内の契約管理ページまたはStripeが提供する管理画面から行えます。</li>
+                        <li>解約後の利用可能期間、次回請求の有無、返金の可否は、決済画面および契約管理画面の表示に従います。</li>
+                        <li>デジタルサービスの性質上、利用開始後の返金は、法令上必要な場合を除き原則として行いません。</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h2 className="text-base font-black text-gray-800 mb-3">第8条（退会・アカウント削除）</h2>
                     <p>退会を希望する場合は運営者にお問い合わせください。退会後、学習履歴・採点結果等のデータは削除されます。</p>
                 </section>
 
                 <section>
-                    <h2 className="text-base font-black text-gray-800 mb-3">第8条（準拠法）</h2>
+                    <h2 className="text-base font-black text-gray-800 mb-3">第9条（準拠法）</h2>
                     <p>本規約は日本法に準拠し、解釈されます。</p>
                 </section>
             </div>

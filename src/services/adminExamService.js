@@ -2,6 +2,47 @@ import { supabase } from './supabaseClient';
 import { universities } from '../data/mockData';
 import universityBaseData from '../data/universityBaseData.json';
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const withSupabaseTimeout = (promise, label, ms = 45000) => Promise.race([
+    promise,
+    new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`${label}がタイムアウトしました。Supabase接続またはネットワークを確認してください。`)), ms);
+    })
+]);
+
+const isTransientSupabaseError = (error) => {
+    const message = String(error?.message || error?.details || error || '').toLowerCase();
+    const status = Number(error?.status || error?.code);
+    return [408, 429, 500, 502, 503, 504, 522, 523, 524].includes(status) ||
+        /522|timeout|timed out|load failed|failed to fetch|network|gateway|temporarily|resource/i.test(message);
+};
+
+const runSupabaseQuery = async (queryFactory, label, { retries = 2, timeoutMs = 45000 } = {}) => {
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const result = await withSupabaseTimeout(queryFactory(), label, timeoutMs);
+            if (!result?.error) return result;
+
+            lastError = result.error;
+            if (!isTransientSupabaseError(result.error) || attempt === retries) {
+                return result;
+            }
+        } catch (error) {
+            lastError = error;
+            if (!isTransientSupabaseError(error) || attempt === retries) {
+                return { data: null, error };
+            }
+        }
+
+        await sleep(800 * (attempt + 1));
+    }
+
+    return { data: null, error: lastError || new Error(`${label}に失敗しました。`) };
+};
+
 export const importAogakuData = async () => {
     let count = 0;
     
@@ -45,8 +86,8 @@ export const importAogakuData = async () => {
             max_score: item.maxScore || 100,
             duration_minutes: item.duration || item.durationMinutes || 60,
             passing_lines: item.passingLines || {},
-            is_published: true,
-            master_status: '未着手',
+            is_published: false,
+            master_status: 'working',
             structure: []
         };
 
@@ -60,8 +101,8 @@ export const importAogakuData = async () => {
         if (existing) {
             record.structure = existing.structure || [];
             record.pdf_path = existing.pdf_path || '';
-            record.master_status = existing.master_status || '未着手';
-            record.is_published = existing.is_published !== undefined ? existing.is_published : true;
+            record.master_status = existing.master_status || 'working';
+            record.is_published = existing.is_published !== undefined ? existing.is_published : false;
             record.faculty_id = existing.faculty_id || stableFacId;
         }
 
@@ -120,67 +161,96 @@ export const importMockData = async () => {
 };
 
 export const getAdminExams = async () => {
-    // Optimization: Select only metadata columns needed for the list view.
-    // Exclude heavy columns: 'detailed_analysis', 'weakness_analysis', 'structure'
-    const { data, error } = await supabase
-        .from('exams')
-        .select(`
-            id, 
-            university, 
-            university_id, 
-            faculty, 
-            faculty_id, 
-            year, 
-            subject, 
-            subject_en, 
-            type, 
-            pdf_path, 
-            max_score, 
-            master_status, 
-            unimplemented_items, 
-            admin_comment,
-            is_completed,
-            is_published,
-            created_at,
-            updated_at
-        `)
-        .order('university', { ascending: true });
-    return { data, error };
+    // Dashboard list should stay lightweight. Fetch heavy structure JSON only on demand.
+    return runSupabaseQuery(
+        () => (
+            supabase
+                .from('exams')
+                .select(`
+                    id, 
+                    university, 
+                    university_id, 
+                    faculty, 
+                    faculty_id, 
+                    year, 
+                    subject, 
+                    subject_en, 
+                    type, 
+                    pdf_path, 
+                    max_score, 
+                    duration_minutes,
+                    master_status, 
+                    unimplemented_items, 
+                    admin_comment,
+                    is_completed,
+                    is_published,
+                    created_at,
+                    updated_at
+                `)
+                .limit(1500)
+        ),
+        '試験一覧の取得'
+    );
+};
+
+export const getAdminExamStructureSummaries = async (ids = null) => {
+    return runSupabaseQuery(() => {
+        let query = supabase
+            .from('exams')
+            .select('id, max_score, structure');
+
+        if (Array.isArray(ids) && ids.length > 0) {
+            query = query.in('id', ids);
+        }
+
+        return query;
+    }, '問題数・配点集計の取得');
 };
 
 export const getAdminExamById = async (id) => {
-    const { data, error } = await supabase
-        .from('exams')
-        .select('*')
-        .eq('id', id)
-        .single();
-    return { data, error };
+    return runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .select('*')
+            .eq('id', id)
+            .single(),
+        '試験データ詳細の取得'
+    );
 };
 
 export const saveAdminExam = async (examData) => {
-    const { data, error } = await supabase
-        .from('exams')
-        .upsert([{
-            ...examData,
-            updated_at: new Date().toISOString()
-        }])
-        .select();
-    return { data, error };
+    return runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .upsert([{
+                ...examData,
+                updated_at: new Date().toISOString()
+            }])
+            .select('id, updated_at'),
+        '試験データの保存',
+        { retries: 3, timeoutMs: 60000 }
+    );
 };
 
 export const deleteAdminExam = async (id) => {
-    const { error } = await supabase
-        .from('exams')
-        .delete()
-        .eq('id', id);
+    const { error } = await runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .delete()
+            .eq('id', id),
+        '試験データの削除'
+    );
     return { error };
 };
 
 export const deleteAdminExamsBulk = async (ids) => {
-    const { error } = await supabase
-        .from('exams')
-        .delete()
-        .in('id', ids);
+    const { error } = await runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .delete()
+            .in('id', ids),
+        '試験データの一括削除'
+    );
     return { error };
 };
 
@@ -189,21 +259,26 @@ export const updateAdminComment = async (id, comment, unimplemented_items = null
     if (comment !== null) updates.admin_comment = comment;
     if (unimplemented_items !== null) updates.unimplemented_items = unimplemented_items;
 
-    const { data, error } = await supabase
-        .from('exams')
-        .update(updates)
-        .eq('id', id)
-        .select();
-    return { data, error };
+    return runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .update(updates)
+            .eq('id', id)
+            .select('id, updated_at'),
+        '共有メモの保存'
+    );
 };
 
 export const updateAdminFields = async (id, updates) => {
-    const { data, error } = await supabase
-        .from('exams')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select();
-    return { data, error };
+    return runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select('id, updated_at'),
+        '試験データの更新',
+        { retries: 3, timeoutMs: 60000 }
+    );
 };
 
 export const uploadAnalysisImage = async (file, examId) => {
@@ -275,7 +350,7 @@ export const duplicateAdminExam = async (examId, count = 1) => {
             ...cleanData,
             subject: count > 1 ? `${cleanData.subject}(コピー${i + 1})` : `${cleanData.subject}(コピー)`,
             master_status: 'working', // Reset status for the copy
-            is_published: true, // Make sure duplicates are published by default
+            is_published: false,
             id: `copy_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}` 
         });
     }

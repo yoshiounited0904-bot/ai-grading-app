@@ -1,25 +1,351 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getAdminExamById, saveAdminExam, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements } from '../services/adminGeminiService';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
+import { getAdminExamById, saveAdminExam, updateAdminFields, uploadExamPdf } from '../services/adminExamService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements, transformRubricToScoringElements } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
 import { findUniversityMetadataKnowledge, listUniversityMetadataKnowledgeCandidates } from '../data/universityMetadataKnowledge';
-import { getAdminBanners } from '../services/adminBannerService';
+import { uploadBannerImage } from '../services/adminBannerService';
 import { geminiQueue } from '../utils/promiseQueue';
+import {
+    ensureEssayCharacterCountElement,
+    ensureExamStructureEssayCharacterCountElements,
+    normalizeExamStructureChoiceLabels,
+    normalizeExamStructureQuestionTypes,
+    normalizeScoringElement
+} from '../utils/questionTypeNormalizer';
 import universityBaseData from '../data/universityBaseData.json';
+import { MARKETING_CONFIG } from '../config/marketingConfig';
+
+const normalizeAdBlockContent = (content) => {
+    if (content && typeof content === 'object' && !Array.isArray(content)) {
+        return {
+            ...content,
+            imageUrl: content.imageUrl || content.image_url || '',
+            targetUrl: content.targetUrl || content.target_url || '',
+            widthPercent: clampAdWidthPercent(content.widthPercent || content.width_percent || 100)
+        };
+    }
+    return { imageUrl: '', targetUrl: '', widthPercent: 100 };
+};
+
+const clampAdWidthPercent = (value) => {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return 100;
+    return Math.min(100, Math.max(30, Math.round(next)));
+};
+
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('ファイルの読み込みに失敗しました'));
+    reader.readAsDataURL(file);
+});
+
+const isPlainObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
+
+const normalizeEditorStructure = (structure = []) => {
+    const { structure: typeNormalized } = normalizeExamStructureQuestionTypes(structure);
+    return ensureExamStructureEssayCharacterCountElements(typeNormalized).structure;
+};
+
+const requireGeneratedNumber = (record, field, context, positive = false) => {
+    const value = record?.[field];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new Error(`${context}: ${field} が数値ではありません。`);
+    }
+    if (positive && value <= 0) {
+        throw new Error(`${context}: ${field} が1以上ではありません。`);
+    }
+    return value;
+};
+
+const extractQuestionNumbers = (value) => {
+    const text = String(value ?? '').normalize('NFKC');
+    const numbers = Array.from(text.matchAll(/\d+/g))
+        .map(match => Number(match[0]))
+        .filter(num => Number.isInteger(num) && num > 0);
+    return Array.from(new Set(numbers));
+};
+
+const getQuestionNumberCoverage = (questions = []) => {
+    const covered = new Set();
+    questions.forEach((question) => {
+        const numbers = extractQuestionNumbers(`${question?.id ?? ''} ${question?.label ?? ''}`);
+        if (numbers.length > 0) {
+            numbers.forEach(num => covered.add(num));
+        } else {
+            covered.add(covered.size + 1);
+        }
+    });
+    return covered.size;
+};
+
+const validateGeneratedSection = (section, context, { requirePositivePoints = true, targetPoints = null, expectedQuestionCount = null } = {}) => {
+    if (!isPlainObject(section)) {
+        throw new Error(`${context}: 大問データが不正です。`);
+    }
+    if (!Array.isArray(section.questions) || section.questions.length === 0) {
+        throw new Error(`${context}: 小問が抽出されていません。`);
+    }
+    if (
+        expectedQuestionCount &&
+        section.questions.length < expectedQuestionCount &&
+        getQuestionNumberCoverage(section.questions) < expectedQuestionCount
+    ) {
+        throw new Error(`${context}: 小問が ${section.questions.length} 件しか抽出されていません。期待小問数 ${expectedQuestionCount} 件を下回るため、反映を中止しました。問題画像の範囲または「期待小問数」を確認してください。`);
+    }
+
+    const allocatedPoints = requireGeneratedNumber(section, 'allocatedPoints', context, requirePositivePoints);
+    const allowZeroQuestionPoints = Boolean(
+        requirePositivePoints &&
+        targetPoints !== null &&
+        expectedQuestionCount &&
+        targetPoints < expectedQuestionCount
+    );
+    const questionPointTotal = section.questions.reduce((sum, question, qIdx) => {
+        const qContext = `${context} 小問${qIdx + 1}`;
+        if (!isPlainObject(question)) {
+            throw new Error(`${qContext}: 小問データが不正です。`);
+        }
+        if (!question.id) {
+            throw new Error(`${qContext}: id が空です。`);
+        }
+        if (question.correctAnswer === undefined || question.correctAnswer === null || question.correctAnswer === '') {
+            throw new Error(`${qContext}: correctAnswer が空です。`);
+        }
+        const points = requireGeneratedNumber(question, 'points', qContext, false);
+        if (requirePositivePoints && allowZeroQuestionPoints && points < 0) {
+            throw new Error(`${qContext}: points が0以上ではありません。`);
+        }
+        if (requirePositivePoints && !allowZeroQuestionPoints && points <= 0) {
+            throw new Error(`${qContext}: points が1以上ではありません。`);
+        }
+        return sum + points;
+    }, 0);
+
+    if (requirePositivePoints && questionPointTotal !== allocatedPoints) {
+        throw new Error(`${context}: 小問配点合計 ${questionPointTotal} 点が大問配点 ${allocatedPoints} 点と一致しません。`);
+    }
+    if (targetPoints !== null && allocatedPoints !== targetPoints) {
+        throw new Error(`${context}: 大問配点 ${allocatedPoints} 点が目標配点 ${targetPoints} 点と一致しません。`);
+    }
+};
+
+const validateGeneratedExamMaster = (result, expectedMaxScore) => {
+    if (!isPlainObject(result) || !Array.isArray(result.structure) || result.structure.length === 0) {
+        throw new Error('AI生成結果の問題構造が空です。反映を中止しました。');
+    }
+    const maxScore = Number.isFinite(Number(result.max_score)) ? Number(result.max_score) : expectedMaxScore;
+    let total = 0;
+    result.structure.forEach((section, idx) => {
+        validateGeneratedSection(section, `第${idx + 1}問`);
+        total += section.allocatedPoints;
+    });
+    if (Number.isFinite(maxScore) && maxScore > 0 && total !== maxScore) {
+        throw new Error(`大問配点合計 ${total} 点が満点 ${maxScore} 点と一致しません。反映を中止しました。`);
+    }
+};
+
+const cleanExplanationOpening = (text) => {
+    let cleaned = String(text || '')
+        .replace(/```markdown\n?|```\n?|```/g, '')
+        .replace(/\*/g, '')
+        .trim();
+
+    cleaned = cleaned.replace(
+        /^(?:本解説では|この解説では|以下では)[\s\S]{0,160}?(?:詳細な解説を行う。|解説する。|説明する。)\s*/u,
+        ''
+    );
+    cleaned = cleaned.replace(/^(?:全体解説|大問全体の解説|大問分析|詳細解説)\s*[①-⑳0-9０-９]*\s*[\n:：-]*/u, '');
+    cleaned = cleaned.replace(/^【\s*(?:解説|詳細解説|全体解説|大問分析)\s*】\s*/u, '');
+    cleaned = cleaned.replace(/^#+\s*(?:解説|詳細解説|全体解説|大問分析)\s*[①-⑳0-9０-９]*\s*\n+/u, '');
+    cleaned = cleaned.replace(/^(?:①|1[.)．、])\s*(?:解答|正解)\s*\n+/u, '');
+
+    return cleaned.trim();
+};
+
+const validateGeneratedText = (text, context) => {
+    if (typeof text !== 'string' || !text.trim()) {
+        throw new Error(`${context} が空です。反映を中止しました。`);
+    }
+    if (text.includes('AI生成中') || text.includes('AI生成エラー')) {
+        throw new Error(`${context} が生成途中またはエラー表示のままです。反映を中止しました。`);
+    }
+    const cleaned = cleanExplanationOpening(text);
+    if (!cleaned) {
+        throw new Error(`${context} が空です。反映を中止しました。`);
+    }
+    return cleaned;
+};
+
+const extractExpectedQuestionCount = (instruction = '') => {
+    const text = String(instruction || '');
+    const match = text.match(/(?:小問|設問|問題)?\s*([0-9０-９]{1,2})\s*(?:問|題|個|件)/);
+    if (!match) return null;
+    const normalized = match[1].replace(/[０-９]/g, char => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+    const count = parseInt(normalized, 10);
+    return Number.isFinite(count) && count > 0 ? count : null;
+};
+
+const isPdfFile = (file) => {
+    const name = String(file?.name || '').toLowerCase();
+    return file?.type === 'application/pdf' || name.endsWith('.pdf');
+};
+
+const isAnswerImageFile = (file) => {
+    const name = String(file?.name || '').toLowerCase();
+    return file?.type?.startsWith('image/') ||
+        ['.gif', '.png', '.jpg', '.jpeg', '.webp'].some(ext => name.endsWith(ext));
+};
+
+const LocalAnswerImagePreview = ({ file, label }) => {
+    const [url, setUrl] = useState('');
+
+    useEffect(() => {
+        if (!file) {
+            setUrl('');
+            return undefined;
+        }
+        const nextUrl = URL.createObjectURL(file);
+        setUrl(nextUrl);
+        return () => URL.revokeObjectURL(nextUrl);
+    }, [file]);
+
+    if (!file || !url) return null;
+
+    return (
+        <div className="rounded-lg border border-emerald-100 bg-white overflow-hidden" style={{ width: 420, maxWidth: '100%' }}>
+            <div className="px-2 py-1 bg-emerald-50/70 border-b border-emerald-100 flex items-center justify-between gap-2" style={{ minHeight: 24 }}>
+                <span className="text-[10px] font-black text-emerald-700 truncate" style={{ fontSize: 10, lineHeight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label || file.name}</span>
+                <span className="text-[9px] font-bold text-emerald-500 whitespace-nowrap" style={{ fontSize: 9, whiteSpace: 'nowrap' }}>{Math.round(file.size / 1024)} KB</span>
+            </div>
+            <div className="bg-slate-50 p-1.5" style={{ padding: 6 }}>
+                <img src={url} alt={label || file.name} className="rounded bg-white" style={{ display: 'block', width: '100%', maxHeight: 180, objectFit: 'contain', background: '#fff' }} />
+            </div>
+        </div>
+    );
+};
+
+const SavedAnswerImagePreview = ({ url, label }) => {
+    if (!url) return null;
+
+    return (
+        <div className="rounded-lg border border-navy-blue/10 bg-white overflow-hidden" style={{ width: 420, maxWidth: '100%' }}>
+            <div className="px-2 py-1 bg-navy-blue/5 border-b border-navy-blue/10 flex items-center justify-between gap-2" style={{ minHeight: 24 }}>
+                <span className="text-[10px] font-black text-navy-blue truncate" style={{ fontSize: 10, lineHeight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label || '保存済み解答画像'}</span>
+                <a href={url} target="_blank" rel="noopener noreferrer" className="text-[9px] font-black text-indigo-600 hover:text-indigo-700 whitespace-nowrap" style={{ fontSize: 9, whiteSpace: 'nowrap' }}>
+                    別タブで開く
+                </a>
+            </div>
+            <div className="bg-slate-50 p-1.5" style={{ padding: 6 }}>
+                <img src={url} alt={label || '保存済み解答画像'} className="rounded bg-white" style={{ display: 'block', width: '100%', maxHeight: 180, objectFit: 'contain', background: '#fff' }} />
+            </div>
+        </div>
+    );
+};
+
+const validateUploadFiles = (files, kind) => {
+    const list = Array.from(files || []);
+    const invalid = list.filter(file => kind === 'question' ? !isPdfFile(file) : !isAnswerImageFile(file));
+    if (invalid.length === 0) return true;
+
+    const label = kind === 'question' ? '問題ファイル' : '解答ファイル';
+    const expected = kind === 'question' ? 'PDF（.pdf）' : '画像（.gif / .png / .jpg / .webp）';
+    const opposite = kind === 'question' ? '解答画像を問題側に入れている可能性があります。' : '問題PDFを解答側に入れている可能性があります。';
+    alert(
+        `アップロードするファイルの種類が違います。\n\n` +
+        `${label} は ${expected} のみ選択してください。\n` +
+        `${opposite}\n\n` +
+        `選択された不一致ファイル:\n${invalid.map(file => `・${file.name}`).join('\n')}`
+    );
+    return false;
+};
+
+const MASTER_STATUS_OPTIONS = [
+    { value: 'working', label: '未完成', description: 'まだ作業中。生徒には公開しない。' },
+    { value: 'completed', label: '完成', description: '作成完了。最終検証前。' },
+    { value: 'verified', label: '検証済み', description: '確認済み。本番公開前の最終チェック済み。' },
+    { value: 'production', label: '本番用', description: '本番公開対象。生徒に公開する。' }
+];
+
+const normalizeMasterStatus = (status) => {
+    if (status === 'production') return 'production';
+    if (status === 'verified') return 'verified';
+    if (status === 'completed' || status === true) return 'completed';
+    return 'working';
+};
+
+const GENERATION_DRAFT_PREFIX = 'adminExamGenerationDraft.v1';
+
+const getUniversityBaseDataId = (item) => (
+    item?.id ||
+    [item?.university, item?.year, item?.faculty, item?.subject].filter(Boolean).join('_')
+);
+
+const buildSectionAnalysisInstruction = (baseInstruction = '', section) => {
+    return String(baseInstruction || '').trim();
+};
+
+const getSectionInstruction = (instructionsBySection, sectionNum, section) => (
+    instructionsBySection?.[sectionNum] ||
+    section?.instruction ||
+    ''
+);
+
+const ensureSectionAnalysisSources = (section, questionFiles = [], answerFiles = []) => {
+    if (questionFiles.length > 0 || answerFiles.length > 0) return;
+    throw new Error(`第${section?.id || ''}問の問題画像/解答画像が見つかりません。詳細解説は画像を根拠に作成するため、先に問題または解答ファイルを登録してください。`);
+};
+
+const isQuestionExplanationMissing = (question) => {
+    const text = String(question?.explanation || '').trim();
+    return !text || text.includes('AI生成中') || text.includes('AI生成エラー');
+};
+
+const isCorrectAnswerUnresolved = (value) => {
+    const text = String(value ?? '').trim();
+    if (!text) return true;
+    if (['要確認', '未確認', '不明', '不明確', '要修正', '確認中'].includes(text)) return true;
+    return /^要確認[（(]/u.test(text);
+};
+
+const buildResolvedCorrectAnswerPatch = (existingQuestion, generatedQuestion) => {
+    if (!isCorrectAnswerUnresolved(existingQuestion?.correctAnswer) || isCorrectAnswerUnresolved(generatedQuestion?.correctAnswer)) {
+        return {};
+    }
+
+    const patch = {
+        correctAnswer: String(generatedQuestion.correctAnswer).trim(),
+        needsReview: false,
+    };
+    if (existingQuestion?.answerIssue === 'unresolved' || existingQuestion?.answerIssue === 'missing_answer') {
+        patch.answerIssue = '';
+    }
+    return patch;
+};
+
+const GENERATION_PHASE_LABELS = {
+    structure: '大問構造を生成中',
+    explanations: '小問解説を生成中',
+    analysis: '詳細解説を生成中',
+    vocabulary: '難単語を抽出中'
+};
 
 function AdminExamEditor() {
     const { id } = useParams();
     const navigate = useNavigate();
-    const isNew = id === 'new';
+    const location = useLocation();
+    const isNew = id === 'new' || location.pathname === '/admin/exam/new';
+    const initialBaseDataAppliedRef = useRef(false);
 
     const [universitiesData, setUniversitiesData] = useState([]);
 
     const [loading, setLoading] = useState(!isNew);
     const [generating, setGenerating] = useState(false);
     const [generatingSectionData, setGeneratingSectionData] = useState({});
+    const [sectionGenerationPhases, setSectionGenerationPhases] = useState({});
     const [generatingDetailed, setGeneratingDetailed] = useState(false);
     const [generatingSectionAnalysis, setGeneratingSectionAnalysis] = useState({});
     const [generatingVocabulary, setGeneratingVocabulary] = useState({});
@@ -28,19 +354,6 @@ function AdminExamEditor() {
     const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
     const [bulkGeneratingSectionAnalyses, setBulkGeneratingSectionAnalyses] = useState(false);
     const [bulkSectionAnalysisProgress, setBulkSectionAnalysisProgress] = useState({ current: 0, total: 0 });
-    const [banners, setBanners] = useState([]);
-    
-    useEffect(() => {
-        const fetchBanners = async () => {
-            try {
-                const data = await getAdminBanners();
-                setBanners(data || []);
-            } catch (err) {
-                console.error("Failed to fetch banners:", err);
-            }
-        };
-        fetchBanners();
-    }, []);
     const [isBulkGeneratingSections, setIsBulkGeneratingSections] = useState(false);
     const [bulkSectionsProgress, setBulkSectionsProgress] = useState({ current: 0, total: 0 });
     const [bulkIncludeVocab, setBulkIncludeVocab] = useState(true);
@@ -49,6 +362,9 @@ function AdminExamEditor() {
     const [extractingMetadata, setExtractingMetadata] = useState(false);
     const [knowledgeCandidates, setKnowledgeCandidates] = useState([]);
     const [selectedKnowledgeKey, setSelectedKnowledgeKey] = useState('');
+    const [baseDataUniversityFilter, setBaseDataUniversityFilter] = useState('all');
+    const [baseDataYearFilter, setBaseDataYearFilter] = useState('all');
+    const [baseDataSubjectFilter, setBaseDataSubjectFilter] = useState('all');
     const [uploadingAnswers, setUploadingAnswers] = useState({});
     const [generatingExplanationsOnly, setGeneratingExplanationsOnly] = useState({});
     const [activeTab, setActiveTab] = useState('master');
@@ -58,6 +374,7 @@ function AdminExamEditor() {
     const [chatInputs, setChatInputs] = useState({});
     const [chatLoading, setChatLoading] = useState({});
     const [activeScoringEditor, setActiveScoringEditor] = useState(null);
+    const [alternativeAnswerDrafts, setAlternativeAnswerDrafts] = useState({});
 
     // Form states
     const [examId, setExamId] = useState('');
@@ -69,6 +386,7 @@ function AdminExamEditor() {
     const [subject, setSubject] = useState('');
     const [subjectEn, setSubjectEn] = useState('english');
     const [type, setType] = useState('pdf');
+    const [masterStatus, setMasterStatus] = useState('working');
     const [durationMinutes, setDurationMinutes] = useState(60);
     const generateDetailed = true;
 
@@ -77,8 +395,19 @@ function AdminExamEditor() {
     const [sectionCount, setSectionCount] = useState(3);
     const [questionFilesBySection, setQuestionFilesBySection] = useState({ 1: [], 2: [], 3: [] });
     const [answerFilesBySection, setAnswerFilesBySection] = useState({ 1: [], 2: [], 3: [] });
+    const [bulkQuestionFiles, setBulkQuestionFiles] = useState([]);
+    const [bulkUploadingQuestions, setBulkUploadingQuestions] = useState(false);
+    const [bulkQuestionUploadProgress, setBulkQuestionUploadProgress] = useState({ current: 0, total: 0 });
+    const [bulkAnswerFiles, setBulkAnswerFiles] = useState([]);
+    const [bulkUploadingAnswers, setBulkUploadingAnswers] = useState(false);
+    const [bulkAnswerUploadProgress, setBulkAnswerUploadProgress] = useState({ current: 0, total: 0 });
     const [sectionInstructionsBySection, setSectionInstructionsBySection] = useState({ 1: '', 2: '', 3: '' });
     const [sectionPointsBySection, setSectionPointsBySection] = useState({ 1: '', 2: '', 3: '' });
+    const [sectionExpectedQuestionCounts, setSectionExpectedQuestionCounts] = useState({ 1: '', 2: '', 3: '' });
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const savedSnapshotRef = useRef('');
+    const skipUnsavedCheckRef = useRef(true);
+    const dirtyCheckTimerRef = useRef(null);
 
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
@@ -88,6 +417,11 @@ function AdminExamEditor() {
         pdf_path: '',
         passing_lines: { A: 80, B: 70, C: 60, D: 40 }
     } : null);
+    const examDataRef = useRef(examData);
+
+    useEffect(() => {
+        examDataRef.current = examData;
+    }, [examData]);
 
     const scoringModalStyles = {
         overlay: {
@@ -141,13 +475,244 @@ function AdminExamEditor() {
         }
     };
 
+    const buildEditorSnapshot = (structureOverride = null, sectionCountOverride = null, pdfPathOverride = null) => {
+        const currentExamData = examDataRef.current || examData || {};
+        const currentStructure = structureOverride || currentExamData?.structure || [];
+        const effectiveSectionCount = sectionCountOverride || sectionCount;
+        const syncedStructure = [];
 
+        for (let i = 1; i <= effectiveSectionCount; i++) {
+            const existing = currentStructure[i - 1] || {
+                id: String(i),
+                label: `第${i}問`,
+                questions: [],
+                sectionAnalysis: '',
+                questionType: 'default'
+            };
+            syncedStructure.push({
+                ...existing,
+                instruction: sectionInstructionsBySection[i] || '',
+                allocatedPoints: parseInt(sectionPointsBySection[i]) || existing.allocatedPoints || 0
+            });
+        }
 
-    const getGeminiApiKey = () => {
-        return import.meta.env.VITE_GEMINI_API_KEY_V2 ||
-            import.meta.env.VITE_GEMINI_API_KEY ||
-            window._GEMINI_API_KEY;
+        const normalizedStructure = normalizeEditorStructure(syncedStructure);
+
+        return JSON.stringify({
+            id: examId,
+            university,
+            university_id: parseInt(universityId) || 0,
+            faculty,
+            faculty_id: facultyId,
+            year: parseInt(year) || '',
+            subject,
+            subject_en: subjectEn,
+            type,
+            master_status: masterStatus,
+            is_published: masterStatus === 'production',
+            duration_minutes: parseInt(durationMinutes) || 60,
+            pdf_path: pdfPathOverride ?? currentExamData?.pdf_path ?? '',
+            max_score: parseInt(currentExamData?.max_score || 100),
+            detailed_analysis: currentExamData?.detailed_analysis || '',
+            structure: normalizedStructure,
+            passing_lines: currentExamData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
+            custom_layout: customLayout
+        });
     };
+
+    const markCurrentStateAsSaved = (snapshotOverride = null) => {
+        if (dirtyCheckTimerRef.current) {
+            window.clearTimeout(dirtyCheckTimerRef.current);
+            dirtyCheckTimerRef.current = null;
+        }
+        savedSnapshotRef.current = snapshotOverride || buildEditorSnapshot();
+        skipUnsavedCheckRef.current = false;
+        setHasUnsavedChanges(false);
+    };
+
+    const getGenerationDraftKey = (targetExamId = examId) => (
+        targetExamId ? `${GENERATION_DRAFT_PREFIX}:${targetExamId}` : ''
+    );
+
+    const saveGenerationDraft = (structure, reason = '') => {
+        const key = getGenerationDraftKey();
+        if (!key || !Array.isArray(structure)) return;
+        try {
+            localStorage.setItem(key, JSON.stringify({
+                examId,
+                savedAt: new Date().toISOString(),
+                reason,
+                structure,
+                sectionCount: Math.max(sectionCount, structure.length),
+                sectionInstructionsBySection,
+                sectionPointsBySection,
+                sectionExpectedQuestionCounts
+            }));
+        } catch (error) {
+            console.warn('Failed to save generation draft:', error);
+        }
+    };
+
+    const clearGenerationDraft = (targetExamId = examId) => {
+        const key = getGenerationDraftKey(targetExamId);
+        if (!key) return;
+        try {
+            localStorage.removeItem(key);
+        } catch (error) {
+            console.warn('Failed to clear generation draft:', error);
+        }
+    };
+
+    const loadGenerationDraft = (targetExamId) => {
+        const key = getGenerationDraftKey(targetExamId);
+        if (!key) return null;
+        try {
+            const draft = JSON.parse(localStorage.getItem(key) || 'null');
+            return draft && Array.isArray(draft.structure) ? draft : null;
+        } catch {
+            return null;
+        }
+    };
+
+    const persistSectionMerge = async (sectionNum, sectionData, { syncLocal = true } = {}) => {
+        if (!examId || isNew) {
+            await handleSave(false);
+            return;
+        }
+
+        const runMerge = async () => {
+            const { data: latestExam, error: fetchError } = await getAdminExamById(examId);
+            if (fetchError) throw fetchError;
+
+            const latestStructure = Array.isArray(latestExam?.structure) ? [...latestExam.structure] : [];
+            const sIdx = sectionNum - 1;
+            while (latestStructure.length <= sIdx) {
+                latestStructure.push({
+                    id: String(latestStructure.length + 1),
+                    label: `第${latestStructure.length + 1}問`,
+                    allocatedPoints: 0,
+                    sectionAnalysis: '',
+                    questionType: 'default',
+                    questions: []
+                });
+            }
+
+            latestStructure[sIdx] = {
+                ...latestStructure[sIdx],
+                ...sectionData,
+                id: String(sectionData?.id || latestStructure[sIdx]?.id || sectionNum),
+                label: sectionData?.label || latestStructure[sIdx]?.label || `第${sectionNum}問`
+            };
+
+            const { structure: choiceNormalizedStructure } = normalizeExamStructureChoiceLabels(latestStructure);
+            const normalizedStructure = normalizeEditorStructure(choiceNormalizedStructure);
+            saveGenerationDraft(normalizedStructure, `大問${sectionNum}のDB保存前`);
+            const { error: updateError } = await updateAdminFields(examId, { structure: normalizedStructure });
+            if (updateError) throw updateError;
+            clearGenerationDraft();
+
+            if (syncLocal) {
+                setExamData(prev => ({ ...prev, structure: normalizedStructure }));
+                markCurrentStateAsSaved(buildEditorSnapshot(normalizedStructure, Math.max(sectionCount, normalizedStructure.length)));
+            }
+
+            return normalizedStructure;
+        };
+
+        if (navigator?.locks?.request) {
+            return navigator.locks.request(`exam-structure:${examId}`, runMerge);
+        }
+
+        return runMerge();
+    };
+
+    useEffect(() => {
+        const handleBeforeUnload = (event) => {
+            if (!hasUnsavedChanges || saving) return;
+            event.preventDefault();
+            event.returnValue = '';
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [hasUnsavedChanges, saving]);
+
+    useEffect(() => {
+        const handleDocumentClick = (event) => {
+            if (!hasUnsavedChanges || saving || event.defaultPrevented) return;
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+            const link = event.target.closest?.('a[href]');
+            if (!link || link.target || link.hasAttribute('download')) return;
+
+            const destination = new URL(link.href, window.location.href);
+            const current = new URL(window.location.href);
+            if (destination.origin !== current.origin || destination.href === current.href) return;
+
+            const shouldLeave = window.confirm('未保存の変更があります。このページを離れると変更が失われます。移動しますか？');
+            if (!shouldLeave) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
+            event.preventDefault();
+            skipUnsavedCheckRef.current = true;
+            setHasUnsavedChanges(false);
+            window.location.assign(destination.href);
+        };
+
+        document.addEventListener('click', handleDocumentClick, true);
+        return () => document.removeEventListener('click', handleDocumentClick, true);
+    }, [hasUnsavedChanges, saving]);
+
+    useEffect(() => {
+        if (!examData) return;
+
+        if (skipUnsavedCheckRef.current || !savedSnapshotRef.current) {
+            const currentSnapshot = buildEditorSnapshot();
+            markCurrentStateAsSaved(currentSnapshot);
+            return;
+        }
+
+        // Large exam structures make JSON snapshot comparisons expensive.
+        // Mark dirty immediately for navigation safety, then verify after typing/rendering settles.
+        setHasUnsavedChanges(true);
+        if (dirtyCheckTimerRef.current) {
+            window.clearTimeout(dirtyCheckTimerRef.current);
+        }
+        dirtyCheckTimerRef.current = window.setTimeout(() => {
+            const currentSnapshot = buildEditorSnapshot();
+            setHasUnsavedChanges(currentSnapshot !== savedSnapshotRef.current);
+            dirtyCheckTimerRef.current = null;
+        }, 350);
+
+        return () => {
+            if (dirtyCheckTimerRef.current) {
+                window.clearTimeout(dirtyCheckTimerRef.current);
+                dirtyCheckTimerRef.current = null;
+            }
+        };
+    }, [
+        examId,
+        university,
+        universityId,
+        faculty,
+        facultyId,
+        year,
+        subject,
+        subjectEn,
+        type,
+        masterStatus,
+        durationMinutes,
+        examData,
+        customLayout,
+        sectionCount,
+        sectionInstructionsBySection,
+        sectionPointsBySection
+    ]);
+
+
 
     useEffect(() => {
         getUniversityList().then(data => setUniversitiesData(data || []));
@@ -186,7 +751,7 @@ function AdminExamEditor() {
     };
 
     const normalizeSubjectFromMetadata = (subjectEnValue, subjectLabel) => {
-        if (['english', 'social', 'math', 'japanese', 'science'].includes(subjectEnValue)) {
+        if (['english', 'math', 'geography', 'japanese_history', 'world_history', 'politics_economics', 'ethics', 'japanese', 'social', 'science'].includes(subjectEnValue)) {
             return subjectEnValue;
         }
 
@@ -195,7 +760,12 @@ function AdminExamEditor() {
         if (label.includes('数')) return 'math';
         if (label.includes('国') || label.includes('現代文') || label.includes('古文') || label.includes('漢文')) return 'japanese';
         if (label.includes('物理') || label.includes('化学') || label.includes('生物') || label.includes('地学') || label.includes('理科')) return 'science';
-        if (label.includes('日') || label.includes('世') || label.includes('地理') || label.includes('政経') || label.includes('倫理') || label.includes('社会')) return 'social';
+        if (label.includes('日本史')) return 'japanese_history';
+        if (label.includes('世界史')) return 'world_history';
+        if (label.includes('地理')) return 'geography';
+        if (label.includes('政治') || label.includes('政経')) return 'politics_economics';
+        if (label.includes('倫理')) return 'ethics';
+        if (label.includes('社会')) return 'social';
         return 'english';
     };
 
@@ -291,6 +861,29 @@ function AdminExamEditor() {
         }
     };
 
+    useEffect(() => {
+        if (!isNew || initialBaseDataAppliedRef.current) return;
+
+        const params = new URLSearchParams(location.search);
+        const baseDataId = params.get('baseDataId');
+        if (!baseDataId) return;
+
+        const data = universityBaseData.find(item => getUniversityBaseDataId(item) === baseDataId);
+        if (!data) return;
+
+        initialBaseDataAppliedRef.current = true;
+        applyMetadataToForm({
+            university: data.university,
+            faculty: data.faculty,
+            year: data.year,
+            subject: data.subject,
+            subject_en: normalizeSubjectFromMetadata(data.subject_en, data.subject),
+            max_score: data.maxScore,
+            duration_minutes: data.duration,
+            passing_lines: data.passingLines
+        });
+    }, [isNew, location.search]);
+
     const handleExtractMetadata = async () => {
         const finalQFiles = questionFiles.length > 0 ? questionFiles : (examData?.pdf_path ? [examData.pdf_path] : []);
         if (finalQFiles.length === 0) {
@@ -298,15 +891,9 @@ function AdminExamEditor() {
             return;
         }
 
-        const apiKey = getGeminiApiKey();
-        if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-            alert('【エラー】Gemini APIキーが見つかりません。');
-            return;
-        }
-
         setExtractingMetadata(true);
         try {
-            const metadata = await geminiQueue.add(() => extractExamMetadata(apiKey, finalQFiles));
+            const metadata = await geminiQueue.add(() => extractExamMetadata(finalQFiles));
             const enrichedMetadata = enrichMetadataWithKnowledge(metadata);
             applyMetadataToForm(enrichedMetadata);
             setKnowledgeCandidates(enrichedMetadata.knowledgeCandidates || []);
@@ -328,6 +915,12 @@ function AdminExamEditor() {
             alert('データの取得に失敗しました');
             navigate('/admin');
         } else if (data) {
+            const draft = loadGenerationDraft(data.id);
+            const dbUpdatedAt = data.updated_at ? new Date(data.updated_at).getTime() : 0;
+            const draftSavedAt = draft?.savedAt ? new Date(draft.savedAt).getTime() : 0;
+            const shouldRestoreDraft = draft && draftSavedAt > dbUpdatedAt;
+            const loadedStructure = normalizeEditorStructure(shouldRestoreDraft ? draft.structure : (data.structure || []));
+
             setExamId(data.id);
             setUniversity(data.university);
             setUniversityId(data.university_id);
@@ -337,18 +930,19 @@ function AdminExamEditor() {
             setSubject(data.subject);
             setSubjectEn(data.subject_en);
             setType(data.type);
+            setMasterStatus(normalizeMasterStatus(data.master_status));
             setDurationMinutes(data.duration_minutes || 60);
             setExamData({
                 max_score: data.max_score,
                 detailed_analysis: data.detailed_analysis,
-                structure: data.structure || [],
+                structure: loadedStructure,
                 pdf_path: data.pdf_path,
                 passing_lines: data.passing_lines || { A: 80, B: 70, C: 60, D: 40 }
             });
             setCustomLayout(data.custom_layout || []);
-            if (data.structure && data.structure.length > 0) {
+            if (loadedStructure && loadedStructure.length > 0) {
                 // Ensure at least 3 sections are shown or the stored count, whichever is higher
-                const displayCount = Math.max(3, data.structure.length);
+                const displayCount = Math.max(3, loadedStructure.length);
                 setSectionCount(displayCount);
 
                 // Also initialize the file and instruction maps for each section to avoid blanks
@@ -356,20 +950,26 @@ function AdminExamEditor() {
                 const aMap = {};
                 const iMap = {};
                 const pMap = {};
+                const cMap = {};
 
                 // Initialize all slots up to displayCount
                 for (let n = 1; n <= displayCount; n++) {
-                    const sec = data.structure[n - 1];
+                    const sec = loadedStructure[n - 1];
                     qMap[n] = [];
                     aMap[n] = [];
                     iMap[n] = sec?.instruction || '';
                     pMap[n] = sec?.allocatedPoints || '';
+                    cMap[n] = sec?.questions?.length > 0 ? String(sec.questions.length) : '';
                 }
 
                 setQuestionFilesBySection(qMap);
                 setAnswerFilesBySection(aMap);
                 setSectionInstructionsBySection(iMap);
                 setSectionPointsBySection(pMap);
+                setSectionExpectedQuestionCounts(cMap);
+            }
+            if (shouldRestoreDraft) {
+                alert('生成中に退避されていたデータを復元しました。内容を確認して保存してください。');
             }
         }
         setLoading(false);
@@ -379,7 +979,7 @@ function AdminExamEditor() {
         const selectedId = e.target.value;
         if (!selectedId) return;
 
-        const data = universityBaseData.find(d => d.id === selectedId);
+        const data = universityBaseData.find(d => getUniversityBaseDataId(d) === selectedId);
         if (!data) return;
 
         if (!confirm(`${data.university} ${data.faculty} の基礎データを読み込みますか？\n(満点、制限時間、合格ラインが上書きされます)`)) {
@@ -387,37 +987,30 @@ function AdminExamEditor() {
             return;
         }
 
-        // Update independent state variables for the UI
-        if (data.university) {
-            setUniversity(data.university);
-            const matchUni = universitiesData.find(u => u.name === data.university);
-            if (matchUni) setUniversityId(matchUni.id);
-        }
-        if (data.faculty) {
-            setFaculty(data.faculty);
-            const matchUni = universitiesData.find(u => u.name === (data.university || university));
-            const matchFac = matchUni?.faculties?.find(f => f.name === data.faculty);
-            if (matchFac) setFacultyId(matchFac.id);
-        }
-        if (data.duration) {
-            setDurationMinutes(data.duration);
-        }
-
-        // Update the examData JSON object
-        setExamData(prev => ({
-            ...prev,
-            max_score: data.maxScore || prev.max_score,
-            passing_lines: data.passingLines || prev.passing_lines
-        }));
+        applyMetadataToForm({
+            university: data.university,
+            faculty: data.faculty,
+            year: data.year,
+            subject: data.subject,
+            subject_en: normalizeSubjectFromMetadata(data.subject_en, data.subject),
+            max_score: data.maxScore,
+            duration_minutes: data.duration,
+            passing_lines: data.passingLines
+        });
         
         e.target.value = "";
         alert('データを読み込みました。');
     };
 
-    const handleGenerateSection = async (sectionNum, silent = false, shouldExtractVocab = false, includeAnalysis = true) => {
-        if (!examId) {
-            if (!silent) alert('IDを入力してください。');
+    const handleGenerateSection = async (sectionNum, silent = false, shouldExtractVocab = false, includeAnalysis = true, includeExplanations = true, options = {}) => {
+        const fail = (message) => {
+            if (!silent) alert(message);
+            if (typeof options.onError === 'function') options.onError(message);
             return false;
+        };
+
+        if (!examId) {
+            return fail('IDを入力してください。');
         }
 
         const qFiles = questionFilesBySection[sectionNum] || [];
@@ -425,32 +1018,34 @@ function AdminExamEditor() {
         const hasUploadedAnswers = examData?.structure?.[sectionNum - 1]?.answer_pdf_path;
         
         if (qFiles.length === 0 && !examData?.structure?.[sectionNum - 1]?.question_pdf_path && questionFiles.length === 0 && !examData?.pdf_path) {
-            if (!silent) alert(`大問${sectionNum}の問題PDF、もしくは全体の問題PDFが必要です。`);
-            return false;
+            return fail(`大問${sectionNum}の問題PDF、もしくは全体の問題PDFが必要です。`);
         }
 
         if (aFiles.length === 0 && !hasUploadedAnswers) {
-            if (!silent) alert(`大問${sectionNum}の解答PDFが必要です。`);
-            return false;
+            return fail(`大問${sectionNum}の解答画像が必要です。`);
         }
 
         const targetPoints = parseInt(sectionPointsBySection[sectionNum]);
         if (!targetPoints || isNaN(targetPoints) || targetPoints <= 0) {
             if (!silent && !confirm(`大問${sectionNum}の「目標配点」が設定されていません。\n配点はAIが自然な点数を適当に割り振ります（大問や全体の合計点が目標とズレる可能性があります）。\nよろしいですか？`)) {
-                return false;
+                return fail(`大問${sectionNum}の「目標配点」が設定されていません。`);
             }
         }
+        const manualExpectedCount = parseInt(sectionExpectedQuestionCounts[sectionNum]);
+        const instructionForExpectedCount = getSectionInstruction(
+            sectionInstructionsBySection,
+            sectionNum,
+            examData?.structure?.[sectionNum - 1]
+        );
+        const expectedQuestionCount = manualExpectedCount && !isNaN(manualExpectedCount) && manualExpectedCount > 0
+            ? manualExpectedCount
+            : extractExpectedQuestionCount(instructionForExpectedCount);
 
         setGeneratingSectionData(prev => ({ ...prev, [sectionNum]: true }));
+        setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'structure' }));
         try {
-            const apiKey = getGeminiApiKey();
-            if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-                if (!silent) alert('【エラー】Gemini APIキーが見つかりません。');
-                setGeneratingSectionData(prev => ({ ...prev, [sectionNum]: false }));
-                return false;
-            }
-
-            const instruction = sectionInstructionsBySection[sectionNum];
+            const instructionSourceSection = examData?.structure?.[sectionNum - 1];
+            const baseInstruction = getSectionInstruction(sectionInstructionsBySection, sectionNum, instructionSourceSection);
             
             // Fallback strategy: 1. Section files, 2. Global files, 3. Saved Section URL, 4. Saved Global URL
             const savedQPath = examData?.structure?.[sectionNum - 1]?.question_pdf_path;
@@ -458,51 +1053,152 @@ function AdminExamEditor() {
             
             const savedAPath = examData?.structure?.[sectionNum - 1]?.answer_pdf_path;
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
+            const instruction = [
+                baseInstruction,
+                expectedQuestionCount
+                    ? `【システム補足】この大問の期待小問数は ${expectedQuestionCount} 件です。${expectedQuestionCount} 件未満のquestionsは不完全データとして扱います。`
+                    : ''
+            ].filter(Boolean).join('\n\n').trim();
 
+            console.info('[AdminExamEditor] generate section request', {
+                sectionNum,
+                expectedQuestionCount,
+                targetPoints,
+                questionFileCount: finalQFiles.length,
+                answerFileCount: finalAFiles.length,
+                hasSavedQuestion: Boolean(savedQPath),
+                hasSavedAnswer: Boolean(savedAPath)
+            });
+
+            setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'structure' }));
             const sectionResult = await geminiQueue.add(() => generateSingleSectionData(
                 subjectEn,
                 sectionNum,
                 finalQFiles,
                 finalAFiles,
                 instruction,
-                targetPoints
+                targetPoints,
+                expectedQuestionCount,
+                false,
+                !includeExplanations
             ));
-
-            setExamData(prev => {
-                const newStructure = [...(prev?.structure || [])];
-                const sIdx = sectionNum - 1;
-                
-                while (newStructure.length <= sIdx) {
-                    newStructure.push({ id: String(newStructure.length + 1), label: `第${newStructure.length + 1}問`, allocatedPoints: 0, sectionAnalysis: '', questions: [] });
-                }
-
-                const existingA_pdf = newStructure[sIdx].answer_pdf_path;
-                const existingQ_pdf = newStructure[sIdx].question_pdf_path;
-                const existingInstruction = newStructure[sIdx].instruction || instruction;
-
-                newStructure[sIdx] = {
-                    ...sectionResult,
-                    sectionAnalysis: includeAnalysis ? sectionResult.sectionAnalysis : '',
-                    vocabulary: newStructure[sIdx].vocabulary || [], // Preserve existing if any
-                    answer_pdf_path: existingA_pdf,
-                    question_pdf_path: existingQ_pdf,
-                    instruction: existingInstruction
-                };
-
-                return { ...prev, structure: newStructure };
+            console.info('[AdminExamEditor] generate section response', {
+                sectionNum,
+                expectedQuestionCount,
+                returnedQuestionCount: Array.isArray(sectionResult?.questions) ? sectionResult.questions.length : null,
+                returnedQuestionIds: Array.isArray(sectionResult?.questions) ? sectionResult.questions.map(q => q?.id || q?.label) : []
             });
+            let normalizedSectionResult = normalizeEditorStructure([sectionResult])[0] || sectionResult;
+            validateGeneratedSection(normalizedSectionResult, `大問${sectionNum}の生成結果`, {
+                targetPoints: targetPoints && !isNaN(targetPoints) && targetPoints > 0 ? targetPoints : null,
+                expectedQuestionCount
+            });
+
+            const sIdx = sectionNum - 1;
+            const existingSection = examData?.structure?.[sIdx] || {};
+            const buildPersistableSection = (sectionData, sectionAnalysis = '') => ({
+                ...sectionData,
+                sectionAnalysis,
+                questionType: sectionData.questionType || existingSection.questionType || 'default',
+                vocabulary: existingSection.vocabulary || sectionData.vocabulary || [],
+                answer_pdf_path: existingSection.answer_pdf_path,
+                question_pdf_path: existingSection.question_pdf_path,
+                instruction: existingSection.instruction || baseInstruction
+            });
+
+            const persistGeneratedStep = async (sectionData, sectionAnalysis = '') => {
+                const stepSection = buildPersistableSection(sectionData, sectionAnalysis);
+                setExamData(prev => {
+                    const newStructure = [...(prev?.structure || [])];
+
+                    while (newStructure.length <= sIdx) {
+                        newStructure.push({ id: String(newStructure.length + 1), label: `第${newStructure.length + 1}問`, allocatedPoints: 0, sectionAnalysis: '', questionType: 'default', questions: [] });
+                    }
+
+                    newStructure[sIdx] = {
+                        ...newStructure[sIdx],
+                        ...stepSection,
+                        vocabulary: newStructure[sIdx].vocabulary || stepSection.vocabulary || []
+                    };
+
+                    return { ...prev, structure: newStructure };
+                });
+                await persistSectionMerge(sectionNum, stepSection);
+                return stepSection;
+            };
+
+            await persistGeneratedStep(normalizedSectionResult, '');
+
+            if (includeExplanations) {
+                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'explanations' }));
+                const sectionWithExplanations = await geminiQueue.add(() => generateSectionQuestionsExplanations(
+                    subjectEn,
+                    normalizedSectionResult,
+                    finalQFiles,
+                    finalAFiles,
+                    {
+                        onChunk: async (partialSection, chunkInfo) => {
+                            const normalizedPartial = normalizeEditorStructure([partialSection])[0] || partialSection;
+                            await persistGeneratedStep(normalizedPartial, '');
+                            console.info('[AdminExamEditor] saved explanation chunk', {
+                                sectionNum,
+                                chunkInfo
+                            });
+                        }
+                    }
+                ));
+                normalizedSectionResult = normalizeEditorStructure([sectionWithExplanations])[0] || sectionWithExplanations;
+                await persistGeneratedStep(normalizedSectionResult, '');
+            }
+
+            const generationWarnings = Array.isArray(normalizedSectionResult.generationWarnings)
+                ? normalizedSectionResult.generationWarnings.filter(Boolean)
+                : [];
+
+            let generatedSectionAnalysis = normalizedSectionResult.sectionAnalysis || '';
+            if (includeAnalysis) {
+                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'analysis' }));
+                generatedSectionAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
+                    subjectEn,
+                    normalizedSectionResult,
+                    finalQFiles,
+                    finalAFiles,
+                    buildSectionAnalysisInstruction(baseInstruction, normalizedSectionResult),
+                    examData?.subject || subject || ''
+                ));
+                generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${normalizedSectionResult.id || sectionNum}問の詳細解説`);
+            }
+
+            const sectionToPersist = buildPersistableSection(
+                normalizedSectionResult,
+                includeAnalysis ? generatedSectionAnalysis : ''
+            );
+            try {
+                await persistGeneratedStep(normalizedSectionResult, includeAnalysis ? generatedSectionAnalysis : '');
+            } catch (saveError) {
+                console.error(`Section ${sectionNum} auto-save failed:`, saveError);
+                throw new Error(`大問${sectionNum}の生成結果は画面に反映されましたが、自動保存に失敗しました: ${saveError.message}`);
+            }
 
             // Automatic Vocabulary Extraction
             if (shouldExtractVocab) {
-                const sIdx = sectionNum - 1;
                 setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: true }));
+                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'vocabulary' }));
                 try {
                     const vocabResult = await geminiQueue.add(() => extractSectionVocabulary(finalQFiles));
+                    const sectionWithVocab = {
+                        ...sectionToPersist,
+                        vocabulary: vocabResult
+                    };
                     setExamData(prev => {
                         const newStructure = [...(prev?.structure || [])];
-                        newStructure[sIdx].vocabulary = vocabResult;
+                        newStructure[sIdx] = {
+                            ...(newStructure[sIdx] || {}),
+                            ...sectionWithVocab
+                        };
                         return { ...prev, structure: newStructure };
                     });
+                    await persistSectionMerge(sectionNum, sectionWithVocab);
                 } catch (vocabError) {
                     console.error(`Vocabulary extraction failed for section ${sectionNum}:`, vocabError);
                     // Don't fail the whole process if only vocab fails, but maybe log it
@@ -511,24 +1207,30 @@ function AdminExamEditor() {
                 }
             }
 
-            if (!silent) alert(`大問${sectionNum}の生成が完了しました！下部のエディタ（C）に内容が反映されました。`);
+            if (!silent) {
+                const warningText = generationWarnings.length > 0
+                    ? `\n\n【要確認】\n${generationWarnings.join('\n')}`
+                    : '';
+                alert(`大問${sectionNum}の生成が完了しました！下部のエディタ（C）に内容が反映されました。${warningText}`);
+            }
             return true;
         } catch (error) {
             console.error(`Section ${sectionNum} Generation failed:`, error);
-            if (!silent) alert(`大問${sectionNum}の生成中にエラーが発生しました。\n` + error.message);
+            const message = `大問${sectionNum}の生成中にエラーが発生しました。\n${error.message || '不明なエラー'}`;
+            if (!silent) alert(message);
+            if (typeof options.onError === 'function') options.onError(message);
             return false;
         } finally {
             setGeneratingSectionData(prev => ({ ...prev, [sectionNum]: false }));
+            setSectionGenerationPhases(prev => {
+                const next = { ...prev };
+                delete next[sectionNum];
+                return next;
+            });
         }
     };
 
     const handleGenerateOnlyExplanations = async (sectionNum, includeAnalysis = true) => {
-        const apiKey = getGeminiApiKey();
-        if (!apiKey) {
-            alert('Gemini API Keyが見つかりません。');
-            return;
-        }
-
         const sIdx = sectionNum - 1;
         const sectionData = examData?.structure?.[sIdx];
         if (!sectionData) {
@@ -537,6 +1239,7 @@ function AdminExamEditor() {
         }
 
         setGeneratingExplanationsOnly(prev => ({ ...prev, [sectionNum]: true }));
+        setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'explanations' }));
         try {
             const qFiles = questionFilesBySection[sectionNum] || [];
             const aFiles = answerFilesBySection[sectionNum] || [];
@@ -581,69 +1284,94 @@ function AdminExamEditor() {
                 console.error("Failed to extract questions from AI result:", result);
                 return;
             }
+            if (aiQuestions.length !== (sectionData.questions || []).length) {
+                throw new Error(`AIの小問数 ${aiQuestions.length} 件が現在の小問数 ${(sectionData.questions || []).length} 件と一致しません。誤った紐付けを避けるため反映しません。`);
+            }
+            if (!aiQuestions.some(q => q?.explanation && String(q.explanation).trim())) {
+                throw new Error('AIが有効な小問解説を返しませんでした。反映を中止しました。');
+            }
+            const unansweredQuestions = (sectionData.questions || []).filter(q => !q.explanation || !String(q.explanation).trim());
+            const missingGeneratedExplanations = unansweredQuestions.filter((origQ, idx) => {
+                const match = aiQuestions.find(newQ =>
+                    String(newQ.id).trim() === String(origQ.id).trim() ||
+                    String(newQ.label).trim() === String(origQ.label).trim()
+                ) || (aiQuestions.length === (sectionData.questions || []).length ? aiQuestions[idx] : null);
+                return !match?.explanation || !String(match.explanation).trim();
+            });
+            if (missingGeneratedExplanations.length > 0) {
+                throw new Error(`AIが ${missingGeneratedExplanations.length} 件の小問解説を返しませんでした。反映を中止しました。`);
+            }
 
-            // Merge the result back into the structure, ensuring we don't overwrite user-fixed values
-            let finalStructure;
+            let generatedSectionAnalysis = sectionData.sectionAnalysis || '';
+            if (includeAnalysis) {
+                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'analysis' }));
+                ensureSectionAnalysisSources(sectionData, finalQFiles, finalAFiles);
+                generatedSectionAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
+                    subjectEn,
+                    sectionData,
+                    finalQFiles,
+                    finalAFiles,
+                    buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sectionNum, sectionData), sectionData),
+                    examData?.subject || ''
+                ));
+                generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${sectionData.id}問の詳細解説`);
+            }
+
+            // Robust update logic: Try ID match first, then index match as fallback.
+            const mergedQuestions = sectionData.questions.map((origQ, idx) => {
+                let match = aiQuestions.find(newQ =>
+                    String(newQ.id).trim() === String(origQ.id).trim() ||
+                    String(newQ.label).trim() === String(origQ.label).trim()
+                );
+
+                if (!match && aiQuestions.length === sectionData.questions.length && aiQuestions[idx]) {
+                    console.warn(`ID mismatch for question ${origQ.id}. Falling back to index match.`);
+                    match = aiQuestions[idx];
+                }
+
+                if (match && match.explanation) {
+                    return {
+                        ...origQ,
+                        ...buildResolvedCorrectAnswerPatch(origQ, match),
+                        explanation: match.explanation
+                    };
+                }
+                return origQ;
+            });
+
+            const finalSectionForSave = {
+                ...sectionData,
+                sectionAnalysis: includeAnalysis ? generatedSectionAnalysis : sectionData.sectionAnalysis,
+                questions: mergedQuestions
+            };
+
             setExamData(prev => {
                 const newStructure = [...(prev?.structure || [])];
-                const currentSec = newStructure[sIdx];
-                
-                if (!currentSec || !currentSec.questions) return prev;
-
-                // Robust update logic: Try ID match first, then index match as fallback
-                const mergedQuestions = currentSec.questions.map((origQ, idx) => {
-                    // 1. Try match by ID (exact or normalized)
-                    let match = aiQuestions.find(newQ => 
-                        String(newQ.id).trim() === String(origQ.id).trim() ||
-                        String(newQ.label).trim() === String(origQ.label).trim()
-                    );
-                    
-                    // 2. Fallback to index match only when question counts match exactly.
-                    //    If counts differ, order cannot be trusted and index matching would
-                    //    silently assign wrong explanations to wrong questions.
-                    if (!match && aiQuestions.length === currentSec.questions.length && aiQuestions[idx]) {
-                        console.warn(`ID mismatch for question ${origQ.id}. Falling back to index match.`);
-                        match = aiQuestions[idx];
-                    }
-
-                    if (match && match.explanation) {
-                        return {
-                            ...origQ,
-                            explanation: match.explanation
-                        };
-                    }
-                    return origQ;
-                });
-
-                newStructure[sIdx] = {
-                    ...currentSec,
-                    sectionAnalysis: includeAnalysis ? (result.sectionAnalysis || currentSec.sectionAnalysis) : currentSec.sectionAnalysis,
-                    questions: mergedQuestions
-                };
-
-                finalStructure = newStructure;
+                newStructure[sIdx] = finalSectionForSave;
                 return { ...prev, structure: newStructure };
             });
 
-            alert(`大問 ${sectionNum} の小問解説の生成が完了しました！`);
-            // Pass the explicitly calculated new structure to handleSave to avoid stale closure bugs
-            setTimeout(() => {
-                if (finalStructure) {
-                    handleSave(false, finalStructure);
-                } else {
-                    handleSave(false);
-                }
-            }, 500);
+            await persistSectionMerge(sectionNum, finalSectionForSave);
+
+            alert(includeAnalysis
+                ? `大問 ${sectionNum} の小問解説・詳細解説の生成が完了しました！`
+                : `大問 ${sectionNum} の小問解説の生成が完了しました！`
+            );
 
         } catch (err) {
             console.error(err);
             alert(`生成中にエラーが発生しました: ${err.message}`);
         } finally {
             setGeneratingExplanationsOnly(prev => ({ ...prev, [sectionNum]: false }));
+            setSectionGenerationPhases(prev => {
+                const next = { ...prev };
+                delete next[sectionNum];
+                return next;
+            });
         }
     };
 
-    const handleBulkGenerateSections = async (includeAnalysis = true) => {
+    const handleBulkGenerateSections = async (includeAnalysis = true, includeExplanations = true) => {
         if (!examId) {
             alert('IDを入力してください。');
             return;
@@ -660,12 +1388,18 @@ function AdminExamEditor() {
                 return;
             }
             if (aFiles.length === 0 && !hasUploadedAnswers) {
-                alert(`大問${i}の解答PDFが必要です。`);
+                alert(`大問${i}の解答画像が必要です。`);
                 return;
             }
         }
 
-        if (!confirm(`全 ${sectionCount} つの大問データを順番にAI生成します。処理には時間がかかる場合があります。\nよろしいですか？`)) {
+        const generationModeLabel = includeAnalysis
+            ? '大問構成・小問解説・詳細解説'
+            : includeExplanations
+                ? '大問構成・小問解説'
+                : '大問構成のみ';
+
+        if (!confirm(`全 ${sectionCount} つの大問データを「${generationModeLabel}」で順番にAI生成します。処理には時間がかかる場合があります。\nよろしいですか？`)) {
             return;
         }
 
@@ -675,10 +1409,16 @@ function AdminExamEditor() {
         try {
             for (let i = 1; i <= sectionCount; i++) {
                 setBulkSectionsProgress({ current: i, total: sectionCount });
-                const success = await handleGenerateSection(i, true, bulkIncludeVocab, includeAnalysis);
+                let failureMessage = '';
+                const success = await handleGenerateSection(i, true, bulkIncludeVocab, includeAnalysis, includeExplanations, {
+                    onError: (message) => {
+                        failureMessage = message;
+                    }
+                });
                 
                 if (!success) {
-                    const proceed = confirm(`大問${i}の生成中にエラーが発生しました。この大問をスキップして次へ進みますか？\n(「キャンセル」を押すと一括処理を中断します)`);
+                    const detail = failureMessage ? `\n\n原因:\n${failureMessage}` : '';
+                    const proceed = confirm(`大問${i}の生成中にエラーが発生しました。${detail}\n\nこの大問をスキップして次へ進みますか？\n(「キャンセル」を押すと一括処理を中断します)`);
                     if (!proceed) break;
                     continue;
                 }
@@ -719,17 +1459,6 @@ function AdminExamEditor() {
 
         setGenerating(true);
         try {
-            // Use a more robust fallback for API key retrieval
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY_V2 ||
-                import.meta.env.VITE_GEMINI_API_KEY ||
-                window._GEMINI_API_KEY;
-
-            if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-                alert('【エラー】Gemini APIキーが見つかりません。.env.local設定またはVercelの環境変数を確認してください。');
-                setGenerating(false);
-                return;
-            }
-
             // Ensure files are uploaded if not already, fallback to saved paths
             const finalQFiles = questionFiles.length > 0 ? questionFiles : (examData?.pdf_path ? [examData.pdf_path] : []);
             
@@ -754,19 +1483,22 @@ function AdminExamEditor() {
                     generateDetailed, maxScore: parseInt(examData?.max_score) || 100
                 }
             ));
+            const normalizedResultStructure = normalizeEditorStructure(result.structure || []);
+            const normalizedResult = { ...result, structure: normalizedResultStructure };
+            validateGeneratedExamMaster(normalizedResult, parseInt(examData?.max_score) || 100);
 
             setExamData(prev => ({
                 ...prev,
-                max_score: result.max_score,
-                detailed_analysis: result.detailed_analysis,
-                structure: result.structure.map((s, idx) => ({
+                max_score: normalizedResult.max_score,
+                detailed_analysis: normalizedResult.detailed_analysis,
+                structure: normalizedResult.structure.map((s, idx) => ({
                     ...s,
                     // Preserve existing PDF paths if the new structure doesn't have them
                     answer_pdf_path: prev?.structure?.[idx]?.answer_pdf_path || s.answer_pdf_path,
                     question_pdf_path: prev?.structure?.[idx]?.question_pdf_path || s.question_pdf_path
                 })),
-                pdf_path: result.pdf_path || prev?.pdf_path,
-                passing_lines: prev?.passing_lines || { A: Math.round(result.max_score * 0.8), B: Math.round(result.max_score * 0.7), C: Math.round(result.max_score * 0.6), D: Math.round(result.max_score * 0.4) }
+                pdf_path: normalizedResult.pdf_path || prev?.pdf_path,
+                passing_lines: prev?.passing_lines || { A: Math.round(normalizedResult.max_score * 0.8), B: Math.round(normalizedResult.max_score * 0.7), C: Math.round(normalizedResult.max_score * 0.6), D: Math.round(normalizedResult.max_score * 0.4) }
             }));
             alert('マスターデータの生成が完了しました！内容を確認・編集して保存してください。');
         } catch (error) {
@@ -777,15 +1509,60 @@ function AdminExamEditor() {
         }
     };
 
-    const handleCopyStructureExplanations = () => {
+    const handleCopyStructureExplanations = async () => {
         if (!examData) return;
+        let copyPdfPath = examData.pdf_path || '';
+
+        if (!copyPdfPath && questionFiles.length > 0) {
+            if (!examId) {
+                alert('全体PDFをコピーに含めるには、先に試験IDが必要です。');
+                return;
+            }
+            try {
+                setUploadingQuestion(true);
+                const { publicUrl, error: uploadError } = await uploadExamPdf(questionFiles[0], examId);
+                if (uploadError) throw uploadError;
+                copyPdfPath = publicUrl || '';
+                if (copyPdfPath) {
+                    setExamData(prev => ({ ...prev, pdf_path: copyPdfPath }));
+                }
+            } catch (err) {
+                console.error('Failed to upload PDF before copy:', err);
+                alert('全体PDFのアップロードに失敗したため、コピーを中止しました。\n' + err.message);
+                return;
+            } finally {
+                setUploadingQuestion(false);
+            }
+        }
+
+        const effectiveSectionCount = Math.max(sectionCount, examData.structure?.length || 0);
+        const syncedStructure = [];
+        for (let i = 1; i <= effectiveSectionCount; i++) {
+            const existing = examData.structure?.[i - 1] || {
+                id: String(i),
+                label: `第${i}問`,
+                questions: [],
+                sectionAnalysis: '',
+                questionType: 'default'
+            };
+            syncedStructure.push({
+                ...existing,
+                instruction: sectionInstructionsBySection[i] || existing.instruction || '',
+                allocatedPoints: parseInt(sectionPointsBySection[i]) || existing.allocatedPoints || 0
+            });
+        }
+
         const copyData = {
-            structure: examData.structure || [],
-            detailed_analysis: examData.detailed_analysis || ''
+            schema: 'smashai.examDataCopy.v2',
+            copiedAt: new Date().toISOString(),
+            pdf_path: copyPdfPath,
+            structure: syncedStructure,
+            detailed_analysis: examData.detailed_analysis || '',
+            custom_layout: customLayout || []
         };
         navigator.clipboard.writeText(JSON.stringify(copyData, null, 2))
             .then(() => {
-                alert('問題の構造と詳細解説をクリップボードにコピーしました！');
+                alert('問題データ一式をクリップボードにコピーしました！');
             })
             .catch(err => {
                 console.error('Failed to copy data:', err);
@@ -801,14 +1578,40 @@ function AdminExamEditor() {
                 alert('無効なコピーデータです。');
                 return;
             }
-            if (confirm('クリップボードのデータで「問題の構造」と「詳細解説」を上書きしますか？（※その他の大学名や配点合計などは変更されません）')) {
+            const isV2Copy = pasteData.schema === 'smashai.examDataCopy.v2';
+            const confirmMessage = isV2Copy
+                ? 'クリップボードの問題データ一式を貼り付けますか？\n全体PDF・大問別PDF/GIF・問題構造・詳細解説・レイアウトが上書きされます。\n大学名・学部名・年度・科目・満点・制限時間・合格ライン・試験IDは現在の画面のまま残します。'
+                : 'クリップボードのデータで「問題の構造」と「詳細解説」を上書きしますか？（古いコピー形式のため、PDFや合格ラインは含まれません）';
+
+            if (confirm(confirmMessage)) {
+                const nextStructure = Array.isArray(pasteData.structure)
+                    ? normalizeEditorStructure(normalizeExamStructureChoiceLabels(pasteData.structure).structure)
+                    : [];
                 setExamData(prev => ({
                     ...prev,
-                    structure: pasteData.structure || prev?.structure || [],
-                    detailed_analysis: pasteData.detailed_analysis || prev?.detailed_analysis || ''
+                    pdf_path: isV2Copy ? (pasteData.pdf_path || prev?.pdf_path || '') : (prev?.pdf_path || ''),
+                    structure: nextStructure.length > 0 ? nextStructure : (prev?.structure || []),
+                    detailed_analysis: pasteData.detailed_analysis ?? prev?.detailed_analysis ?? ''
                 }));
-                if (pasteData.structure && pasteData.structure.length > 0) {
-                    setSectionCount(Math.max(3, pasteData.structure.length));
+
+                if (isV2Copy) {
+                    if (Array.isArray(pasteData.custom_layout)) setCustomLayout(pasteData.custom_layout);
+                }
+
+                if (nextStructure.length > 0) {
+                    setSectionCount(Math.max(3, nextStructure.length));
+                    const instructionMap = {};
+                    const pointsMap = {};
+                    const countMap = {};
+                    for (let i = 1; i <= Math.max(3, nextStructure.length); i++) {
+                        const section = nextStructure[i - 1];
+                        instructionMap[i] = section?.instruction || '';
+                        pointsMap[i] = section?.allocatedPoints ? String(section.allocatedPoints) : '';
+                        countMap[i] = Array.isArray(section?.questions) && section.questions.length > 0 ? String(section.questions.length) : '';
+                    }
+                    setSectionInstructionsBySection(instructionMap);
+                    setSectionPointsBySection(pointsMap);
+                    setSectionExpectedQuestionCounts(countMap);
                 }
                 alert('移植が完了しました。保存ボタンを押すと変更が確定します。');
             }
@@ -818,14 +1621,15 @@ function AdminExamEditor() {
         }
     };
 
-    const handleSave = async (showPrompt = true, structureOverride = null) => {
+    const handleSave = async (showPrompt = true, structureOverride = null, sectionCountOverride = null) => {
         if (!examId) {
             if (showPrompt) alert('IDを入力してください。');
             return;
         }
 
+        const currentExamData = examDataRef.current || examData || {};
         setSaving(true);
-        let finalPdfPath = examData?.pdf_path || '';
+        let finalPdfPath = currentExamData?.pdf_path || '';
 
         // Final check/upload for main PDF if not yet done
         if (questionFiles && questionFiles.length > 0 && !finalPdfPath) {
@@ -841,14 +1645,16 @@ function AdminExamEditor() {
         }
 
         // Sync UI inputs (Instructions/Points) into the structure before saving
-        const currentStructure = structureOverride || examData?.structure || [];
+        const currentStructure = structureOverride || currentExamData?.structure || [];
+        const effectiveSectionCount = sectionCountOverride || sectionCount;
         const syncedStructure = [];
-        for (let i = 1; i <= sectionCount; i++) {
+        for (let i = 1; i <= effectiveSectionCount; i++) {
             const existing = currentStructure[i - 1] || { 
                 id: String(i), 
                 label: `第${i}問`, 
                 questions: [],
-                sectionAnalysis: ''
+                sectionAnalysis: '',
+                questionType: 'default'
             };
             syncedStructure.push({
                 ...existing,
@@ -856,6 +1662,9 @@ function AdminExamEditor() {
                 allocatedPoints: parseInt(sectionPointsBySection[i]) || existing.allocatedPoints || 0
             });
         }
+
+        const { structure: choiceNormalizedStructure } = normalizeExamStructureChoiceLabels(syncedStructure);
+        const normalizedStructure = normalizeEditorStructure(choiceNormalizedStructure);
 
         const payload = {
             id: examId,
@@ -867,12 +1676,14 @@ function AdminExamEditor() {
             subject,
             subject_en: subjectEn,
             type,
+            master_status: masterStatus,
+            is_published: masterStatus === 'production',
             duration_minutes: parseInt(durationMinutes) || 60,
             pdf_path: finalPdfPath,
-            max_score: parseInt(examData?.max_score || 100),
-            detailed_analysis: examData?.detailed_analysis || '',
-            structure: syncedStructure,
-            passing_lines: examData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
+            max_score: parseInt(currentExamData?.max_score || 100),
+            detailed_analysis: currentExamData?.detailed_analysis || '',
+            structure: normalizedStructure,
+            passing_lines: currentExamData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
             custom_layout: customLayout
         };
 
@@ -882,7 +1693,11 @@ function AdminExamEditor() {
         if (error) {
             alert('保存に失敗しました:\n' + error.message);
         } else {
-            setExamData(prev => ({ ...prev, structure: syncedStructure }));
+            const savedSnapshot = JSON.stringify(payload);
+            const nextExamData = { ...currentExamData, pdf_path: finalPdfPath, structure: normalizedStructure };
+            examDataRef.current = nextExamData;
+            setExamData(nextExamData);
+            markCurrentStateAsSaved(savedSnapshot);
             if (showPrompt) alert('保存しました！');
         }
     };
@@ -919,6 +1734,7 @@ function AdminExamEditor() {
                         label: `第${updatedStructure.length + 1}問`, 
                         allocatedPoints: 0, 
                         sectionAnalysis: '', 
+                        questionType: 'default',
                         questions: [] 
                     });
                 }
@@ -949,6 +1765,163 @@ function AdminExamEditor() {
         }
     };
 
+    const handleBulkAnswerFilesSelect = (files) => {
+        if (!validateUploadFiles(files, 'answer')) {
+            setBulkAnswerFiles([]);
+            return false;
+        }
+        const sorted = Array.from(files || []).sort((a, b) =>
+            a.name.localeCompare(b.name, 'ja', { numeric: true, sensitivity: 'base' })
+        );
+        setBulkAnswerFiles(sorted);
+        setAnswerFilesBySection(prev => {
+            const next = { ...prev };
+            sorted.forEach((file, index) => {
+                next[index + 1] = [file];
+            });
+            return next;
+        });
+        if (sorted.length > sectionCount) {
+            setSectionCount(sorted.length);
+        }
+        return true;
+    };
+
+    const handleBulkQuestionFilesSelect = (files) => {
+        if (!validateUploadFiles(files, 'question')) {
+            setBulkQuestionFiles([]);
+            return false;
+        }
+        const sorted = Array.from(files || []).sort((a, b) =>
+            a.name.localeCompare(b.name, 'ja', { numeric: true, sensitivity: 'base' })
+        );
+        setBulkQuestionFiles(sorted);
+        setQuestionFilesBySection(prev => {
+            const next = { ...prev };
+            sorted.forEach((file, index) => {
+                next[index + 1] = [file];
+            });
+            return next;
+        });
+        if (sorted.length > sectionCount) {
+            setSectionCount(sorted.length);
+        }
+        return true;
+    };
+
+    const handleBulkQuestionUpload = async () => {
+        if (!examId) {
+            alert('先に試験IDを入力（または自動生成）してください。');
+            return;
+        }
+        if (bulkQuestionFiles.length === 0) {
+            alert('先に問題PDFをまとめて選択してください。');
+            return;
+        }
+        if (!validateUploadFiles(bulkQuestionFiles, 'question')) return;
+
+        const targetCount = Math.max(sectionCount, bulkQuestionFiles.length);
+        if (!confirm(`${bulkQuestionFiles.length}件の問題PDFを、大問1から順に保存します。\n既存の大問別問題PDFは該当する大問だけ上書きされます。`)) {
+            return;
+        }
+
+        setBulkUploadingQuestions(true);
+        setBulkQuestionUploadProgress({ current: 0, total: bulkQuestionFiles.length });
+
+        try {
+            const updatedStructure = [...(examData?.structure || [])];
+            while (updatedStructure.length < targetCount) {
+                updatedStructure.push({
+                    id: String(updatedStructure.length + 1),
+                    label: `第${updatedStructure.length + 1}問`,
+                    allocatedPoints: 0,
+                    sectionAnalysis: '',
+                    questionType: 'default',
+                    questions: []
+                });
+            }
+
+            for (let i = 0; i < bulkQuestionFiles.length; i += 1) {
+                const file = bulkQuestionFiles[i];
+                setBulkQuestionUploadProgress({ current: i + 1, total: bulkQuestionFiles.length });
+
+                const { publicUrl, error } = await uploadExamPdf(file, examId);
+                if (error) throw error;
+                updatedStructure[i].question_pdf_path = publicUrl;
+            }
+
+            setSectionCount(targetCount);
+            setExamData(prev => ({ ...prev, structure: updatedStructure }));
+            await handleSave(false, updatedStructure, targetCount);
+            alert('問題PDFのまとめ保存が完了しました。');
+        } catch (err) {
+            console.error('Bulk question upload failed:', err);
+            alert('問題PDFのまとめ保存に失敗しました:\n' + err.message);
+        } finally {
+            setBulkUploadingQuestions(false);
+            setBulkQuestionUploadProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handleBulkAnswerUpload = async () => {
+        if (!examId) {
+            alert('先に試験IDを入力（または自動生成）してください。');
+            return;
+        }
+        if (bulkAnswerFiles.length === 0) {
+            alert('先に解答画像をまとめて選択してください。');
+            return;
+        }
+        if (!validateUploadFiles(bulkAnswerFiles, 'answer')) return;
+
+        const targetCount = Math.max(sectionCount, bulkAnswerFiles.length);
+        if (!confirm(`${bulkAnswerFiles.length}件の解答画像を、大問1から順に保存します。\n既存の大問別解答画像は該当する大問だけ上書きされます。`)) {
+            return;
+        }
+
+        setBulkUploadingAnswers(true);
+        setBulkAnswerUploadProgress({ current: 0, total: bulkAnswerFiles.length });
+
+        try {
+            const updatedStructure = [...(examData?.structure || [])];
+            while (updatedStructure.length < targetCount) {
+                updatedStructure.push({
+                    id: String(updatedStructure.length + 1),
+                    label: `第${updatedStructure.length + 1}問`,
+                    allocatedPoints: 0,
+                    sectionAnalysis: '',
+                    questionType: 'default',
+                    questions: []
+                });
+            }
+
+            for (let i = 0; i < bulkAnswerFiles.length; i += 1) {
+                const sectionNum = i + 1;
+                const file = bulkAnswerFiles[i];
+                setUploadingAnswers(prev => ({ ...prev, [sectionNum]: true }));
+                setBulkAnswerUploadProgress({ current: i + 1, total: bulkAnswerFiles.length });
+
+                const { publicUrl, error } = await uploadExamPdf(file, examId);
+                if (error) throw error;
+                updatedStructure[i].answer_pdf_path = publicUrl;
+
+                setUploadingAnswers(prev => ({ ...prev, [sectionNum]: false }));
+            }
+
+            setSectionCount(targetCount);
+            setExamData(prev => ({ ...prev, structure: updatedStructure }));
+            await handleSave(false, updatedStructure, targetCount);
+            alert('解答画像のまとめ保存が完了しました。');
+        } catch (err) {
+            console.error('Bulk answer upload failed:', err);
+            alert('解答画像のまとめ保存に失敗しました:\n' + err.message);
+        } finally {
+            setBulkUploadingAnswers(false);
+            setBulkAnswerUploadProgress({ current: 0, total: 0 });
+            setUploadingAnswers({});
+        }
+    };
+
     const handleSaveAndPreview = async () => {
         if (!examData || !examId) {
             alert('保存するデータがありません。');
@@ -957,6 +1930,7 @@ function AdminExamEditor() {
 
         // 1. Prepare initial preview data and open window SYNCHRONOUSLY
         const previewId = `${universityId}-${facultyId}-preview`;
+        const normalizedCurrentStructure = normalizeEditorStructure(examData.structure);
         
         // MATCH ExamPage expect keys for immediate local preview
         const initialFormattedExam = {
@@ -972,7 +1946,7 @@ function AdminExamEditor() {
             pdf_path: examData.pdf_path,
             pdfPath: examData.pdf_path,
             max_score: examData.max_score,
-            structure: examData.structure,
+            structure: normalizedCurrentStructure,
             passing_lines: examData.passing_lines,
             duration_minutes: durationMinutes,
             custom_layout: customLayout
@@ -1025,7 +1999,7 @@ function AdminExamEditor() {
             pdf_path: finalPdfPath,
             max_score: parseInt(examData.max_score),
             detailed_analysis: examData.detailed_analysis,
-            structure: examData.structure,
+            structure: normalizedCurrentStructure,
             passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
             custom_layout: customLayout
         };
@@ -1041,7 +2015,13 @@ function AdminExamEditor() {
     };
 
     const handleStructureChange = (sectionIdx, qIdx, field, value) => {
-        const newStructure = [...examData.structure];
+        const currentExamData = examDataRef.current || examData || {};
+        const newStructure = (currentExamData.structure || []).map(section => ({
+            ...section,
+            questions: Array.isArray(section?.questions)
+                ? section.questions.map(question => ({ ...question }))
+                : []
+        }));
         if (qIdx === null) {
             newStructure[sectionIdx][field] = value;
         } else {
@@ -1049,13 +2029,44 @@ function AdminExamEditor() {
                 newStructure[sectionIdx].questions[qIdx][field] = value.split(',').map(s => s.trim());
             } else {
                 newStructure[sectionIdx].questions[qIdx][field] = value;
+                if (field === 'completeGroupOrderMode') {
+                    const groupId = newStructure[sectionIdx].questions[qIdx].completeGroupId;
+                    if (groupId) {
+                        newStructure.forEach(section => {
+                            (section.questions || []).forEach(question => {
+                                if (question.completeGroupId === groupId) {
+                                    question.completeGroupOrderMode = value;
+                                }
+                            });
+                        });
+                    }
+                }
                 // Auto-detect multi-selection when comma is entered in correctAnswer
-                if (field === 'correctAnswer' && String(value).includes(',') && newStructure[sectionIdx].questions[qIdx].type === 'selection') {
+                if (
+                    field === 'correctAnswer' &&
+                    String(value).includes(',') &&
+                    newStructure[sectionIdx].questions[qIdx].type === 'selection' &&
+                    newStructure[sectionIdx].questions[qIdx].type !== 'ordering' &&
+                    newStructure[sectionIdx].questions[qIdx].answerIssue !== 'single_choice_multiple_answers'
+                ) {
                     newStructure[sectionIdx].questions[qIdx].type = 'selection_multi';
+                }
+                if (field === 'answerIssue' && value === 'single_choice_multiple_answers') {
+                    newStructure[sectionIdx].questions[qIdx].type = 'selection';
+                }
+                if (field === 'type' && value === 'essay') {
+                    newStructure[sectionIdx].questions[qIdx] = ensureEssayCharacterCountElement(newStructure[sectionIdx].questions[qIdx]);
+                }
+                if (field === 'type' && value === 'descriptive') {
+                    delete newStructure[sectionIdx].questions[qIdx].scoringElements;
+                    delete newStructure[sectionIdx].questions[qIdx].gradingCriteria;
+                    newStructure[sectionIdx].questions[qIdx].gradingInstruction = '';
                 }
             }
         }
-        setExamData({ ...examData, structure: newStructure });
+        const nextExamData = { ...currentExamData, structure: newStructure };
+        examDataRef.current = nextExamData;
+        setExamData(nextExamData);
     };
     const handleUpdateVocab = (sIdx, vIdx, field, value) => {
         const newStructure = [...examData.structure];
@@ -1079,6 +2090,39 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
+    const buildScoringAssistantContext = (sectionIdx) => {
+        const section = examData?.structure?.[sectionIdx] || {};
+        const questions = Array.isArray(section.questions) ? section.questions : [];
+        return {
+            sectionId: section.id || sectionIdx + 1,
+            sectionLabel: section.label || '',
+            questionType: section.questionType || '',
+            instruction: section.instruction || sectionInstructionsBySection[sectionIdx + 1] || '',
+            sectionAnalysis: section.sectionAnalysis || '',
+            questions: questions.map(item => ({
+                id: item.id,
+                label: item.label,
+                type: item.type,
+                points: item.points,
+                correctAnswer: item.correctAnswer,
+                gradingInstruction: item.gradingInstruction || ''
+            }))
+        };
+    };
+
+    const getScoringAssistantFiles = (sectionIdx) => {
+        const section = examData?.structure?.[sectionIdx] || {};
+        const qFiles = questionFilesBySection[sectionIdx + 1] || [];
+        const aFiles = answerFilesBySection[sectionIdx + 1] || [];
+        const finalQFiles = qFiles.length > 0
+            ? qFiles
+            : (questionFiles.length > 0 ? questionFiles : (section.question_pdf_path ? [section.question_pdf_path] : (examData?.pdf_path ? [examData.pdf_path] : [])));
+        const finalAFiles = aFiles.length > 0
+            ? aFiles
+            : (section.answer_pdf_path ? [section.answer_pdf_path] : []);
+        return { questionFiles: finalQFiles, answerFiles: finalAFiles };
+    };
+
     const handleSendChatMessage = async (sectionIdx, qIdx, q) => {
         const chatKey = `${sectionIdx}_${qIdx}`;
         const input = (chatInputs[chatKey] || '').trim();
@@ -1094,16 +2138,18 @@ function AdminExamEditor() {
         try {
             console.log("[ScoringChat] Consulting scoring elements with context...");
             const examMeta = { university, faculty, subject, year };
+            const assistantFiles = getScoringAssistantFiles(sectionIdx);
             const questionData = {
                 id: q.id,
                 points: q.points,
                 label: q.label,
                 correctAnswer: q.correctAnswer,
                 gradingInstruction: q.gradingInstruction,
-                scoringElements: q.scoringElements || []
+                scoringElements: q.scoringElements || [],
+                sectionContext: buildScoringAssistantContext(sectionIdx)
             };
 
-            const response = await consultScoringElements(examMeta, questionData, input, updatedHistory);
+            const response = await consultScoringElements(examMeta, questionData, input, updatedHistory, assistantFiles.questionFiles, assistantFiles.answerFiles);
             
             const aiMsg = { role: 'ai', text: response };
             setAiChats(prev => ({
@@ -1121,6 +2167,72 @@ function AdminExamEditor() {
         }
     };
 
+    const handleConvertRubricToScoringElements = async (sectionIdx, qIdx, q) => {
+        const chatKey = `${sectionIdx}_${qIdx}`;
+        const input = (chatInputs[chatKey] || '').trim();
+        if (!input) return;
+
+        const userMsg = { role: 'user', text: input };
+        const updatedHistory = [...(aiChats[chatKey] || []), userMsg];
+
+        setAiChats(prev => ({ ...prev, [chatKey]: updatedHistory }));
+        setChatInputs(prev => ({ ...prev, [chatKey]: '' }));
+        setChatLoading(prev => ({ ...prev, [chatKey]: true }));
+
+        try {
+            const examMeta = { university, faculty, subject, year };
+            const assistantFiles = getScoringAssistantFiles(sectionIdx);
+            const questionData = {
+                id: q.id,
+                points: q.points,
+                label: q.label,
+                correctAnswer: q.correctAnswer,
+                gradingInstruction: q.gradingInstruction,
+                scoringElements: q.scoringElements || [],
+                sectionContext: buildScoringAssistantContext(sectionIdx)
+            };
+
+            const result = await transformRubricToScoringElements(examMeta, questionData, input, assistantFiles.questionFiles, assistantFiles.answerFiles);
+            const convertedQuestion = ensureEssayCharacterCountElement({
+                ...q,
+                type: 'essay',
+                scoringElements: normalizeScoringElements(result?.scoringElements)
+            });
+            const convertedElements = normalizeScoringElements(convertedQuestion.scoringElements);
+            if (convertedElements.length === 0) {
+                throw new Error('採点要素に変換できませんでした。');
+            }
+
+            handleStructureChange(sectionIdx, qIdx, 'scoringElements', convertedElements);
+            handleStructureChange(sectionIdx, qIdx, 'gradingInstruction', result?.gradingInstruction || '');
+
+            const total = convertedElements
+                .filter(item => item.type !== 'force_zero')
+                .reduce((sum, item) => sum + (item.type === 'deduction' ? -Math.abs(Number(item.points) || 0) : Number(item.points) || 0), 0);
+            const pointLimit = Number(q.points) || 0;
+            const pointSummary = pointLimit > 0 && total > pointLimit
+                ? `要素合計: ${total}点 → 最終上限: ${pointLimit}点`
+                : `要素合計: ${total}点 / 設問配点: ${pointLimit}点`;
+
+            const aiMsg = {
+                role: 'ai',
+                text: `採点基準をスマサイ独自表現に変換し、採点要素 ${convertedElements.length}件として反映しました。\n${pointSummary}\n必要に応じて左側で微調整し、最後に試験データを保存してください。`
+            };
+            setAiChats(prev => ({
+                ...prev,
+                [chatKey]: [...updatedHistory, aiMsg]
+            }));
+        } catch (error) {
+            console.error("[ScoringChat] Rubric transform failed:", error);
+            setAiChats(prev => ({
+                ...prev,
+                [chatKey]: [...updatedHistory, { role: 'ai', text: `⚠️ 変換に失敗しました: ${error.message}` }]
+            }));
+        } finally {
+            setChatLoading(prev => ({ ...prev, [chatKey]: false }));
+        }
+    };
+
     const handleResetChat = (sectionIdx, qIdx) => {
         const chatKey = `${sectionIdx}_${qIdx}`;
         if (confirm("会話履歴をリセットしますか？")) {
@@ -1130,7 +2242,9 @@ function AdminExamEditor() {
     };
 
     const normalizeScoringElements = (value) => {
-        return Array.isArray(value) ? value : [];
+        return Array.isArray(value)
+            ? value.map(normalizeScoringElement)
+            : [];
     };
 
     const renderScoringModal = () => {
@@ -1166,9 +2280,24 @@ function AdminExamEditor() {
         }
 
         const chatKey = `${sectionIdx}_${qIdx}`;
-        const elements = normalizeScoringElements(q.scoringElements);
-        const totalPoints = elements.reduce((sum, item) => sum + (item.points || 0), 0);
-        const isMatch = totalPoints === (q.points || 0);
+        const elements = q.type === 'essay'
+            ? normalizeScoringElements(ensureEssayCharacterCountElement(q).scoringElements)
+            : normalizeScoringElements(q.scoringElements);
+        const totalPoints = elements
+            .filter(item => item.type !== 'force_zero')
+            .reduce((sum, item) => {
+                const points = Number(item.points) || 0;
+                return sum + (item.type === 'deduction' ? -Math.abs(points) : points);
+            }, 0);
+        const forceZeroCount = elements.filter(item => item.type === 'force_zero' || (item.type === 'character_count' && item.forceZeroOnFail !== false)).length;
+        const questionPointLimit = Number(q.points) || 0;
+        const isExactMatch = totalPoints === questionPointLimit;
+        const isCapScoring = questionPointLimit > 0 && totalPoints > questionPointLimit;
+        const pointsCheckClass = isExactMatch
+            ? 'bg-green-50 text-green-700 border border-green-100'
+            : isCapScoring
+                ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                : 'bg-red-50 text-red-600 border border-red-100';
 
         return createPortal(
             <div style={scoringModalStyles.overlay}>
@@ -1215,22 +2344,21 @@ function AdminExamEditor() {
                             <div className="flex-1 flex flex-col min-h-[300px]">
                                 <div className="flex justify-between items-center mb-3">
                                     <span className="text-[10px] font-black text-orange-700 uppercase tracking-wider">
-                                        採点判定要素 ({elements.length} / 7)
+                                        採点判定要素 ({elements.length})
                                     </span>
                                             <button
                                                 type="button"
                                                 onClick={() => {
                                                     const newElements = [...elements];
-                                            if (newElements.length >= 7) {
-                                                alert("要素数は最大7個までです。");
-                                                return;
-                                            }
                                             newElements.push({
                                                 id: `e${newElements.length + 1}`,
                                                 description: "",
                                                 points: 1,
                                                 allowPartial: false,
-                                                type: "content"
+                                                type: "content",
+                                                minChars: '',
+                                                maxChars: '',
+                                                forceZeroOnFail: false
                                             });
                                             handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
                                         }}
@@ -1281,21 +2409,130 @@ function AdminExamEditor() {
 
                                                 <div className="flex flex-wrap items-center gap-4 text-[10px] text-gray-500 font-bold bg-gray-50 p-2 rounded-lg">
                                                     <div className="flex items-center gap-1.5">
+                                                        <span>種別:</span>
+                                                        <select
+                                                            value={el.type || 'content'}
+                                                            onChange={(e) => {
+                                                                const newElements = [...elements];
+                                                                const nextType = e.target.value;
+                                                                const currentPoints = Number(newElements[elIdx].points) || 0;
+                                                                newElements[elIdx] = {
+                                                                    ...newElements[elIdx],
+                                                                    type: nextType,
+                                                                    points: nextType === 'force_zero'
+                                                                        ? 0
+                                                                        : nextType === 'character_count'
+                                                                            ? Math.max(0, currentPoints || 0)
+                                                                        : nextType === 'deduction'
+                                                                            ? -Math.abs(currentPoints || 1)
+                                                                            : currentPoints,
+                                                                    allowPartial: nextType === 'character_count' ? false : newElements[elIdx].allowPartial,
+                                                                    forceZeroOnFail: nextType === 'character_count' ? true : newElements[elIdx].forceZeroOnFail,
+                                                                    description: nextType === 'character_count' && !newElements[elIdx].description
+                                                                        ? '答案の文字数が指定範囲内である'
+                                                                        : newElements[elIdx].description
+                                                                };
+                                                                handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                            }}
+                                                            className="p-1 border border-gray-300 rounded text-navy-blue bg-white"
+                                                        >
+                                                            <option value="content">内容加点</option>
+                                                            <option value="logic">論理加点</option>
+                                                            <option value="character_count">文字数条件</option>
+                                                            <option value="deduction">減点</option>
+                                                            <option value="force_zero">強制0点</option>
+                                                        </select>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
                                                         <span>配点:</span>
                                                         <input
                                                             type="number"
+                                                            step="0.5"
                                                             value={el.points}
+                                                            disabled={el.type === 'force_zero'}
                                                             onChange={(e) => {
                                                                 const newElements = [...elements];
-                                                                newElements[elIdx].points = Math.max(1, parseInt(e.target.value) || 0);
+                                                                const nextPoints = Number(e.target.value) || 0;
+                                                                newElements[elIdx].points = el.type === 'deduction'
+                                                                    ? -Math.abs(nextPoints)
+                                                                    : Math.max(0, nextPoints);
                                                                 handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
                                                             }}
                                                             className="w-12 p-1 border border-gray-300 rounded text-center text-navy-blue"
                                                         />
                                                         <span>点</span>
                                                     </div>
+                                                    {el.type === 'character_count' && (
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span>文字数:</span>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                value={el.minChars ?? ''}
+                                                                onChange={(e) => {
+                                                                    const newElements = [...elements];
+                                                                    newElements[elIdx].minChars = e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0);
+                                                                    handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                                }}
+                                                                placeholder="下限"
+                                                                className="w-16 p-1 border border-gray-300 rounded text-center text-navy-blue"
+                                                            />
+                                                            <span>〜</span>
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                value={el.maxChars ?? ''}
+                                                                onChange={(e) => {
+                                                                    const newElements = [...elements];
+                                                                    newElements[elIdx].maxChars = e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0);
+                                                                    handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                                }}
+                                                                placeholder="上限"
+                                                                className="w-16 p-1 border border-gray-300 rounded text-center text-navy-blue"
+                                                            />
+                                                            <span>字</span>
+                                                        </div>
+                                                    )}
+                                                    {el.type !== 'force_zero' && el.type !== 'character_count' && (
+                                                        <label className="flex items-center gap-1.5">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={Boolean(el.allowPartial)}
+                                                                onChange={(e) => {
+                                                                    const newElements = [...elements];
+                                                                    newElements[elIdx].allowPartial = e.target.checked;
+                                                                    handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                                }}
+                                                            />
+                                                            部分点/半減点を許可
+                                                        </label>
+                                                    )}
+                                                    {el.type === 'character_count' && (
+                                                        <label className="flex items-center gap-1.5">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={el.forceZeroOnFail !== false}
+                                                                onChange={(e) => {
+                                                                    const newElements = [...elements];
+                                                                    newElements[elIdx].forceZeroOnFail = e.target.checked;
+                                                                    handleStructureChange(sectionIdx, qIdx, 'scoringElements', newElements);
+                                                                }}
+                                                            />
+                                                            条件外なら強制0点
+                                                        </label>
+                                                    )}
 
                                                 </div>
+                                                {el.type === 'force_zero' && (
+                                                    <p className="text-[10px] font-bold text-red-500 leading-relaxed">
+                                                        この条件を満たすと、他の採点要素や文法減点に関係なく最終得点を0点にします。
+                                                    </p>
+                                                )}
+                                                {el.type === 'character_count' && (
+                                                    <p className="text-[10px] font-bold text-blue-600 leading-relaxed">
+                                                        答案の空白・改行を除いた文字数をシステム側で数えます。条件内なら配点を加点し、条件外は基本的に強制0点にします。
+                                                    </p>
+                                                )}
                                             </div>
                                         ))
                                     )}
@@ -1304,11 +2541,13 @@ function AdminExamEditor() {
 
                             {/* Points check info */}
                             {elements.length > 0 && (
-                                <div className={`text-xs font-black p-3 rounded-xl ${isMatch ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-                                    {isMatch ? (
-                                        <span>✓ 要素の合計配点（{totalPoints}点）が設問の配点（{q.points}点）と完全に一致しています。</span>
+                                <div className={`text-xs font-black p-3 rounded-xl ${pointsCheckClass}`}>
+                                    {isExactMatch ? (
+                                        <span>強制0点専用条件を除く要素の合計配点（{totalPoints}点）が設問の配点（{questionPointLimit}点）と完全に一致しています。{forceZeroCount > 0 ? ` 強制0点条件: ${forceZeroCount}件。` : ''}</span>
+                                    ) : isCapScoring ? (
+                                        <span>上限採点：強制0点専用条件を除く要素の合計（{totalPoints}点）を採点し、最終得点は設問の配点（{questionPointLimit}点）で頭打ちにします。{forceZeroCount > 0 ? ` 強制0点条件: ${forceZeroCount}件。` : ''}</span>
                                     ) : (
-                                        <span>⚠️ 不一致：要素の合計（{totalPoints}点）が設問の配点（{q.points}点）と異なります。</span>
+                                        <span>不足：強制0点専用条件を除く要素の合計（{totalPoints}点）が設問の配点（{questionPointLimit}点）を下回っています。</span>
                                     )}
                                 </div>
                             )}
@@ -1362,28 +2601,38 @@ function AdminExamEditor() {
                             </div>
 
                             {/* Chat Input */}
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
+                            <div className="space-y-2">
+                                <textarea
                                     value={chatInputs[chatKey] || ''}
                                     onChange={(e) => setChatInputs({ ...chatInputs, [chatKey]: e.target.value })}
                                     onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                                             e.preventDefault();
                                             handleSendChatMessage(sectionIdx, qIdx, q);
                                         }
                                     }}
-                                    placeholder="例: この解答例に適合する採点項目を3個提案して"
-                                    className="flex-1 p-3 border border-indigo-100 rounded-xl outline-none text-xs focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 bg-white"
+                                    placeholder="採点基準を貼り付けるか、AIへの相談を書いてください。貼り付け基準は下のボタンでスマサイ独自表現の採点要素に変換できます。"
+                                    className="w-full min-h-[92px] p-3 border border-indigo-100 rounded-xl outline-none text-xs focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 bg-white resize-y leading-relaxed"
                                     disabled={chatLoading[chatKey]}
                                 />
-                                <button
-                                    onClick={() => handleSendChatMessage(sectionIdx, qIdx, q)}
-                                    disabled={chatLoading[chatKey] || !(chatInputs[chatKey] || '').trim()}
-                                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-3 rounded-xl disabled:opacity-40 transition-all shadow-sm"
-                                >
-                                    送信
-                                </button>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleConvertRubricToScoringElements(sectionIdx, qIdx, q)}
+                                        disabled={chatLoading[chatKey] || !(chatInputs[chatKey] || '').trim()}
+                                        className="bg-orange-600 hover:bg-orange-700 text-white text-[10px] font-black uppercase tracking-widest px-4 py-3 rounded-xl disabled:opacity-40 transition-all shadow-sm"
+                                    >
+                                        独自化して採点要素に保存
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleSendChatMessage(sectionIdx, qIdx, q)}
+                                        disabled={chatLoading[chatKey] || !(chatInputs[chatKey] || '').trim()}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest px-5 py-3 rounded-xl disabled:opacity-40 transition-all shadow-sm"
+                                    >
+                                        相談として送信
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1414,6 +2663,7 @@ function AdminExamEditor() {
         setQuestionFilesBySection(prev => ({ ...prev, [newCount]: [] }));
         setSectionInstructionsBySection(prev => ({ ...prev, [newCount]: '' }));
         setSectionPointsBySection(prev => ({ ...prev, [newCount]: '' }));
+        setSectionExpectedQuestionCounts(prev => ({ ...prev, [newCount]: '' }));
     };
 
     const handleDeleteGenerationSection = (num) => {
@@ -1427,6 +2677,7 @@ function AdminExamEditor() {
         const newQuestionFiles = {};
         const newInstructions = {};
         const newPoints = {};
+        const newExpectedCounts = {};
 
         let targetIdx = 1;
         for (let i = 1; i <= sectionCount; i++) {
@@ -1435,6 +2686,7 @@ function AdminExamEditor() {
             newQuestionFiles[targetIdx] = questionFilesBySection[i] || [];
             newInstructions[targetIdx] = sectionInstructionsBySection[i] || '';
             newPoints[targetIdx] = sectionPointsBySection[i] || '';
+            newExpectedCounts[targetIdx] = sectionExpectedQuestionCounts[i] || '';
             targetIdx++;
         }
 
@@ -1442,6 +2694,7 @@ function AdminExamEditor() {
         setQuestionFilesBySection(newQuestionFiles);
         setSectionInstructionsBySection(newInstructions);
         setSectionPointsBySection(newPoints);
+        setSectionExpectedQuestionCounts(newExpectedCounts);
 
         // Crucial: also update the actual structure data to keep it in sync
         setExamData(prev => {
@@ -1464,7 +2717,6 @@ function AdminExamEditor() {
         const oldExplanation = q.explanation;
         handleStructureChange(sIdx, qIdx, 'explanation', '🔄 AI生成中...');
         try {
-            const apiKey = getGeminiApiKey();
             const qFiles = questionFilesBySection[sIdx + 1] || [];
             const savedQPath = examData?.structure?.[sIdx]?.question_pdf_path;
             const finalQFiles = qFiles.length > 0 ? qFiles : (questionFiles.length > 0 ? questionFiles : (savedQPath ? [savedQPath] : (examData?.pdf_path ? [examData.pdf_path] : [])));
@@ -1487,7 +2739,7 @@ function AdminExamEditor() {
 
     const handleBulkGenerateExplanations = async () => {
         if (!examData || !examData.structure) return;
-        if (!confirm('全小問の解説をAIで一括生成します。これには時間がかかる場合があります。\n※すでに解説が入力されている設問はスキップされます。\nよろしいですか？')) return;
+        if (!confirm('空欄の小問解説だけをAIで一括生成します。これには時間がかかる場合があります。\n※すでに解説が入力されている設問は上書きせずスキップされます。\nよろしいですか？')) return;
 
         // Build a flat list of tasks
         const tasks = [];
@@ -1507,8 +2759,6 @@ function AdminExamEditor() {
 
         setBulkGenerating(true);
         setBulkProgress({ current: 0, total: tasks.length });
-
-        const apiKey = getGeminiApiKey();
 
         try {
             for (let i = 0; i < tasks.length; i++) {
@@ -1543,7 +2793,7 @@ function AdminExamEditor() {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
-            alert('一括生成が完了しました！');
+            alert('空欄の小問解説の一括生成が完了しました！');
         } catch (error) {
             alert('一括生成中にエラーが発生しました:\n' + error.message);
         } finally {
@@ -1557,28 +2807,29 @@ function AdminExamEditor() {
 
         const tasks = [];
         examData.structure.forEach((section, sIdx) => {
-            if (!section.sectionAnalysis || section.sectionAnalysis.trim() === '' || section.sectionAnalysis.includes('AI生成中')) {
+            if (section && Array.isArray(section.questions) && section.questions.length > 0) {
                 tasks.push({ sIdx, section });
             }
         });
 
         if (tasks.length === 0) {
-            alert('自動生成が必要な（詳細解説が空欄の）大問はありません。');
+            alert('詳細解説を生成できる大問がありません。先に大問構成を作成してください。');
             return;
         }
 
-        if (!confirm('各大問の「詳細解説」をAIで一括生成します。これには時間がかかる場合があります。\n※すでに解説が入力されている大問はスキップされます。\nよろしいですか？')) return;
+        if (!confirm('各大問の「詳細解説」をAIで一括生成します。これには時間がかかる場合があります。\n※すでに入力されている詳細解説もすべて上書きされます。\nよろしいですか？')) return;
 
         setBulkGeneratingSectionAnalyses(true);
         setBulkSectionAnalysisProgress({ current: 0, total: tasks.length });
 
-        const apiKey = getGeminiApiKey();
-
         try {
+            const failures = [];
             for (let i = 0; i < tasks.length; i++) {
                 const { sIdx, section } = tasks[i];
                 setBulkSectionAnalysisProgress({ current: i + 1, total: tasks.length });
+                setSectionGenerationPhases(prev => ({ ...prev, [sIdx + 1]: 'analysis' }));
                 
+                const previousAnalysis = section.sectionAnalysis || '';
                 handleStructureChange(sIdx, null, 'sectionAnalysis', '🔄 AI生成中...');
                 
                 try {
@@ -1590,24 +2841,34 @@ function AdminExamEditor() {
                     const savedAPath = examData?.structure?.[sIdx]?.answer_pdf_path;
                     const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
+                    ensureSectionAnalysisSources(section, finalQFiles, finalAFiles);
                     const newAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
-                        apiKey,
                         subjectEn,
                         section,
                         finalQFiles,
                         finalAFiles,
-                        sectionInstructionsBySection[sIdx + 1] || '',
+                        buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sIdx + 1, section), section),
                         examData?.subject || ''
                     ));
-                    handleStructureChange(sIdx, null, 'sectionAnalysis', newAnalysis);
+                    handleStructureChange(sIdx, null, 'sectionAnalysis', validateGeneratedText(newAnalysis, `第${section.id}問の詳細解説`));
                 } catch (err) {
                     console.error("Error generating analysis for section", section.id, err);
-                    handleStructureChange(sIdx, null, 'sectionAnalysis', '⚠️ AI生成エラー');
+                    handleStructureChange(sIdx, null, 'sectionAnalysis', previousAnalysis);
+                    failures.push(`第${section.id}問: ${err.message}`);
+                } finally {
+                    setSectionGenerationPhases(prev => {
+                        const next = { ...prev };
+                        delete next[sIdx + 1];
+                        return next;
+                    });
                 }
 
                 if (i < tasks.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 3000)); // slightly longer wait for section analysis
                 }
+            }
+            if (failures.length > 0) {
+                throw new Error(`以下の大問の詳細解説を生成できませんでした。\n\n${failures.join('\n')}`);
             }
             alert('大問詳細解説の一括生成が完了しました！');
         } catch (error) {
@@ -1622,9 +2883,8 @@ function AdminExamEditor() {
         if (!confirm(`第${section.id}問の全体解説を再生成しますか？\n（内容が上書きされます）`)) return;
 
         setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: true }));
+        setSectionGenerationPhases(prev => ({ ...prev, [sIdx + 1]: 'analysis' }));
         try {
-            const apiKey = getGeminiApiKey();
-            
             const qFiles = questionFilesBySection[sIdx + 1] || [];
             const savedQPath = examData?.structure?.[sIdx]?.question_pdf_path;
             const finalQFiles = qFiles.length > 0 ? qFiles : (questionFiles.length > 0 ? questionFiles : (savedQPath ? [savedQPath] : (examData?.pdf_path ? [examData.pdf_path] : [])));
@@ -1633,19 +2893,25 @@ function AdminExamEditor() {
             const savedAPath = examData?.structure?.[sIdx]?.answer_pdf_path;
             const finalAFiles = aFiles.length > 0 ? aFiles : (savedAPath ? [savedAPath] : []);
 
+            ensureSectionAnalysisSources(section, finalQFiles, finalAFiles);
             const newAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
                 subjectEn,
                 section,
                 finalQFiles,
                 finalAFiles,
-                sectionInstructionsBySection[sIdx + 1] || '',
+                buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sIdx + 1, section), section),
                 examData?.subject || ''
             ));
-            handleStructureChange(sIdx, null, 'sectionAnalysis', newAnalysis);
+            handleStructureChange(sIdx, null, 'sectionAnalysis', validateGeneratedText(newAnalysis, `第${section.id}問の詳細解説`));
         } catch (error) {
             alert('大問解説の再生成に失敗しました:\n' + error.message);
         } finally {
             setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: false }));
+            setSectionGenerationPhases(prev => {
+                const next = { ...prev };
+                delete next[sIdx + 1];
+                return next;
+            });
         }
     };
 
@@ -1654,8 +2920,6 @@ function AdminExamEditor() {
 
         setGeneratingVocabulary(prev => ({ ...prev, [sIdx]: true }));
         try {
-            const apiKey = getGeminiApiKey();
-
             const qFiles = questionFilesBySection[sIdx + 1] || [];
             const savedQPath = examData?.structure?.[sIdx]?.question_pdf_path;
             const finalQFiles = qFiles.length > 0 ? qFiles : (questionFiles.length > 0 ? questionFiles : (savedQPath ? [savedQPath] : (examData?.pdf_path ? [examData.pdf_path] : [])));
@@ -1732,14 +2996,6 @@ function AdminExamEditor() {
 
         setGeneratingDetailed(true);
         try {
-            const apiKey = getGeminiApiKey();
-
-            if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-                alert('【エラー】Gemini APIキーが設定されていません。');
-                setGeneratingDetailed(false);
-                return;
-            }
-
             const newAnalysis = await geminiQueue.add(() => regenerateDetailedAnalysis(
                 subjectEn,
                 examData,
@@ -1747,7 +3003,7 @@ function AdminExamEditor() {
                 finalAFiles
             ));
 
-            setExamData(prev => ({ ...prev, detailed_analysis: newAnalysis }));
+            setExamData(prev => ({ ...prev, detailed_analysis: validateGeneratedText(newAnalysis, '試験全体の講評') }));
             alert('試験全体の講評を再生成しました！確認して保存してください。');
         } catch (error) {
             alert('講評の再生成に失敗しました:\n' + error.message);
@@ -1765,14 +3021,6 @@ function AdminExamEditor() {
 
         setRegeneratingPoints(true);
         try {
-            const apiKey = getGeminiApiKey();
-
-            if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-                alert('【エラー】Gemini APIキーが設定されていません。');
-                setRegeneratingPoints(false);
-                return;
-            }
-
             const newStructure = await geminiQueue.add(() => regeneratePointsAllocation(
                 subjectEn,
                 examData,
@@ -1811,6 +3059,7 @@ function AdminExamEditor() {
             points: 0,
             type: "selection", // Default to selection
             completeGroupId: "", // Added
+            completeGroupOrderMode: "ordered",
             correctAnswer: "",
             alternativeAnswers: [],
             gradingInstruction: "",
@@ -1860,6 +3109,7 @@ function AdminExamEditor() {
             label: `第${newStructure.length + 1}問`,
             allocatedPoints: 0,
             sectionAnalysis: '',
+            questionType: 'default',
             questions: []
         });
         setExamData({ ...examData, structure: newStructure });
@@ -1984,6 +3234,39 @@ function AdminExamEditor() {
         return acc + section.questions.reduce((qAcc, q) => qAcc + (parseInt(q.points) || 0), 0);
     }, 0) || 0;
 
+    const baseDataUniversities = [...new Set(universityBaseData.map(item => item.university).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ja'));
+    const baseDataYears = [...new Set(universityBaseData.map(item => item.year).filter(Boolean))]
+        .sort((a, b) => Number(b) - Number(a));
+    const baseDataSubjects = [...new Set(universityBaseData.map(item => item.subject).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ja'));
+    const filteredUniversityBaseData = universityBaseData.filter(item => {
+        const matchesUniversity = baseDataUniversityFilter === 'all' || item.university === baseDataUniversityFilter;
+        const matchesYear = baseDataYearFilter === 'all' || String(item.year) === String(baseDataYearFilter);
+        const matchesSubject = baseDataSubjectFilter === 'all' || item.subject === baseDataSubjectFilter;
+        return matchesUniversity && matchesYear && matchesSubject;
+    });
+    const activeSectionGenerationEntries = Object.entries(sectionGenerationPhases)
+        .filter(([, phase]) => phase)
+        .map(([sectionNum, phase]) => ({
+            sectionNum,
+            phase,
+            label: GENERATION_PHASE_LABELS[phase] || '生成中'
+        }));
+    const renderBaseDataFilterButton = (label, active, onClick) => (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`px-3 py-1.5 rounded-lg border text-[10px] font-black transition-all ${
+                active
+                    ? 'bg-white text-indigo-700 border-white shadow-sm'
+                    : 'bg-white/10 text-indigo-100 border-white/20 hover:bg-white/20'
+            }`}
+        >
+            {label}
+        </button>
+    );
+
     if (loading) return <div className="p-8 text-center text-gray-500">読み込み中...</div>;
 
     return (
@@ -2009,9 +3292,11 @@ function AdminExamEditor() {
                             <span className="pb-3 px-1 border-b-2 border-navy-blue font-bold text-navy-blue text-sm">
                                 試験マスター編集
                             </span>
-                            <Link to="/admin/banners" className="pb-3 px-1 text-gray-400 hover:text-navy-blue font-medium text-sm transition-colors">
-                                広告運用管理 (CMS)
-                            </Link>
+                            {MARKETING_CONFIG.enableAdBanners && (
+                                <Link to="/admin/banners" className="pb-3 px-1 text-gray-400 hover:text-navy-blue font-medium text-sm transition-colors">
+                                    広告管理
+                                </Link>
+                            )}
                         </div>
                     </div>
 
@@ -2022,13 +3307,13 @@ function AdminExamEditor() {
                                     onClick={handleCopyStructureExplanations}
                                     className="bg-white hover:bg-gray-50 text-indigo-600 font-bold py-3 px-6 rounded-xl border border-indigo-100 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer"
                                 >
-                                    📋 構造＆解説コピー
+                                    📋 問題データ一式コピー
                                 </button>
                                 <button 
                                     onClick={handlePasteStructureExplanations}
                                     className="bg-white hover:bg-gray-50 text-indigo-600 font-bold py-3 px-6 rounded-xl border border-indigo-100 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer"
                                 >
-                                    📋 構造＆解説ペースト
+                                    📋 問題データ一式ペースト
                                 </button>
                                 <button 
                                     onClick={handleRemoveAllAsterisks}
@@ -2130,7 +3415,7 @@ function AdminExamEditor() {
                 )}
 
                 {/* Basic Info Panel */}
-                <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
+                <div className="admin-editor-card bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
                     <div className="flex items-center justify-between mb-8">
                         <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
                             <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">A</span>
@@ -2184,11 +3469,48 @@ function AdminExamEditor() {
                             <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">科目ID（内部用）</label>
                             <select value={subjectEn} onChange={e => setSubjectEn(e.target.value)} className="block w-full rounded-2xl border-gray-100 shadow-sm focus:border-navy-blue focus:ring-navy-blue text-sm p-4 border bg-gray-50/30 focus:bg-white transition-all font-black appearance-none">
                                 <option value="english">英語 (english)</option>
-                                <option value="social">社会 (social)</option>
                                 <option value="math">数学 (math)</option>
+                                <option value="geography">地理 (geography)</option>
+                                <option value="japanese_history">日本史 (japanese_history)</option>
+                                <option value="world_history">世界史 (world_history)</option>
+                                <option value="politics_economics">政治経済 (politics_economics)</option>
+                                <option value="ethics">倫理 (ethics)</option>
                                 <option value="japanese">国語 (japanese)</option>
+                                <option value="social">社会 汎用 (social)</option>
                                 <option value="science">理科 (science)</option>
                             </select>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">作成ステータス</label>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                {MASTER_STATUS_OPTIONS.map(option => {
+                                    const isActive = masterStatus === option.value;
+                                    return (
+                                        <button
+                                            key={option.value}
+                                            type="button"
+                                            onClick={() => setMasterStatus(option.value)}
+                                            title={option.description}
+                                            className={`rounded-2xl border px-3 py-3 text-xs font-black transition-all ${
+                                                isActive
+                                                    ? option.value === 'production'
+                                                        ? 'bg-red-600 text-white border-red-600 shadow-lg shadow-red-100'
+                                                        : option.value === 'verified'
+                                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100'
+                                                        : option.value === 'completed'
+                                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-100'
+                                                            : 'bg-gray-700 text-white border-gray-700 shadow-lg shadow-gray-100'
+                                                    : 'bg-gray-50/30 text-gray-400 border-gray-100 hover:bg-white hover:text-navy-blue'
+                                            }`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-gray-400 font-bold leading-relaxed ml-1">
+                                本番用にすると公開対象、それ以外は非公開として保存します。
+                            </p>
                         </div>
                         <div className="space-y-2">
                             <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">満点（合計）</label>
@@ -2302,7 +3624,7 @@ function AdminExamEditor() {
 
 
                 {/* AI Generation Section */}
-                <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-amber-100 relative overflow-hidden">
+                <div className="admin-editor-card bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-amber-100 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50 rounded-full -mr-16 -mt-16 opacity-50"></div>
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 relative z-10">
                         <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
@@ -2319,23 +3641,65 @@ function AdminExamEditor() {
 
                     <div className="space-y-8 relative z-10">
                         {/* Data Import from Obsidian */}
-                        <div className="bg-indigo-600 p-6 rounded-3xl border border-indigo-500 shadow-xl shadow-indigo-100 flex flex-col md:flex-row items-center justify-between gap-6">
-                            <div className="flex items-center gap-4">
-                                <span className="text-3xl">📚</span>
-                                <div>
-                                    <h4 className="text-white font-black text-sm">大学データ（Obsidian）から読込</h4>
-                                    <p className="text-indigo-200 text-[10px] font-bold">収集済みの満点・配点・制限時間データを適用します</p>
+                        <div className="bg-indigo-600 p-6 rounded-3xl border border-indigo-500 shadow-xl shadow-indigo-100 space-y-5">
+                            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                                <div className="flex items-center gap-4">
+                                    <span className="text-3xl">📚</span>
+                                    <div>
+                                        <h4 className="text-white font-black text-sm">大学データ（Obsidian）から読込</h4>
+                                        <p className="text-indigo-200 text-[10px] font-bold">収集済みの満点・配点・制限時間データを適用します</p>
+                                    </div>
+                                </div>
+                                <div className="text-indigo-100 text-[10px] font-black bg-white/10 border border-white/10 rounded-xl px-3 py-2">
+                                    表示中 {filteredUniversityBaseData.length} / 全{universityBaseData.length}件
                                 </div>
                             </div>
-                            <select 
+
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                <div>
+                                    <div className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.18em] mb-2">大学</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {renderBaseDataFilterButton('すべて', baseDataUniversityFilter === 'all', () => setBaseDataUniversityFilter('all'))}
+                                        {baseDataUniversities.map(name => renderBaseDataFilterButton(
+                                            name,
+                                            baseDataUniversityFilter === name,
+                                            () => setBaseDataUniversityFilter(name)
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.18em] mb-2">年度</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {renderBaseDataFilterButton('すべて', baseDataYearFilter === 'all', () => setBaseDataYearFilter('all'))}
+                                        {baseDataYears.map(dataYear => renderBaseDataFilterButton(
+                                            `${dataYear}`,
+                                            String(baseDataYearFilter) === String(dataYear),
+                                            () => setBaseDataYearFilter(dataYear)
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.18em] mb-2">科目</div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {renderBaseDataFilterButton('すべて', baseDataSubjectFilter === 'all', () => setBaseDataSubjectFilter('all'))}
+                                        {baseDataSubjects.map(name => renderBaseDataFilterButton(
+                                            name,
+                                            baseDataSubjectFilter === name,
+                                            () => setBaseDataSubjectFilter(name)
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <select
                                 onChange={handleImportUniversityData}
-                                className="w-full md:w-64 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl border border-white/20 outline-none transition-all cursor-pointer text-sm"
+                                className="w-full bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-4 rounded-xl border border-white/20 outline-none transition-all cursor-pointer text-sm"
                                 defaultValue=""
                             >
                                 <option value="" className="text-navy-blue">選択してください...</option>
-                                {universityBaseData.map(d => (
-                                    <option key={d.id} value={d.id} className="text-navy-blue">
-                                        {d.university} - {d.faculty} ({d.subject})
+                                {filteredUniversityBaseData.map(d => (
+                                    <option key={getUniversityBaseDataId(d)} value={getUniversityBaseDataId(d)} className="text-navy-blue">
+                                        {d.university} - {d.year} - {d.faculty} ({d.subject})
                                     </option>
                                 ))}
                             </select>
@@ -2361,9 +3725,14 @@ function AdminExamEditor() {
                             <div className="flex flex-col md:flex-row items-center gap-4 bg-white p-5 rounded-2xl border-2 border-dashed border-indigo-200 hover:border-indigo-400 transition-all group">
                                 <input
                                     type="file"
-                                    accept="application/pdf,image/*"
+                                    accept="application/pdf,.pdf"
                                     onChange={async (e) => {
                                         const files = Array.from(e.target.files);
+                                        if (!validateUploadFiles(files, 'question')) {
+                                            e.target.value = '';
+                                            setQuestionFiles([]);
+                                            return;
+                                        }
                                         setQuestionFiles(files);
                                         if (files[0]) {
                                             await handleImmediateUpload(files[0], 'question');
@@ -2401,6 +3770,141 @@ function AdminExamEditor() {
                             </div>
                         </div>
 
+                        {/* Bulk Section Question Upload */}
+                        <div className="bg-white p-6 rounded-3xl border border-indigo-100 shadow-sm">
+                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+                                <div>
+                                    <label className="block text-[10px] font-black text-indigo-700/70 uppercase tracking-[0.2em] mb-2">
+                                        問題PDFまとめアップロード
+                                    </label>
+                                    <h3 className="text-lg font-black text-navy-blue mb-2">保存した問題PDFを大問順にまとめて割り当て</h3>
+                                    <p className="text-xs text-gray-500 leading-relaxed">
+                                        `question_01.pdf`, `question_02.pdf` のように保存したファイルを複数選択すると、ファイル名順に大問1から割り当てます。
+                                        PDF以外を選ぶと警告して停止します。
+                                    </p>
+                                </div>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        type="file"
+                                        multiple
+                                        accept="application/pdf,.pdf"
+                                        onChange={(e) => {
+                                            if (!handleBulkQuestionFilesSelect(e.target.files)) e.target.value = '';
+                                        }}
+                                        className="text-[10px] text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-[10px] file:font-black file:text-indigo-700 hover:file:bg-indigo-100"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleBulkQuestionUpload}
+                                        disabled={bulkUploadingQuestions || bulkQuestionFiles.length === 0}
+                                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white text-[10px] font-black transition-all"
+                                    >
+                                        {bulkUploadingQuestions
+                                            ? `保存中 ${bulkQuestionUploadProgress.current}/${bulkQuestionUploadProgress.total}`
+                                            : '大問順にまとめて保存'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {bulkQuestionFiles.length > 0 && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {bulkQuestionFiles.map((file, index) => {
+                                        const sectionNum = index + 1;
+                                        const previewUrl = URL.createObjectURL(file);
+                                        return (
+                                            <div key={`${file.name}-${file.lastModified}-${index}`} className="border border-gray-100 rounded-2xl p-3 bg-gray-50/60 flex gap-3 items-center">
+                                                <div className="w-16 h-16 bg-white border border-gray-100 rounded-xl overflow-hidden flex items-center justify-center shrink-0">
+                                                    {file.type?.startsWith('image/') ? (
+                                                        <img src={previewUrl} alt="" className="w-full h-full object-contain" onLoad={() => URL.revokeObjectURL(previewUrl)} />
+                                                    ) : (
+                                                        <span className="text-[10px] font-black text-gray-400">PDF</span>
+                                                    )}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-[10px] font-black text-indigo-700 mb-1">大問 {sectionNum} に割り当て</div>
+                                                    <div className="text-[11px] text-gray-700 font-bold truncate" title={file.name}>{file.name}</div>
+                                                    <div className="text-[10px] text-gray-400">{Math.round(file.size / 1024)} KB</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Bulk Answer Image Upload */}
+                        <div className="bg-white p-6 rounded-3xl border border-emerald-100 shadow-sm">
+                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
+                                <div>
+                                    <label className="block text-[10px] font-black text-emerald-700/70 uppercase tracking-[0.2em] mb-2">
+                                        解答画像まとめアップロード
+                                    </label>
+                                    <h3 className="text-lg font-black text-navy-blue mb-2">保存した解答画像を大問順にまとめて割り当て</h3>
+                                    <p className="text-xs text-gray-500 leading-relaxed">
+                                        `answer_01.gif`, `answer_02.png` のように保存した画像やPCスクショを複数選択すると、ファイル名順に大問1から割り当てます。
+                                        GIF / PNG / JPG / WebP 以外を選ぶと警告して停止します。
+                                    </p>
+                                </div>
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        type="file"
+                                        multiple
+                                        accept="image/gif,image/png,image/jpeg,image/webp,.gif,.png,.jpg,.jpeg,.webp"
+                                        onChange={(e) => {
+                                            if (!handleBulkAnswerFilesSelect(e.target.files)) e.target.value = '';
+                                        }}
+                                        className="text-[10px] text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-emerald-50 file:text-[10px] file:font-black file:text-emerald-700 hover:file:bg-emerald-100"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleBulkAnswerUpload}
+                                        disabled={bulkUploadingAnswers || bulkAnswerFiles.length === 0}
+                                        className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white text-[10px] font-black transition-all"
+                                    >
+                                        {bulkUploadingAnswers
+                                            ? `保存中 ${bulkAnswerUploadProgress.current}/${bulkAnswerUploadProgress.total}`
+                                            : '大問順にまとめて保存'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {bulkAnswerFiles.length > 0 && (
+                                <div className="space-y-3">
+                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                        まとめアップロード 解答画像プレビュー
+                                    </div>
+                                    <div className="space-y-3" style={{ maxWidth: 440 }}>
+                                        {bulkAnswerFiles.map((file, index) => (
+                                            <LocalAnswerImagePreview
+                                                key={`${file.name}-${file.lastModified}-${index}`}
+                                                file={file}
+                                                label={`大問${index + 1} に割り当て: ${file.name}`}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {(examData?.structure || []).some(section => section?.answer_pdf_path) && (
+                                <div className={`space-y-3 ${bulkAnswerFiles.length > 0 ? 'mt-6 pt-5 border-t border-emerald-100' : ''}`}>
+                                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                                        保存済み 解答画像プレビュー
+                                    </div>
+                                    <div className="space-y-3" style={{ maxWidth: 440 }}>
+                                        {(examData?.structure || []).map((section, index) => (
+                                            section?.answer_pdf_path ? (
+                                                <SavedAnswerImagePreview
+                                                    key={`${section.id || index}-${section.answer_pdf_path}`}
+                                                    url={section.answer_pdf_path}
+                                                    label={`大問${index + 1} 保存済み: ${section.label || `第${index + 1}問`}`}
+                                                />
+                                            ) : null
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         {/* Section Uploads */}
                         <div className="space-y-6">
                             {[...Array(sectionCount)].map((_, i) => {
@@ -2426,14 +3930,19 @@ function AdminExamEditor() {
                                                 {/* Q Files */}
                                                 <div className="space-y-3">
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex justify-between">
-                                                        大問 {num} の問題PDF/画像
+                                                        大問 {num} の問題PDF
                                                         {questionFilesBySection[num]?.length > 0 && <span className="text-navy-blue bg-navy-blue/5 px-2 rounded">選択中</span>}
                                                     </label>
                                                     <div className="flex gap-2">
                                                         <input
-                                                            type="file" multiple accept="application/pdf,image/*"
+                                                            type="file" multiple accept="application/pdf,.pdf"
                                                             onChange={async (e) => {
                                                                 const files = Array.from(e.target.files);
+                                                                if (!validateUploadFiles(files, 'question')) {
+                                                                    e.target.value = '';
+                                                                    setQuestionFilesBySection(prev => ({ ...prev, [num]: [] }));
+                                                                    return;
+                                                                }
                                                                 setQuestionFilesBySection(prev => ({ ...prev, [num]: files }));
                                                                 if (files.length > 0) {
                                                                     await handleImmediateUpload(files[0], 'section_question', num);
@@ -2462,14 +3971,19 @@ function AdminExamEditor() {
                                                 {/* A Files */}
                                                 <div className="space-y-3">
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest flex justify-between">
-                                                        大問 {num} の解答PDF/画像
+                                                        大問 {num} の解答画像
                                                         {uploadingAnswers[num] ? <span className="text-indigo-500 animate-pulse">保存中...</span> : sectionInStructure?.answer_pdf_path ? <span className="text-green-600">保存済み</span> : null}
                                                     </label>
                                                     <div className="flex flex-wrap gap-2">
                                                         <input
-                                                            type="file" multiple accept="application/pdf,image/*"
+                                                            type="file" multiple accept="image/gif,image/png,image/jpeg,image/webp,.gif,.png,.jpg,.jpeg,.webp"
                                                             onChange={async (e) => {
                                                                 const files = Array.from(e.target.files);
+                                                                if (!validateUploadFiles(files, 'answer')) {
+                                                                    e.target.value = '';
+                                                                    setAnswerFilesBySection(prev => ({ ...prev, [num]: [] }));
+                                                                    return;
+                                                                }
                                                                 setAnswerFilesBySection(prev => ({ ...prev, [num]: files }));
                                                                 if (files[0]) {
                                                                     await handleImmediateUpload(files[0], 'answer', num);
@@ -2497,7 +4011,7 @@ function AdminExamEditor() {
                                                 </div>
                                             </div>
 
-                                            <div className="pt-6 border-t border-gray-50 flex flex-col md:flex-row gap-6">
+                                            <div className="pt-6 border-t border-gray-50 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)] gap-6">
                                                 <div className="flex-1">
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">大問の配点（AI目標値）</label>
                                                     <input
@@ -2513,7 +4027,25 @@ function AdminExamEditor() {
                                                         className="w-full p-4 rounded-2xl border border-gray-100 text-xs bg-gray-50/30 focus:bg-white focus:border-indigo-100 transition-all font-black outline-none"
                                                     />
                                                 </div>
-                                                <div className="flex-[2]">
+                                                <div className="flex-1">
+                                                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">期待小問数</label>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        pattern="[0-9]*"
+                                                        value={sectionExpectedQuestionCounts[num] || ''}
+                                                        onChange={e => {
+                                                            const val = e.target.value.replace(/[^0-9]/g, '');
+                                                            setSectionExpectedQuestionCounts(prev => ({ ...prev, [num]: val }));
+                                                        }}
+                                                        placeholder="例: 10"
+                                                        className="w-full p-4 rounded-2xl border border-gray-100 text-xs bg-gray-50/30 focus:bg-white focus:border-indigo-100 transition-all font-black outline-none"
+                                                    />
+                                                    <p className="mt-2 text-[10px] text-gray-400 font-bold leading-relaxed">
+                                                        指定数未満なら保存せずエラーにします。
+                                                    </p>
+                                                </div>
+                                                <div>
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">AI解析用の追加指示（オプション）</label>
                                                     <textarea
                                                         value={sectionInstructionsBySection[num] || ''}
@@ -2538,6 +4070,20 @@ function AdminExamEditor() {
                                                         <>
                                                             <span className="text-xl">🪄</span>
                                                             この大問のデータ（解答構造・配点・解説）をAI生成する
+                                                        </>
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleGenerateSection(num, false, false, false, false)}
+                                                    disabled={generatingSectionData[num] || generating}
+                                                    className="w-full mt-3 bg-white text-indigo-600 hover:bg-indigo-50 border border-indigo-200 font-black py-3 px-6 rounded-xl transition-all text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {generatingSectionData[num] ? (
+                                                        <span>生成中...</span>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-sm">⚡</span>
+                                                            小問・正解・配点だけ高速生成
                                                         </>
                                                     )}
                                                 </button>
@@ -2599,9 +4145,9 @@ function AdminExamEditor() {
                                         <span className="text-xs font-black text-navy-blue">難単語（抽出）も同時に行う</span>
                                     </label>
                                 </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                                     <button
-                                        onClick={() => handleBulkGenerateSections(true)}
+                                        onClick={() => handleBulkGenerateSections(true, true)}
                                         disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
                                         className="bg-gradient-to-r from-indigo-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-6 rounded-2xl shadow-xl shadow-indigo-200 transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
                                     >
@@ -2613,17 +4159,25 @@ function AdminExamEditor() {
                                         ) : (
                                             <>
                                                 <span className="text-xl">🚀</span>
-                                                大問構成＋詳細解説を全自動生成
+                                                大問構成＋小問解説＋詳細解説を全自動生成
                                             </>
                                         )}
                                     </button>
                                     <button
-                                        onClick={() => handleBulkGenerateSections(false)}
+                                        onClick={() => handleBulkGenerateSections(false, true)}
                                         disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
                                         className="bg-white text-indigo-600 hover:bg-indigo-50 border-2 border-indigo-100 font-black py-4 px-6 rounded-2xl shadow-sm transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
                                     >
+                                        <span className="text-lg">✍️</span>
+                                        小問・正解・配点・小問解説だけ一括生成
+                                    </button>
+                                    <button
+                                        onClick={() => handleBulkGenerateSections(false, false)}
+                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
+                                        className="bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 font-black py-4 px-6 rounded-2xl shadow-sm transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
+                                    >
                                         <span className="text-lg">🏗️</span>
-                                        構成のみ一括生成（解説なし）
+                                        小問・正解・配点だけ一括生成
                                     </button>
                                 </div>
                             </div>
@@ -2632,13 +4186,13 @@ function AdminExamEditor() {
                 </div>
 
                 {/* Question Editor Section */}
-                <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100" id="editor-main">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
+                <div className="admin-editor-card bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100" id="editor-main">
+                    <div className="admin-mobile-stack flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
                         <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
                             <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">C</span>
                             設問内容・配点の編集
                         </h2>
-                        <div className="flex flex-wrap items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
+                        <div className="admin-mobile-actions flex flex-wrap items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
                             <div className="px-4 py-2">
                                 <span className="text-[10px] font-black text-gray-400 uppercase block leading-none mb-1">合計配点</span>
                                 <span className={`text-sm font-black ${totalAllocatedPoints !== (parseInt(examData?.max_score) || 100) ? 'text-red-500' : 'text-navy-blue'}`}>
@@ -2647,16 +4201,16 @@ function AdminExamEditor() {
                             </div>
                             <button
                                 onClick={handleRegeneratePoints}
-                                disabled={regeneratingPoints || bulkGenerating}
+                disabled={regeneratingPoints || bulkGenerating || bulkGeneratingSectionAnalyses}
                                 className="bg-navy-blue text-white hover:bg-navy-light font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50"
                             >
                                 {regeneratingPoints ? '再計算中...' : '🤖 配点自動調整'}
                             </button>
                             <button
                                 onClick={handleBulkGenerateExplanations}
-                                disabled={bulkGenerating || regeneratingPoints}
+                                disabled={bulkGenerating || bulkGeneratingSectionAnalyses || regeneratingPoints}
                                 className="bg-indigo-600 text-white hover:bg-indigo-700 font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                style={{ minWidth: '160px' }}
+                                style={{ minWidth: '190px' }}
                             >
                                 {bulkGenerating ? (
                                     <>
@@ -2664,7 +4218,7 @@ function AdminExamEditor() {
                                         <span>生成中 ({bulkProgress.current}/{bulkProgress.total})</span>
                                     </>
                                 ) : (
-                                    '✨ 全解説を一括作成'
+                                    '空の小問解説を一括生成'
                                 )}
                             </button>
                             <button
@@ -2684,12 +4238,32 @@ function AdminExamEditor() {
                             </button>
                         </div>
                     </div>
+                    {activeSectionGenerationEntries.length > 0 && (
+                        <div className="mb-6 rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-4 shadow-sm">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+                                <span className="text-xs font-black text-indigo-900">AI生成中</span>
+                                {activeSectionGenerationEntries.map(({ sectionNum, label }) => (
+                                    <span
+                                        key={sectionNum}
+                                        className="rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-indigo-700 border border-indigo-100 shadow-sm"
+                                    >
+                                        大問{sectionNum}: {label}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <div className="space-y-12">
-                        {examData?.structure?.map((section, sIdx) => (
-                            <div key={sIdx} className="bg-gray-50/30 rounded-[2rem] border border-gray-100 p-8 hover:bg-gray-50/50 transition-all">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex flex-1 items-center gap-5">
+                        {examData?.structure?.map((section, sIdx) => {
+                            const missingExplanationCount = (section.questions || []).filter(isQuestionExplanationMissing).length;
+                            const activeGenerationPhase = sectionGenerationPhases[sIdx + 1];
+                            const activeGenerationLabel = GENERATION_PHASE_LABELS[activeGenerationPhase] || '';
+                            return (
+                            <div key={sIdx} className="admin-section-card bg-gray-50/30 rounded-[2rem] border border-gray-100 p-8 hover:bg-gray-50/50 transition-all">
+                                <div className="admin-mobile-stack flex items-center justify-between mb-8">
+                                    <div className="flex flex-1 items-center gap-5 min-w-0">
                                         <div className="bg-navy-blue text-white w-12 h-12 rounded-2xl flex items-center justify-center font-black shadow-xl shadow-navy-blue/10 text-lg">
                                             {section.id}
                                         </div>
@@ -2700,6 +4274,17 @@ function AdminExamEditor() {
                                             className="flex-1 bg-transparent text-xl font-black text-navy-blue border-b border-transparent focus:border-navy-blue/10 outline-none pb-1 transition-all"
                                             placeholder="大問ラベル"
                                         />
+                                        {missingExplanationCount > 0 && (
+                                            <span className="shrink-0 bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-black px-3 py-1.5 rounded-full">
+                                                小問解説 未生成 {missingExplanationCount}件
+                                            </span>
+                                        )}
+                                        {activeGenerationLabel && (
+                                            <span className="shrink-0 bg-indigo-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full inline-flex items-center gap-2 shadow-sm">
+                                                <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                                {activeGenerationLabel}
+                                            </span>
+                                        )}
                                     </div>
                                     <button 
                                         onClick={() => handleDeleteSection(sIdx)} 
@@ -2709,8 +4294,8 @@ function AdminExamEditor() {
                                     </button>
                                 </div>
 
-                                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-6">
-                                    <table className="w-full text-left border-collapse">
+                                <div className="admin-question-table-shell bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+                                    <table className="admin-question-table w-full text-left border-collapse">
                                         <thead>
                                             <tr className="bg-gray-50/50 border-b border-gray-50">
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ID</th>
@@ -2725,34 +4310,94 @@ function AdminExamEditor() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
-                                            {section.questions.map((q, qIdx) => (
-                                                <tr key={qIdx} className="hover:bg-indigo-50/20 transition-colors">
+                                            {section.questions.map((q, qIdx) => {
+                                                const essayNeedsCriteria = q.type === 'essay';
+                                                const explanationMissing = isQuestionExplanationMissing(q);
+                                                const essayCriteriaDone = Boolean(
+                                                    (q.gradingInstruction && String(q.gradingInstruction).trim()) ||
+                                                    (q.gradingCriteria && String(q.gradingCriteria).trim()) ||
+                                                    (Array.isArray(q.scoringElements) && q.scoringElements.some(item =>
+                                                        (item?.description && String(item.description).trim()) ||
+                                                        Number.isFinite(Number(item?.points))
+                                                    ))
+                                                );
+                                                const rowClassName = explanationMissing
+                                                    ? 'bg-amber-50/70 hover:bg-amber-50 transition-colors ring-1 ring-inset ring-amber-200'
+                                                    : essayNeedsCriteria
+                                                    ? essayCriteriaDone
+                                                        ? 'bg-emerald-50/50 hover:bg-emerald-50 transition-colors'
+                                                        : 'bg-red-50/70 hover:bg-red-50 transition-colors ring-1 ring-inset ring-red-100'
+                                                    : 'hover:bg-indigo-50/20 transition-colors';
+                                                return (
+                                                <tr key={qIdx} className={rowClassName}>
                                                     <td className="px-6 py-4"><input type="text" value={q.id} onChange={e => handleStructureChange(sIdx, qIdx, 'id', e.target.value)} className="w-12 p-3 rounded-xl border border-gray-100 text-xs font-black bg-gray-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.label} onChange={e => handleStructureChange(sIdx, qIdx, 'label', e.target.value)} className="w-16 p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
                                                                                                         <td className="px-6 py-4">
                                                         <div className="flex flex-col gap-2">
                                                             <div className="flex items-center gap-1">
-                                                                <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className="w-[120px] p-2 rounded-xl border border-gray-100 text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30">
+                                                                <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className={`w-[120px] p-2 rounded-xl border text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30 ${essayNeedsCriteria && !essayCriteriaDone ? 'border-red-200 text-red-700' : 'border-gray-100'}`}>
                                                                     <option value="selection">選択(一つ選択)</option>
                                                                     <option value="selection_multi">選択(複数選択)</option>
+                                                                    <option value="ordering">並び替え</option>
                                                                     <option value="descriptive">記述</option>
                                                                     <option value="essay">自由記述</option>
                                                                 </select>
-                                                                {(q.type === 'selection_multi' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
+                                                                {q.answerIssue === 'all_choices_correct' && (
+                                                                    <span className="bg-emerald-100 text-emerald-700 text-[8px] px-1.5 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                        全選択肢正解
+                                                                    </span>
+                                                                )}
+                                                                {q.answerIssue === 'single_choice_multiple_answers' && (
+                                                                    <span className="bg-amber-100 text-amber-700 text-[8px] px-1.5 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                        単一選択・複数正解
+                                                                    </span>
+                                                                )}
+                                                                {q.type === 'ordering' && (
+                                                                    <span className="bg-sky-100 text-sky-700 text-[8px] px-1.5 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                        順序一致
+                                                                    </span>
+                                                                )}
+                                                                {q.type !== 'ordering' && q.answerIssue !== 'single_choice_multiple_answers' && (q.type === 'selection_multi' || (q.correctAnswer && String(q.correctAnswer).includes(','))) && (
                                                                     <span className="bg-purple-100 text-purple-700 text-[8px] px-1.5 py-0.5 rounded-full font-black animate-pulse whitespace-nowrap">
                                                                         複数判定中
                                                                     </span>
                                                                 )}
+                                                                {essayNeedsCriteria && !essayCriteriaDone && (
+                                                                    <span className="bg-red-100 text-red-700 text-[8px] px-1.5 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                        採点基準が必要
+                                                                    </span>
+                                                                )}
+                                                                {essayNeedsCriteria && essayCriteriaDone && (
+                                                                    <span className="bg-emerald-100 text-emerald-700 text-[8px] px-1.5 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                        採点基準作成済み
+                                                                    </span>
+                                                                )}
                                                             </div>
-                                                            {['selection', 'selection_multi'].includes(q.type) && (
+                                                            {['selection', 'selection_multi', 'ordering'].includes(q.type) && (
                                                                 <input 
                                                                     type="text" 
                                                                     value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
                                                                     onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
-                                                                    placeholder="選択肢(a,b,c)" 
+                                                                    placeholder={q.type === 'ordering' ? "並び替え候補(a,b,c)" : "選択肢(a,b,c)"}
                                                                     className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white transition-all shadow-sm" 
                                                                     title="カンマ区切りで入力（例: a,b,c,d）"
                                                                 />
+                                                            )}
+                                                            {['selection', 'selection_multi'].includes(q.type) && (
+                                                                <select
+                                                                    value={q.answerIssue || ''}
+                                                                    onChange={e => handleStructureChange(sIdx, qIdx, 'answerIssue', e.target.value)}
+                                                                    className={`w-full min-w-[120px] p-2 rounded-lg border text-[10px] font-bold outline-none transition-all ${
+                                                                        q.answerIssue
+                                                                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                                            : 'border-gray-100 bg-white text-gray-400'
+                                                                    }`}
+                                                                    title="問題不備がある場合だけ設定してください"
+                                                                >
+                                                                    <option value="">問題不備なし</option>
+                                                                    <option value="all_choices_correct">選択肢を問わず正解</option>
+                                                                    <option value="single_choice_multiple_answers">一つしか選択できないが答えが複数存在</option>
+                                                                </select>
                                                             )}
                                                         </div>
                                                     </td>
@@ -2769,44 +4414,94 @@ function AdminExamEditor() {
                                                                 ))}
                                                             </select>
                                                             {q.completeGroupId && (
-                                                                <span className="text-[8px] font-black text-orange-400 uppercase">完答対象</span>
+                                                                <>
+                                                                    <select
+                                                                        value={q.completeGroupOrderMode || 'ordered'}
+                                                                        onChange={e => handleStructureChange(sIdx, qIdx, 'completeGroupOrderMode', e.target.value)}
+                                                                        className="w-[96px] p-1.5 rounded-lg border border-orange-100 bg-white text-[9px] font-black text-orange-600 outline-none"
+                                                                        title="同じ完答グループ内の解答順を採点で固定するか、順不同にするかを設定します"
+                                                                    >
+                                                                        <option value="ordered">順序固定</option>
+                                                                        <option value="unordered">順不同</option>
+                                                                    </select>
+                                                                    <span className="text-[8px] font-black text-orange-400 uppercase">
+                                                                        {q.completeGroupOrderMode === 'unordered' ? '順不同完答' : '完答対象'}
+                                                                    </span>
+                                                                </>
                                                             )}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4"><input type="text" inputMode="numeric" pattern="[0-9]*" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0)} className="w-14 p-3 rounded-xl border border-gray-100 text-xs font-black text-indigo-600 bg-indigo-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[120px] p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
                                                     <td className="px-6 py-4">
-                                                        {q.type === 'descriptive' ? (
-                                                            <input 
-                                                                type="text" 
-                                                                placeholder="別解1, 別解2" 
-                                                                value={(q.alternativeAnswers || []).join(', ')} 
-                                                                onChange={e => {
-                                                                    const alts = e.target.value.split(',').map(s => s.trim()).filter(s => s !== "");
-                                                                    handleStructureChange(sIdx, qIdx, 'alternativeAnswers', alts);
-                                                                }} 
-                                                                className="w-full min-w-[150px] p-3 rounded-xl border border-gray-100 text-xs bg-indigo-50/20 focus:bg-white focus:border-indigo-300 outline-none transition-all" 
-                                                            />
-                                                        ) : (
+                                                        {q.type === 'descriptive' ? (() => {
+                                                            const draftKey = `${sIdx}-${qIdx}`;
+                                                            return (
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="別解1, 別解2"
+                                                                    value={alternativeAnswerDrafts[draftKey] ?? (q.alternativeAnswers || []).join(', ')}
+                                                                    onChange={e => {
+                                                                        const raw = e.target.value;
+                                                                        setAlternativeAnswerDrafts(prev => ({ ...prev, [draftKey]: raw }));
+                                                                        const alts = raw.split(',').map(s => s.trim()).filter(s => s !== "");
+                                                                        handleStructureChange(sIdx, qIdx, 'alternativeAnswers', alts);
+                                                                    }}
+                                                                    onBlur={() => {
+                                                                        setAlternativeAnswerDrafts(prev => {
+                                                                            const next = { ...prev };
+                                                                            delete next[draftKey];
+                                                                            return next;
+                                                                        });
+                                                                    }}
+                                                                    className="w-full min-w-[150px] p-3 rounded-xl border border-gray-100 text-xs bg-indigo-50/20 focus:bg-white focus:border-indigo-300 outline-none transition-all"
+                                                                />
+                                                            );
+                                                        })() : (
                                                             <span className="text-gray-300 text-[10px] italic">記述のみ有効</span>
                                                         )}
                                                     </td>
                                                     <td className="px-6 py-4 space-y-4">
                                                         <div className="space-y-2">
                                                             <div className="flex justify-between">
-                                                                <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">解説</span>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">解説</span>
+                                                                    {explanationMissing && (
+                                                                        <span className="bg-amber-100 text-amber-700 border border-amber-200 text-[8px] px-2 py-0.5 rounded-full font-black whitespace-nowrap">
+                                                                            未生成
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                                 <button onClick={() => handleRegenerateExplanation(sIdx, qIdx, q)} className="text-[9px] font-black text-indigo-400 hover:text-indigo-600 transition-colors">AIで再生成</button>
                                                             </div>
-                                                            <textarea value={q.explanation || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'explanation', e.target.value)} className="w-full p-4 rounded-xl border border-gray-100 text-[11px] leading-relaxed min-h-[60px] focus:bg-gray-50/30 outline-none transition-all" />
+                                                            <textarea
+                                                                value={q.explanation || ''}
+                                                                onChange={e => handleStructureChange(sIdx, qIdx, 'explanation', e.target.value)}
+                                                                placeholder={explanationMissing ? '小問解説が未生成です。上部の「空の小問解説を一括生成」または「AIで再生成」を実行してください。' : ''}
+                                                                className={`w-full p-4 rounded-xl border text-[11px] leading-relaxed min-h-[60px] focus:bg-gray-50/30 outline-none transition-all ${explanationMissing ? 'border-amber-300 bg-amber-50/80 text-amber-900 placeholder:text-amber-500' : 'border-gray-100'}`}
+                                                            />
                                                         </div>
                                                         <div className="space-y-2">
                                                             <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">採点基準・指示</span>
-                                                            <textarea value={q.gradingInstruction || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'gradingInstruction', e.target.value)} placeholder="例: 部分点5点とする基準..." className="w-full p-4 rounded-xl border border-navy-blue/5 text-[10px] leading-relaxed min-h-[40px] bg-navy-blue/5 outline-none" />
+                                                            <textarea value={q.gradingInstruction || ''} onChange={e => handleStructureChange(sIdx, qIdx, 'gradingInstruction', e.target.value)} placeholder={essayNeedsCriteria ? "自由記述の採点基準を入力してください" : "例: 部分点5点とする基準..."} className={`w-full p-4 rounded-xl border text-[10px] leading-relaxed min-h-[40px] outline-none ${essayNeedsCriteria && !essayCriteriaDone ? 'border-red-200 bg-red-50/80 focus:bg-white focus:border-red-300' : 'border-navy-blue/5 bg-navy-blue/5'}`} />
                                                         </div>
                                                         {q.type === 'essay' && (() => {
-                                                            const elements = normalizeScoringElements(q.scoringElements);
-                                                            const totalPoints = elements.reduce((sum, item) => sum + (item.points || 0), 0);
-                                                            const isMatch = totalPoints === (q.points || 0);
+                                                            const elements = normalizeScoringElements(ensureEssayCharacterCountElement(q).scoringElements);
+                                                            const totalPoints = elements
+                                                                .filter(item => item.type !== 'force_zero')
+                                                                .reduce((sum, item) => {
+                                                                    const points = Number(item.points) || 0;
+                                                                    return sum + (item.type === 'deduction' ? -Math.abs(points) : points);
+                                                                }, 0);
+                                                            const questionPointLimit = Number(q.points) || 0;
+                                                            const isExactMatch = totalPoints === questionPointLimit;
+                                                            const isCapScoring = questionPointLimit > 0 && totalPoints > questionPointLimit;
+                                                            const statusBadgeClass = isExactMatch
+                                                                ? 'bg-green-100 text-green-700'
+                                                                : isCapScoring
+                                                                    ? 'bg-blue-100 text-blue-700'
+                                                                    : 'bg-orange-100 text-orange-700';
+                                                            const statusLabel = isExactMatch ? '一致' : isCapScoring ? '上限採点' : '不足';
                                                             return (
                                                                 <div className="mt-3 p-3 bg-indigo-50/30 border border-indigo-100/50 rounded-xl flex flex-wrap items-center justify-between gap-3">
                                                                     <div className="flex flex-wrap items-center gap-2">
@@ -2818,8 +4513,8 @@ function AdminExamEditor() {
                                                                                 ⚠️ 未設定 (要設定)
                                                                             </span>
                                                                         ) : (
-                                                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isMatch ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                                                                                {elements.length}個の要素設定中 ({totalPoints} / {q.points || 0}点)
+                                                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${statusBadgeClass}`}>
+                                                                                {statusLabel}: {elements.length}個の要素設定中 ({totalPoints} / {questionPointLimit}点)
                                                                             </span>
                                                                         )}
                                                                     </div>
@@ -2856,7 +4551,8 @@ function AdminExamEditor() {
                                                         </div>
                                                     </td>
                                                 </tr>
-                                            ))}
+                                            );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -2938,7 +4634,8 @@ function AdminExamEditor() {
                                     <button onClick={() => handleAddQuestion(sIdx)} className="w-full lg:w-auto px-8 py-4 bg-white hover:bg-navy-blue hover:text-white text-navy-blue font-black rounded-2xl border-2 border-navy-blue/10 transition-all text-xs whitespace-nowrap">＋ 小問を追加</button>
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     <div className="mt-12">
@@ -2949,7 +4646,7 @@ function AdminExamEditor() {
                 </div>
 
                 {/* Full Analysis Section */}
-                <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
+                <div className="admin-editor-card bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 p-10 border border-gray-100">
                     <div className="flex justify-between items-center mb-10">
                         <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
                             <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">D</span>
@@ -2990,6 +4687,9 @@ function AdminExamEditor() {
 }
 
 const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
+    const [adLocalPreviews, setAdLocalPreviews] = useState({});
+    const [adUploadStates, setAdUploadStates] = useState({});
+
     const importFromMaster = () => {
         if (!examData) return;
         const blocks = [];
@@ -3014,7 +4714,7 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
             type, 
             content: type === 'text' ? '新しいテキストを入力...' : 
                      type === 'image' ? { url: '', alt: '' } :
-                     type === 'ad' ? { pageTarget: 'result' } : {} 
+                     type === 'ad' ? { imageUrl: '', targetUrl: '', widthPercent: 100 } : {} 
         };
         setLayout([...layout, newBlock]);
     };
@@ -3023,6 +4723,18 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
         const newLayout = [...layout];
         newLayout[index] = { ...newLayout[index], content: newContent };
         setLayout(newLayout);
+    };
+
+    const updateAdBlockContent = (index, updater) => {
+        setLayout(prevLayout => {
+            const newLayout = [...prevLayout];
+            const currentBlock = newLayout[index];
+            if (!currentBlock) return prevLayout;
+            const currentContent = normalizeAdBlockContent(currentBlock.content);
+            const nextContent = typeof updater === 'function' ? updater(currentContent) : updater;
+            newLayout[index] = { ...currentBlock, content: { ...currentContent, ...nextContent } };
+            return newLayout;
+        });
     };
 
     const removeBlock = (index) => {
@@ -3038,9 +4750,67 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
         setLayout(newLayout);
     };
 
+    const handleAdImageUpload = async (e, index, blockKey, currentContent) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        let previewUrl = '';
+        try {
+            previewUrl = await readFileAsDataUrl(file);
+        } catch (error) {
+            console.error('Ad image read failed:', error);
+            alert(`画像ファイルの読み込みに失敗しました: ${error.message || '不明なエラー'}`);
+            e.target.value = '';
+            return;
+        }
+
+        const previousContent = normalizeAdBlockContent(currentContent);
+        setAdLocalPreviews(prev => ({ ...prev, [blockKey]: previewUrl }));
+        setAdUploadStates(prev => ({ ...prev, [blockKey]: { uploading: true, error: false } }));
+
+        updateAdBlockContent(index, { ...previousContent, imageUrl: previewUrl });
+
+        try {
+            const publicUrl = await uploadBannerImage(file);
+            setAdLocalPreviews(prev => ({ ...prev, [blockKey]: publicUrl }));
+            setAdUploadStates(prev => ({ ...prev, [blockKey]: { uploading: false, error: false } }));
+            updateAdBlockContent(index, { imageUrl: publicUrl });
+        } catch (error) {
+            console.error('Ad image upload failed:', error);
+            setAdUploadStates(prev => ({ ...prev, [blockKey]: { uploading: false, error: true } }));
+        } finally {
+            e.target.value = '';
+        }
+    };
+
+    const handleAdResizeStart = (e, index, currentContent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const resizeBox = e.currentTarget.closest('[data-ad-resize-box]');
+        const parent = resizeBox?.parentElement;
+        if (!parent) return;
+
+        const updateWidth = (clientX) => {
+            const rect = parent.getBoundingClientRect();
+            if (!rect.width) return;
+            updateBlock(index, {
+                ...normalizeAdBlockContent(currentContent),
+                widthPercent: clampAdWidthPercent(((clientX - rect.left) / rect.width) * 100)
+            });
+        };
+
+        const handlePointerMove = (moveEvent) => updateWidth(moveEvent.clientX);
+        const handlePointerUp = () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+    };
+
     return (
         <div className="space-y-8">
-            <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl shadow-indigo-100/50 border border-gray-100">
+            <div className="admin-editor-card bg-white rounded-[2.5rem] p-10 shadow-2xl shadow-indigo-100/50 border border-gray-100">
                 <div className="flex justify-between items-center mb-10">
                     <div>
                         <h2 className="text-2xl font-black text-navy-blue flex items-center gap-3">
@@ -3065,8 +4835,13 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
                     </div>
                 ) : (
                     <div className="space-y-6 max-w-4xl mx-auto">
-                        {layout.map((block, idx) => (
-                            <div key={block.id || idx} className="group relative bg-white border-2 border-transparent hover:border-indigo-200 rounded-3xl transition-all shadow-sm hover:shadow-xl hover:shadow-indigo-100/50">
+                        {layout.map((block, idx) => {
+                            const blockKey = block.id || `designer-${idx}-${block.type}`;
+                            const adContent = block.type === 'ad' ? normalizeAdBlockContent(block.content) : null;
+                            const adPreviewUrl = adContent ? (adLocalPreviews[blockKey] || adContent.imageUrl) : '';
+                            const adUploadState = adUploadStates[blockKey] || {};
+                            return (
+                            <div key={block.id || idx} className="group relative bg-white border-2 border-transparent hover:border-indigo-200 rounded-3xl transition-colors shadow-sm hover:shadow-xl hover:shadow-indigo-100/50">
                                 {/* Block Toolbar */}
                                 <div className="absolute -left-12 top-1/2 -translate-y-1/2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all scale-90 group-hover:scale-100 z-10">
                                     <button onClick={() => moveBlock(idx, -1)} className="p-2 bg-white shadow-lg rounded-xl text-gray-400 hover:text-navy-blue border border-gray-100 transition-colors">▲</button>
@@ -3158,58 +4933,81 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
                                                     </div>
                                                 </div>
                                                 {block.content.url && (
-                                                    <div className="mt-4 border-2 border-dashed border-gray-100 rounded-2xl overflow-hidden bg-white max-h-48 flex items-center justify-center">
+                                                    <div className="mt-4 border-2 border-dashed border-gray-100 rounded-2xl overflow-hidden bg-white h-48 flex items-center justify-center">
                                                         <img src={block.content.url} alt={block.content.alt} className="max-w-full max-h-48 object-contain" />
                                                     </div>
                                                 )}
                                             </div>
                                         )}
 
-                                        {block.type === 'ad' && (
+                                        {MARKETING_CONFIG.enableAdBanners && block.type === 'ad' && (
                                             <div className="bg-gray-100/50 p-4 rounded-2xl border border-gray-200">
                                                 <div className="grid grid-cols-2 gap-6">
                                                     <div>
-                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">① 広告配信ターゲット (自動)</div>
-                                                        <select 
-                                                            value={block.content.pageTarget || 'result_inline'}
-                                                            onChange={(e) => updateBlock(idx, { ...block.content, pageTarget: e.target.value, bannerId: null })}
-                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-black text-navy-blue outline-none focus:border-indigo-500"
-                                                        >
-                                                            <option value="all">すべて</option>
-                                                            <option value="result_inline">結果画面 (インライン)</option>
-                                                            <option value="result">結果画面 (全体)</option>
-                                                            <option value="home">ホーム画面</option>
-                                                            <option value="exam">試験画面</option>
-                                                        </select>
-                                                        <p className="text-[9px] text-gray-400 mt-2 italic">※特定の広告を選択した場合は無効になります</p>
+                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">① 画像をアップロード</div>
+                                                        <label className="flex min-h-[42px] w-full cursor-pointer select-none items-center justify-center rounded-lg border border-gray-100 bg-white px-3 py-2 text-xs font-black text-navy-blue outline-none transition-colors hover:border-indigo-500 hover:bg-indigo-50">
+                                                            画像を選択
+                                                            <input
+                                                                type="file"
+                                                                accept="image/*"
+                                                                onChange={(e) => handleAdImageUpload(e, idx, blockKey, adContent)}
+                                                                className="sr-only"
+                                                            />
+                                                        </label>
+                                                        {adUploadState.uploading && (
+                                                            <p className="text-[9px] text-indigo-500 mt-2 font-black">アップロード中...</p>
+                                                        )}
+                                                        {adUploadState.error && (
+                                                            <p className="text-[9px] text-red-500 mt-2 font-black">アップロード失敗。選択画像を一時表示中です。</p>
+                                                        )}
                                                     </div>
                                                     <div>
-                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">② 特定の広告を指定 (手動)</div>
-                                                        <select 
-                                                            value={block.content.bannerId || ''}
-                                                            onChange={(e) => {
-                                                                const val = e.target.value;
-                                                                updateBlock(idx, { ...block.content, bannerId: val || null });
+                                                        <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">② 「詳しく見る」の遷移先URL</div>
+                                                        <input
+                                                            type="url"
+                                                            defaultValue={adContent.targetUrl || ''}
+                                                            onBlur={(e) => updateAdBlockContent(idx, { targetUrl: e.target.value })}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') e.currentTarget.blur();
                                                             }}
-                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-black text-indigo-600 outline-none focus:border-indigo-500 font-mono"
+                                                            className="w-full bg-white border border-gray-100 rounded-lg px-3 py-2 text-xs font-black text-navy-blue outline-none focus:border-indigo-500"
+                                                            placeholder="https://example.com"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="mt-4 bg-white rounded-2xl border border-gray-100 p-4">
+                                                    <div className="flex justify-center w-full">
+                                                        <div
+                                                            data-ad-resize-box
+                                                            className="relative min-w-[160px] max-w-full"
+                                                            style={{ width: `${adContent.widthPercent}%` }}
                                                         >
-                                                            <option value="">-- 指定なし (配信ターゲット優先) --</option>
-                                                            {banners.map(b => (
-                                                                <option key={b.id} value={b.id}>
-                                                                    {b.is_active ? '✅' : '❌'} {b.title} ({b.id.substring(0,6)})
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        {block.content.bannerId && (
-                                                            <div className="mt-2 text-right">
-                                                                <button 
-                                                                    onClick={() => updateBlock(idx, { ...block.content, bannerId: null })}
-                                                                    className="text-red-400 hover:text-red-500 text-[10px] font-bold"
+                                                            {adPreviewUrl ? (
+                                                                <a
+                                                                    href={adContent.targetUrl || '#'}
+                                                                    target={adContent.targetUrl ? '_blank' : undefined}
+                                                                    rel={adContent.targetUrl ? 'noopener noreferrer' : undefined}
+                                                                    onClick={(e) => {
+                                                                        if (!adContent.targetUrl) e.preventDefault();
+                                                                    }}
+                                                                    className="block relative aspect-[16/3] min-h-[80px] overflow-hidden rounded-xl border border-gray-100"
                                                                 >
-                                                                    × 指定を解除
-                                                                </button>
-                                                            </div>
-                                                        )}
+                                                                    <img src={adPreviewUrl} alt="広告" className="w-full h-full object-cover" />
+                                                                    <span className="absolute bottom-2 right-2 bg-red-700 text-white text-[10px] font-black px-3 py-1 rounded-md">詳しく見る</span>
+                                                                </a>
+                                                            ) : (
+                                                                <div className="h-32 flex items-center justify-center text-xs font-black text-gray-400 border-2 border-dashed border-gray-100 rounded-xl">
+                                                                    広告画像をアップロードしてください
+                                                                </div>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                aria-label="広告サイズを調整"
+                                                                title="ドラッグして広告サイズを調整"
+                                                                onPointerDown={(e) => handleAdResizeStart(e, idx, adContent)}
+                                                                className="absolute -right-2 -bottom-2 w-[18px] h-[18px] rounded border-2 border-indigo-500 bg-white shadow-md cursor-nwse-resize z-20"
+                                                            />
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -3217,7 +5015,7 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
                                     </div>
                                 </div>
                             </div>
-                        ))}
+                        )})}
                     </div>
                 )}
 
@@ -3242,9 +5040,11 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
                         <button onClick={() => addBlock('image')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
                             <span className="text-2xl group-hover:scale-125 transition-transform">🖼️</span> 画像
                         </button>
-                        <button onClick={() => addBlock('ad')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
-                            <span className="text-2xl group-hover:scale-125 transition-transform">📢</span> 広告
-                        </button>
+                        {MARKETING_CONFIG.enableAdBanners && (
+                            <button onClick={() => addBlock('ad')} className="px-8 py-5 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:shadow-xl hover:shadow-indigo-100 rounded-[2rem] text-xs font-black transition-all flex items-center gap-4 shadow-sm group">
+                                <span className="text-2xl group-hover:scale-125 transition-transform">📢</span> 広告
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

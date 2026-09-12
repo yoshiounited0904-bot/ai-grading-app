@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { getCurrentUser, onAuthStateChange, getUserProfile } from '../services/authService'
 
 const AuthContext = createContext({})
@@ -10,24 +10,44 @@ export const AuthProvider = ({ children }) => {
     const [profile, setProfile] = useState(null)
     const [loading, setLoading] = useState(true)
 
-    const fetchProfile = async (userId) => {
+    const buildFallbackProfile = (authUser) => ({
+        username: authUser?.user_metadata?.username || authUser?.email?.split('@')[0] || 'ゲストユーザー',
+        first_choice_university: '',
+        grade: ''
+    })
+
+    const withTimeout = (promise, ms, message) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+    ])
+
+    const fetchProfile = async (authUser) => {
         try {
-            console.log('Fetching profile for userId:', userId)
-            const { data, error } = await getUserProfile(userId)
+            if (!authUser?.id) return
+            console.log('Fetching profile for userId:', authUser.id)
+            const { data, error } = await withTimeout(
+                getUserProfile(authUser.id),
+                8000,
+                'プロフィール取得がタイムアウトしました。'
+            )
             if (error) {
                 console.error('getUserProfile error:', error)
                 if (error.code === 'PGRST116' || error.message.includes('406')) {
                     console.log('Profile does not exist yet. Using guest profile.')
-                    setProfile({ username: 'ゲストユーザー', first_choice_university: '', grade: '' })
+                    setProfile(buildFallbackProfile(authUser))
                 } else {
                     console.error('Error fetching profile:', error)
+                    setProfile(buildFallbackProfile(authUser))
                 }
             } else if (data) {
                 console.log('Fetched profile data:', data)
                 setProfile(data)
+            } else {
+                setProfile(buildFallbackProfile(authUser))
             }
         } catch (err) {
             console.error('Error fetching profile catch:', err)
+            setProfile(buildFallbackProfile(authUser))
         }
     }
 
@@ -35,7 +55,11 @@ export const AuthProvider = ({ children }) => {
         // Initial auth check
         getCurrentUser().then((u) => {
             setUser(u)
-            if (u) fetchProfile(u.id)
+            if (u) {
+                fetchProfile(u)
+            } else {
+                setProfile(null)
+            }
             setLoading(false)
         }).catch(() => setLoading(false))
 
@@ -44,7 +68,7 @@ export const AuthProvider = ({ children }) => {
             const u = session?.user ?? null
             setUser(u)
             if (u) {
-                fetchProfile(u.id)
+                fetchProfile(u)
             } else {
                 setProfile(null)
             }
@@ -62,8 +86,13 @@ export const AuthProvider = ({ children }) => {
         }
     }, [])
 
+    const refreshProfile = useCallback(async () => {
+        if (!user) return
+        await fetchProfile(user)
+    }, [user])
+
     return (
-        <AuthContext.Provider value={{ user, profile, loading }}>
+        <AuthContext.Provider value={{ user, profile, loading, refreshProfile }}>
             {children}
         </AuthContext.Provider>
     )

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS exam_results (
     question_feedback JSONB,
     answers JSONB,
     section_scores JSONB, -- 大問別得点
+    pdf_path TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
@@ -76,6 +77,7 @@ CREATE TABLE IF NOT EXISTS exams (
 
 -- Profiles table に role 列を追加 (すでに存在する場合はスキップ)
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user';
+ALTER TABLE exam_results ADD COLUMN IF NOT EXISTS pdf_path TEXT;
 
 -- Exams テーブルの RLS を有効化
 ALTER TABLE exams ENABLE ROW LEVEL SECURITY;

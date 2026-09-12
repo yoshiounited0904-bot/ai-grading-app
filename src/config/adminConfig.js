@@ -4,6 +4,7 @@
 export const ADMIN_EMAILS = [
     'yoshiounited0904@gmail.com',
     'se-support@success-edge.net',
+    'admin@test.com',
 ];
 
 export const isAdminEmail = (email) => {

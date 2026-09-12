@@ -25,18 +25,31 @@ const sanitizeUserAnswer = (answer: unknown): string => {
   return text;
 };
 
-const getAllowedOrigin = () => Deno.env.get("ALLOWED_ORIGIN") ?? "*";
+const getCorsConfig = (req: Request) => {
+  const defaultAllowedOrigin = "https://smart-saiten.com,https://www.smart-saiten.com,https://ai-grading-app.vercel.app,http://127.0.0.1:5175,http://localhost:5175,http://127.0.0.1:5174,http://localhost:5174,http://127.0.0.1:5173,http://localhost:5173";
+  const configuredAllowedOrigin = Deno.env.get("ALLOWED_ORIGIN")?.trim();
+  const allowedOrigins = (configuredAllowedOrigin && configuredAllowedOrigin !== "*" ? configuredAllowedOrigin : defaultAllowedOrigin)
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const requestOrigin = req.headers.get("origin") ?? "";
+  const allowsAnyOrigin = allowedOrigins.includes("*");
+  const isAllowed = allowsAnyOrigin || (requestOrigin !== "" && allowedOrigins.includes(requestOrigin));
+  const responseOrigin = allowsAnyOrigin ? "*" : (isAllowed ? requestOrigin : allowedOrigins[0] ?? "");
+  return {
+    headers: { ...corsHeaders, "Access-Control-Allow-Origin": responseOrigin },
+    isAllowed,
+  };
+};
 
 serve(async (req) => {
-  const origin = getAllowedOrigin();
-  const headers = { ...corsHeaders, "Access-Control-Allow-Origin": origin };
+  const { headers, isAllowed } = getCorsConfig(req);
 
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers });
   }
 
-  const requestOrigin = req.headers.get("origin") ?? "";
-  if (origin !== "*" && requestOrigin !== origin) {
+  if (!isAllowed) {
     return new Response(JSON.stringify({ error: "Forbidden" }), {
       status: 403,
       headers: { ...headers, "Content-Type": "application/json" },

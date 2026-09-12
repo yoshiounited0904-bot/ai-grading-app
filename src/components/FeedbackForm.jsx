@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useAuth } from '../contexts/AuthContext';
+import { notifyAdmin } from '../services/notificationService';
 
 const FeedbackForm = () => {
     const { user } = useAuth();
@@ -19,15 +20,21 @@ const FeedbackForm = () => {
         setStatus('submitting');
         
         try {
-            const { error } = await supabase.from('user_feedbacks').insert([{
+            const payload = {
                 user_id: user?.id || null,
                 name: formData.name,
                 email: formData.email,
                 type: formData.type,
                 message: formData.message
-            }]);
+            };
+
+            const { data, error } = await supabase.from('user_feedbacks').insert([payload]).select().single();
 
             if (error) throw error;
+            notifyAdmin('user_feedback', {
+                id: data?.id,
+                ...payload
+            });
             
             setStatus('success');
             setFormData({ name: '', email: '', type: 'feature_request', message: '' });

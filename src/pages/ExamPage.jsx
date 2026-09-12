@@ -1,35 +1,60 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../services/supabaseClient';
 import { gradeExamWithGemini } from '../services/geminiService';
+import UsageLimitCard from '../components/UsageLimitCard';
+import AdBanner from '../components/AdBanner';
+import { consumeGradingUsage, getGradingUsageStatus, getPlanFeatures, getUserPlan, isLaunchPremiumAccessActive } from '../services/usageLimitService';
+import { MARKETING_CONFIG } from '../config/marketingConfig';
+import {
+    FREE_ACCESS_PROMO_CODE,
+    getUserGradingCount,
+    getUserPromoVerified,
+    incrementLocalGradedCount,
+    isValidFreeAccessPromoCode,
+    markUserPromoVerified
+} from '../services/promoCodeService';
+
+const PreGradingPremiumHint = ({ usage, planFeatures, onPremiumClick }) => {
+    if (!usage || planFeatures.unlimitedGrading || usage.plan !== 'free') return null;
+
+    return (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '-0.75rem 0 1.5rem' }}>
+            <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 700 }}>
+                今月あと{Math.max(Number(usage.remaining || 0), 0)}回
+            </span>
+            <button
+                type="button"
+                onClick={onPremiumClick}
+                style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#b45309',
+                    fontSize: '0.82rem',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                    padding: 0
+                }}
+            >
+                無制限にする
+            </button>
+        </div>
+    );
+};
 
 const ExamPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { user, loading: authLoading } = useAuth();
+    const { user, profile, loading: authLoading } = useAuth();
     const [exam, setExam] = useState(null);
     const [universityName, setUniversityName] = useState('');
     const [universityId, setUniversityId] = useState('');
     const [selectedSectionIds, setSelectedSectionIds] = useState(null);
     const [facultyName, setFacultyName] = useState('');
 
-    // Auth check: one-time only at mount. Never re-run during grading to avoid false redirects.
-    const hasCheckedAuth = React.useRef(false);
-    useEffect(() => {
-        if (authLoading || hasCheckedAuth.current) return;
-        hasCheckedAuth.current = true;
-        
-        const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
-        if (!user && isGuestGraded) {
-            navigate('/');
-            setTimeout(() => {
-                document.dispatchEvent(new CustomEvent('openAuthModal', { 
-                    detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
-                }));
-            }, 100);
-        }
-    }, [authLoading, user, navigate]);
+    // 未ログインでも問題閲覧・解答入力は可能。採点開始時にログインを求める。
 
     // Exam data loading: mount only — location.state is stable after initial navigation
     useEffect(() => {
@@ -50,6 +75,8 @@ const ExamPage = () => {
                 setExam(parsed.exam);
                 setUniversityName(parsed.universityName || '');
                 setUniversityId(parsed.universityId || '');
+                setFacultyName(parsed.facultyName || parsed.exam?.faculty || '');
+                setSelectedSectionIds(parsed.selectedSectionIds || null);
             }
         } catch (e) {
             console.error("Failed to recover exam from localStorage", e);
@@ -104,6 +131,43 @@ const ExamPage = () => {
 
     // Submission Confirmation
     const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const submitIntentRef = useRef(false);
+    const pendingPromoSubmitRef = useRef(false);
+    const [usageStatus, setUsageStatus] = useState(null);
+    const [usageLoading, setUsageLoading] = useState(true);
+    const [promoStatus, setPromoStatus] = useState({ loading: true, verified: false, gradingCount: 0 });
+    const [showPromoModal, setShowPromoModal] = useState(false);
+    const [promoCodeInput, setPromoCodeInput] = useState('');
+    const [promoError, setPromoError] = useState('');
+    const [promoSubmitting, setPromoSubmitting] = useState(false);
+    const currentPlan = getUserPlan(profile, usageStatus);
+    const planFeatures = getPlanFeatures(currentPlan);
+    const isRealPremiumOrAdmin = profile?.role === 'admin' ||
+        profile?.plan === 'premium' ||
+        profile?.subscription_plan === 'premium' ||
+        profile?.is_premium ||
+        ['active', 'trialing', 'past_due'].includes(String(profile?.subscription_status || '')) ||
+        (profile?.premium_until && new Date(profile.premium_until).getTime() > Date.now());
+    const promoGateEnabled = MARKETING_CONFIG.promoGating?.enabled !== false;
+    const promoTriggerCount = MARKETING_CONFIG.promoGating?.triggerCount ?? 1;
+    const shouldGateWithPromoCode = promoGateEnabled &&
+        !isRealPremiumOrAdmin &&
+        !promoStatus.verified &&
+        Number(promoStatus.gradingCount || 0) >= promoTriggerCount;
+    const displayedUsageStatus = planFeatures.unlimitedGrading
+        ? { ...(usageStatus || {}), allowed: true, used: usageStatus?.used || 0, limit: null, remaining: null, plan: currentPlan }
+        : usageStatus;
+    const isUsageBlocked = !planFeatures.unlimitedGrading && usageStatus && !usageStatus.allowed;
+    const handlePremiumClick = () => navigate('/premium');
+    const adContext = {
+        universityName,
+        facultyName,
+        examSubject: exam?.subject,
+        subject: exam?.subject,
+        examYear: exam?.year,
+        year: exam?.year,
+        audience: !user ? 'guest' : currentPlan
+    };
 
     // Persistence: Load state from sessionStorage
     useEffect(() => {
@@ -128,6 +192,56 @@ const ExamPage = () => {
         }
     }, [exam?.id]);
 
+    useEffect(() => {
+        if (authLoading) return;
+
+        let cancelled = false;
+        const loadUsageStatus = async () => {
+            setUsageLoading(true);
+            try {
+                const { data, error } = await getGradingUsageStatus(user);
+                if (error) throw error;
+                if (!cancelled) setUsageStatus(data);
+            } catch (err) {
+                console.error('Failed to load grading usage:', err);
+                if (!cancelled) {
+                    setUsageStatus(null);
+                }
+            } finally {
+                if (!cancelled) setUsageLoading(false);
+            }
+        };
+
+        loadUsageStatus();
+        return () => {
+            cancelled = true;
+        };
+    }, [authLoading, user]);
+
+    useEffect(() => {
+        if (authLoading) return;
+
+        let cancelled = false;
+        const loadPromoStatus = async () => {
+            setPromoStatus(prev => ({ ...prev, loading: true }));
+            try {
+                const [verified, gradingCount] = await Promise.all([
+                    getUserPromoVerified(user?.id),
+                    getUserGradingCount(user?.id)
+                ]);
+                if (!cancelled) setPromoStatus({ loading: false, verified, gradingCount });
+            } catch (err) {
+                console.error('Failed to load promo status:', err);
+                if (!cancelled) setPromoStatus(prev => ({ ...prev, loading: false }));
+            }
+        };
+
+        loadPromoStatus();
+        return () => {
+            cancelled = true;
+        };
+    }, [authLoading, user?.id]);
+
     // Persistence: Save state to sessionStorage
     useEffect(() => {
         if (!exam?.id) return;
@@ -139,6 +253,19 @@ const ExamPage = () => {
         sessionStorage.setItem(`exam_timer_started_${exam.id}`, timerStarted);
         sessionStorage.setItem(`exam_time_remaining_${exam.id}`, timeRemaining);
     }, [timerStarted, timeRemaining, exam?.id]);
+
+    useEffect(() => {
+        if (timerStarted && timeRemaining <= 0 && !timerExpired) {
+            setTimeRemaining(0);
+            setTimerExpired(true);
+        }
+    }, [timerStarted, timeRemaining, timerExpired]);
+
+    useEffect(() => {
+        if (timerStarted && (timerExpired || timeRemaining <= 0) && isMobile) {
+            setActiveTab('answer');
+        }
+    }, [timerStarted, timerExpired, timeRemaining, isMobile]);
 
     // Exit Confirmation
     useEffect(() => {
@@ -166,6 +293,15 @@ const ExamPage = () => {
             }
         } else {
             navigate(targetPath);
+        }
+    };
+
+    const openExamPdfForPrint = () => {
+        const pdfUrl = signedPdfUrl || exam?.pdfPath || exam?.pdf_path;
+        if (pdfUrl) {
+            window.open(pdfUrl, '_blank');
+        } else {
+            alert("PDFのパスが見つかりません。");
         }
     };
 
@@ -239,6 +375,7 @@ const ExamPage = () => {
         setTimerExpired(false);
     };
 
+    const isTimeLocked = timerStarted && (timerExpired || timeRemaining <= 0);
 
     // Removed useEffect fetching logic to restore stability
     // We now rely solely on the structure defined in mockData.js
@@ -248,6 +385,7 @@ const ExamPage = () => {
     }
 
     const handleAnswerChange = (questionId, value, isMultiple) => {
+        if (!timerStarted || isTimeLocked || grading) return;
         setAnswers(prev => {
             if (isMultiple) {
                 const current = prev[questionId] || [];
@@ -263,8 +401,75 @@ const ExamPage = () => {
         });
     };
 
+    const handleOrderingAnswerChange = (questionId, option, position) => {
+        if (!timerStarted || isTimeLocked || grading) return;
+        setAnswers(prev => {
+            const current = Array.isArray(prev[questionId])
+                ? prev[questionId].map(String)
+                : String(prev[questionId] || '').split(',').map(s => s.trim()).filter(Boolean);
+            const next = current.filter(value => value !== String(option));
+            const numericPosition = parseInt(position, 10);
+
+            if (!position || Number.isNaN(numericPosition)) {
+                return { ...prev, [questionId]: next };
+            }
+
+            const insertIndex = Math.max(0, Math.min(numericPosition - 1, next.length));
+            next.splice(insertIndex, 0, String(option));
+            return { ...prev, [questionId]: next };
+        });
+    };
+
     const handleSubmit = async () => {
+        if (!submitIntentRef.current) {
+            console.warn('[ExamPage] Blocked submit without explicit confirmation.');
+            setShowConfirmModal(false);
+            return;
+        }
+        submitIntentRef.current = false;
         setShowConfirmModal(false);
+
+        if (grading) return;
+
+        if (!user) {
+            document.dispatchEvent(new CustomEvent('openAuthModal', {
+                detail: {
+                    message: '採点には無料会員登録またはログインが必要です。登録すると、AI採点・弱点分析・詳細フィードバックまで確認できます。'
+                }
+            }));
+            return;
+        }
+
+        if (shouldGateWithPromoCode) {
+            pendingPromoSubmitRef.current = true;
+            setShowPromoModal(true);
+            return;
+        }
+
+        const usageResult = planFeatures.unlimitedGrading
+            ? {
+                data: {
+                    allowed: true,
+                    used: usageStatus?.used || 0,
+                    limit: null,
+                    remaining: null,
+                    plan: currentPlan
+                },
+                error: null
+            }
+            : await consumeGradingUsage(user, exam?.id || null);
+        if (usageResult.error) {
+            console.error('Usage limit error:', usageResult.error);
+            alert(`採点回数の確認に失敗しました。\n\n原因: ${usageResult.error.message || usageResult.error.details || '不明なエラー'}\n\nSupabaseに利用回数管理SQL（supabase_schema_grading_usage.sql）が適用されているか確認してください。`);
+            return;
+        }
+        setUsageStatus(usageResult.data);
+        if (!usageResult.data?.allowed) {
+            if (window.confirm('今月の無料採点回数を使い切りました。プレミアムで無制限に採点しますか？')) {
+                navigate('/premium');
+            }
+            return;
+        }
 
         // -- Fake progress animation system --
         // targetRef holds the "real" progress ceiling from the backend.
@@ -313,9 +518,9 @@ const ExamPage = () => {
             setGradingProgress("解答を送信中...");
             addLog("採点データをサーバーに送信中...");
 
-            // Format answers for submission (join arrays with comma)
+            // Format answers for submission. Keep array order because ordering questions are order-sensitive.
             const formattedAnswers = Object.entries(answers).reduce((acc, [key, val]) => {
-                acc[key] = Array.isArray(val) ? val.sort().join(', ') : val;
+                acc[key] = Array.isArray(val) ? val.join(', ') : val;
                 return acc;
             }, {});
 
@@ -354,15 +559,18 @@ const ExamPage = () => {
             }
 
             addLog("採点完了！結果画面へ移動します。");
+            const localGradingCount = incrementLocalGradedCount();
+            setPromoStatus(prev => ({
+                ...prev,
+                gradingCount: Math.max(Number(prev.gradingCount || 0) + 1, localGradingCount, 1)
+            }));
 
             // Clear session storage on successful completion
             sessionStorage.removeItem(`exam_answers_${exam.id}`);
             sessionStorage.removeItem(`exam_timer_started_${exam.id}`);
             sessionStorage.removeItem(`exam_time_remaining_${exam.id}`);
 
-            if (!user) {
-                localStorage.setItem('smashai_guest_graded', 'true');
-            }
+            const finalUsageStatus = usageResult.data;
             setGrading(false);
             navigate('/result', {
                 state: {
@@ -377,6 +585,7 @@ const ExamPage = () => {
                     customLayout: examData?.custom_layout || exam?.custom_layout || [],
                     answers: formattedAnswers,
                     pdfPath: exam.pdfPath,
+                    usageStatus: finalUsageStatus,
                     isNewResult: true
                 }
             });
@@ -390,11 +599,89 @@ const ExamPage = () => {
     };
 
     const confirmSubmit = () => {
+        if (!user) {
+            document.dispatchEvent(new CustomEvent('openAuthModal', {
+                detail: {
+                    message: '採点には無料会員登録またはログインが必要です。登録すると、AI採点・弱点分析・詳細フィードバックまで確認できます。'
+                }
+            }));
+            return;
+        }
+        if (promoStatus.loading) {
+            alert('無料開放コードの状態を確認中です。少し待ってから再度お試しください。');
+            return;
+        }
+        if (shouldGateWithPromoCode) {
+            pendingPromoSubmitRef.current = true;
+            setShowPromoModal(true);
+            return;
+        }
+        if (usageLoading) {
+            alert('採点回数を確認中です。少し待ってから再度お試しください。');
+            return;
+        }
+        if (isUsageBlocked) {
+            if (window.confirm('今月の無料採点回数を使い切りました。プレミアムで無制限に採点しますか？')) {
+                navigate('/premium');
+            }
+            return;
+        }
         setShowConfirmModal(true);
     };
 
+    const handleConfirmedSubmit = () => {
+        submitIntentRef.current = true;
+        handleSubmit();
+    };
+
+    const handlePromoSubmit = async (e) => {
+        e.preventDefault();
+        setPromoError('');
+
+        if (!isValidFreeAccessPromoCode(promoCodeInput)) {
+            setPromoError(`コードが違います。公式LINEで配布している無料開放コードを入力してください。`);
+            return;
+        }
+
+        setPromoSubmitting(true);
+        try {
+            const { error } = await markUserPromoVerified(user?.id, FREE_ACCESS_PROMO_CODE);
+            if (error) throw error;
+            setPromoStatus(prev => ({ ...prev, verified: true }));
+            setShowPromoModal(false);
+            setPromoCodeInput('');
+            if (pendingPromoSubmitRef.current) {
+                pendingPromoSubmitRef.current = false;
+                setShowConfirmModal(true);
+            }
+        } catch (err) {
+            setPromoError(err?.message || 'コードの保存に失敗しました。時間をおいて再度お試しください。');
+        } finally {
+            setPromoSubmitting(false);
+        }
+    };
+
+    const handleLimitConsultation = () => {
+        if (!MARKETING_CONFIG.enableConsultation) {
+            navigate('/premium');
+            return;
+        }
+        navigate('/consultation', {
+            state: {
+                consultationContext: {
+                    source: 'grading_limit',
+                    universityName,
+                    facultyName,
+                    examId: exam?.id,
+                    examSubject: exam?.subject,
+                    examYear: exam?.year
+                }
+            }
+        });
+    };
+
     return (
-        <div style={{
+        <div className="exam-page-shell" style={{
             height: '100vh',
             display: 'flex',
             flexDirection: 'column',
@@ -403,8 +690,10 @@ const ExamPage = () => {
         }}>
             {/* Compact Header for Mobile & Desktop */}
             <div className="exam-header-compact">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div className="exam-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <button
+                        type="button"
+                        className="exam-header-back"
                         onClick={() => handleExit(`/university/${universityId || ''}`)}
                         style={{
                             background: 'none',
@@ -419,19 +708,19 @@ const ExamPage = () => {
                     >
                         ←
                     </button>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <h2 style={{ fontSize: '0.95rem', color: 'var(--color-accent-primary)', lineHeight: 1.2, margin: 0 }}>
+                    <div className="exam-header-title-block" style={{ display: 'flex', flexDirection: 'column' }}>
+                        <h2 className="exam-header-title" style={{ fontSize: '0.95rem', color: 'var(--color-accent-primary)', lineHeight: 1.2, margin: 0 }}>
                             {universityName || exam?.university || '大学'} {facultyName || exam?.faculty || ''}
                         </h2>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
+                        <div className="exam-header-meta" style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
                             {exam?.year || ''}年 {exam?.subject || ''}
                         </div>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div className="exam-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     {timerStarted && (
-                        <div style={{
+                        <div className="exam-header-timer" style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.4rem',
@@ -448,46 +737,51 @@ const ExamPage = () => {
                         </div>
                     )}
                     <button
-                        className="btn btn-secondary"
-                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                        type="button"
+                        className="btn btn-secondary exam-header-action-button"
+                        style={{
+                            padding: '0.4rem 0.8rem',
+                            fontSize: '0.8rem',
+                            display: isTimeLocked ? 'none' : undefined
+                        }}
                         onClick={() => handleExit('/')}
                     >
                         終了
                     </button>
+                    {!grading && !isTimeLocked && (
+                        <button
+                            type="button"
+                            className="btn btn-secondary shadow-none exam-header-action-button"
+                            style={{
+                                padding: '0.4rem 0.8rem',
+                                fontSize: '0.8rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.3rem'
+                            }}
+                            onClick={openExamPdfForPrint}
+                            title="原本PDFを新しいタブで開いて印刷・保存します"
+                        >
+                            <span style={{ fontSize: '1rem' }}>📥</span>
+                            <span className="hide-on-mobile">PDF印刷/保存</span>
+                            <span className="show-on-mobile" style={{ display: 'none' }}>PDF</span>
+                        </button>
+                    )}
                     {timerStarted && !grading && (
                         <>
                             <button
-                                className="btn btn-secondary shadow-none"
+                                type="button"
+                                className="btn btn-primary exam-header-action-button"
                                 style={{
                                     padding: '0.4rem 0.8rem',
                                     fontSize: '0.8rem',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.3rem'
-                                }}
-                                onClick={() => {
-                                    if (signedPdfUrl || exam?.pdfPath || exam?.pdf_path) {
-                                        window.open(signedPdfUrl || exam.pdfPath || exam.pdf_path, '_blank');
-                                    } else {
-                                        alert("PDFのパスが見つかりません。");
-                                    }
-                                }}
-                                title="原本PDFを新しいタブで開いて印刷・保存します"
-                            >
-                                <span style={{ fontSize: '1rem' }}>📥</span>
-                                <span className="hide-on-mobile">PDF印刷/保存</span>
-                                <span className="show-on-mobile" style={{ display: 'none' }}>PDF</span>
-                            </button>
-                            <button
-                                className="btn btn-primary"
-                                style={{
-                                    padding: '0.4rem 0.8rem',
-                                    fontSize: '0.8rem',
-                                    boxShadow: 'none'
-                                }}
-                                onClick={confirmSubmit}
-                            >
-                                採点
+                                    boxShadow: 'none',
+                                    opacity: usageLoading || promoStatus.loading || isUsageBlocked ? 0.65 : 1
+                            }}
+                            onClick={confirmSubmit}
+                            disabled={usageLoading || promoStatus.loading || isUsageBlocked}
+                        >
+                                {promoStatus.loading ? '確認中' : (isTimeLocked ? '提出' : '採点')}
                             </button>
                         </>
                     )}
@@ -495,7 +789,7 @@ const ExamPage = () => {
             </div>
 
             {/* Mobile Tab Switcher - Segmented Control Style */}
-            <div className="show-on-mobile" style={{
+            <div className="show-on-mobile exam-mobile-tabs" style={{
                 display: 'none',
                 padding: '0.6rem 1rem',
                 background: 'white',
@@ -509,6 +803,7 @@ const ExamPage = () => {
                     borderRadius: '2px'
                 }}>
                     <button
+                        type="button"
                         onClick={() => setActiveTab('pdf')}
                         className="btn-mobile-full"
                         style={{
@@ -529,6 +824,7 @@ const ExamPage = () => {
                         問題を見る
                     </button>
                     <button
+                        type="button"
                         onClick={() => setActiveTab('answer')}
                         className="btn-mobile-full"
                         style={{
@@ -643,7 +939,67 @@ const ExamPage = () => {
                                         <li>途中で中断できません</li>
                                     </ul>
                                 </div>
+                                {shouldGateWithPromoCode && (
+                                    <div style={{
+                                        background: '#f0fdf4',
+                                        border: '1px solid #bbf7d0',
+                                        borderRadius: '6px',
+                                        padding: '0.85rem 1rem',
+                                        marginBottom: '1rem',
+                                        textAlign: 'left'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, color: '#166534', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                                            <span>🎁</span> 2回目以降の採点特典
+                                        </div>
+                                        <p style={{ margin: 0, fontSize: '0.8rem', color: '#15803d', lineHeight: 1.5 }}>
+                                            採点提出には公式LINE限定コードの入力が必要です。あらかじめコードを認証しておくとスムーズです。
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPromoModal(true)}
+                                            style={{
+                                                marginTop: '0.5rem',
+                                                background: '#06C755',
+                                                color: '#fff',
+                                                border: 'none',
+                                                borderRadius: '4px',
+                                                padding: '0.4rem 0.8rem',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
+                                        >
+                                            コードを事前に認証する
+                                        </button>
+                                    </div>
+                                )}
+                                <UsageLimitCard
+                                    usage={displayedUsageStatus}
+                                    loading={usageLoading}
+                                    compact
+                                    showConsultationCta={Boolean(user) && !planFeatures.unlimitedGrading}
+                                    onConsultationClick={handleLimitConsultation}
+                                    onPremiumClick={handlePremiumClick}
+                                />
+                                <PreGradingPremiumHint
+                                    usage={displayedUsageStatus}
+                                    planFeatures={planFeatures}
+                                    onPremiumClick={handlePremiumClick}
+                                />
+                                {MARKETING_CONFIG.enableAdBanners && (
+                                    <AdBanner
+                                        slot="exam_pre_submit"
+                                        pageTarget="exam"
+                                        variant="inline"
+                                        context={adContext}
+                                        audience={adContext.audience}
+                                    />
+                                )}
                                 <button
+                                    type="button"
                                     className="btn btn-primary"
                                     onClick={startTimer}
                                     style={{
@@ -661,14 +1017,90 @@ const ExamPage = () => {
                         </div>
                     )}
 
-                    <div style={{ padding: '1.5rem', borderBottom: 'var(--border-glass)' }}>
+                    <div className="answer-sheet-header" style={{ padding: '1.5rem', borderBottom: 'var(--border-glass)' }}>
                         <h2 style={{ fontSize: '1.1rem' }}>解答用紙</h2>
                         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
                             問題を見て解答を入力してください。
                         </p>
+                        {isTimeLocked && !grading && (
+                            <div style={{
+                                marginTop: '1rem',
+                                padding: '0.75rem 1rem',
+                                border: '1px solid #fecaca',
+                                background: '#fef2f2',
+                                color: '#b91c1c',
+                                fontWeight: 800,
+                                lineHeight: 1.6
+                            }}>
+                                制限時間が終了しました。解答の編集はできません。提出して採点してください。
+                            </div>
+                        )}
                     </div>
 
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                    <div className="answer-sheet-body" style={{ flex: 1, overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                        <UsageLimitCard
+                            usage={displayedUsageStatus}
+                            loading={usageLoading}
+                            compact
+                            showConsultationCta={Boolean(user) && !planFeatures.unlimitedGrading}
+                            onConsultationClick={handleLimitConsultation}
+                            onPremiumClick={handlePremiumClick}
+                        />
+                        {!timerStarted && (
+                            <PreGradingPremiumHint
+                                usage={displayedUsageStatus}
+                                planFeatures={planFeatures}
+                                onPremiumClick={handlePremiumClick}
+                            />
+                        )}
+                        {!timerStarted && MARKETING_CONFIG.enableAdBanners && (
+                            <AdBanner
+                                slot="exam_pre_submit"
+                                pageTarget="exam"
+                                variant="inline"
+                                context={adContext}
+                                audience={adContext.audience}
+                            />
+                        )}
+                        <details
+                            className="answer-notation-notice"
+                            style={{
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '8px',
+                                background: '#f8fafc',
+                                padding: '0.85rem 1rem'
+                            }}
+                        >
+                            <summary
+                                style={{
+                                    cursor: 'pointer',
+                                    fontWeight: 700,
+                                    color: 'var(--color-text-primary)',
+                                    fontSize: '0.92rem'
+                                }}
+                            >
+                                表記揺れについて
+                            </summary>
+                            <div
+                                style={{
+                                    marginTop: '0.75rem',
+                                    color: 'var(--color-text-secondary)',
+                                    fontSize: '0.86rem',
+                                    lineHeight: 1.8
+                                }}
+                            >
+                                <p style={{ margin: '0 0 0.45rem' }}>
+                                    問題文で表記が指定されていない場合、一般的な表記揺れは採点時に考慮します。
+                                </p>
+                                <ul style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                                    <li>人名・用語の「＝」「・」「スペース」は、省略しても基本的に同じ表記として扱います。</li>
+                                    <li>例: ラシード＝ウッディーン / ラシード・ウッディーン / ラシード ウッディーン / ラシードウッディーン</li>
+                                    <li>数字の全角・半角、丸数字は同じ数字として扱います。例: ① / １ / 1</li>
+                                    <li>かな・カナなどの違いも、意味が同じなら可能な範囲で考慮します。</li>
+                                    <li>漢字指定、記号指定、字数指定がある場合は、問題文の指示を優先してください。</li>
+                                </ul>
+                            </div>
+                        </details>
                         {examData && examData.structure ? (
                             examData.structure.map((section) => (
                                 <div key={section.id}>
@@ -687,19 +1119,98 @@ const ExamPage = () => {
                                             const qType = q.type || section.type || 'text';
                                             const qOptions = q.options || section.options || [];
 
-                                            // Determine if multiple selection is allowed
-                                            // Check if correctAnswer contains comma (e.g., "c, a")
-                                            const isMultiple = q.correctAnswer && String(q.correctAnswer).includes(',');
+                                            // Multiple selection should be explicit. Some defective questions
+                                            // have multiple acceptable answers while the UI remains single-choice.
+                                            const isMultiple = qType === 'selection_multi';
+                                            const isOrdering = qType === 'ordering';
+                                            const answerDisabled = !timerStarted || isTimeLocked || grading;
+                                            const orderingAnswer = Array.isArray(answers[uniqueKey])
+                                                ? answers[uniqueKey].map(String)
+                                                : String(answers[uniqueKey] || '').split(',').map(s => s.trim()).filter(Boolean);
 
                                             return (
-                                                <div key={uniqueKey} style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-                                                    <span style={{ minWidth: '30px', fontWeight: '600', fontSize: '0.9rem', paddingTop: '0.2rem' }}>
+                                                <div key={uniqueKey} className="answer-question-row" style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                                                    <span className="answer-question-label" style={{ minWidth: '30px', fontWeight: '600', fontSize: '0.9rem', paddingTop: '0.2rem' }}>
                                                         {q.label || `(${i + 1})`}
                                                     </span>
-                                                    {qType === 'selection' ? (
-                                                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                                    {isOrdering ? (
+                                                        <div className="answer-ordering-control" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                            <div className="answer-option-list" style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                                                {qOptions.map(option => {
+                                                                    const currentPosition = orderingAnswer.indexOf(String(option)) + 1;
+                                                                    return (
+                                                                        <label key={option} style={{
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            gap: '0.45rem',
+                                                                            padding: '0.5rem 0.65rem',
+                                                                            border: '1px solid #e2e8f0',
+                                                                            borderRadius: '8px',
+                                                                            background: currentPosition > 0 ? '#eef2ff' : '#fff',
+                                                                            opacity: answerDisabled ? 0.6 : 1
+                                                                        }}>
+                                                                            <span style={{ fontWeight: 700 }}>{option}</span>
+                                                                            <select
+                                                                                value={currentPosition || ''}
+                                                                                onChange={(e) => handleOrderingAnswerChange(uniqueKey, option, e.target.value)}
+                                                                                disabled={answerDisabled}
+                                                                                style={{
+                                                                                    border: '1px solid #cbd5e1',
+                                                                                    borderRadius: '6px',
+                                                                                    padding: '0.25rem 0.4rem',
+                                                                                    background: 'white',
+                                                                                    cursor: answerDisabled ? 'not-allowed' : 'pointer'
+                                                                                }}
+                                                                            >
+                                                                                <option value="">-</option>
+                                                                                {qOptions.map((_, orderIdx) => (
+                                                                                    <option key={orderIdx + 1} value={orderIdx + 1}>{orderIdx + 1}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                                                                解答順: {orderingAnswer.length > 0 ? orderingAnswer.join(' → ') : '未入力'}
+                                                            </div>
+                                                        </div>
+                                                    ) : qType === 'selection' ? (
+                                                        <select
+                                                            className="answer-select-control"
+                                                            value={answers[uniqueKey] || ''}
+                                                            onChange={(e) => handleAnswerChange(uniqueKey, e.target.value, false)}
+                                                            disabled={answerDisabled}
+                                                            style={{
+                                                                width: '100%',
+                                                                minHeight: '44px',
+                                                                padding: '0.65rem 0.75rem',
+                                                                border: '1px solid #cbd5e1',
+                                                                borderRadius: '2px',
+                                                                background: 'white',
+                                                                color: answers[uniqueKey] ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                                                                fontFamily: 'inherit',
+                                                                opacity: answerDisabled ? 0.6 : 1,
+                                                                cursor: answerDisabled ? 'not-allowed' : 'pointer'
+                                                            }}
+                                                        >
+                                                            <option value="">選択してください</option>
                                                             {qOptions.map(option => (
-                                                                <label key={option} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                                                <option key={option} value={option}>
+                                                                    {option}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    ) : qType === 'selection_multi' ? (
+                                                        <div className="answer-option-list" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                                            {qOptions.map(option => (
+                                                                <label key={option} style={{
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.5rem',
+                                                                    cursor: answerDisabled ? 'not-allowed' : 'pointer',
+                                                                    opacity: answerDisabled ? 0.6 : 1
+                                                                }}>
                                                                     <input
                                                                         type={isMultiple ? "checkbox" : "radio"}
                                                                         name={uniqueKey}
@@ -710,7 +1221,7 @@ const ExamPage = () => {
                                                                                 : String(answers[uniqueKey] || '') === String(option)
                                                                         }
                                                                         onChange={(e) => handleAnswerChange(uniqueKey, e.target.value, isMultiple)}
-                                                                        disabled={!timerStarted}
+                                                                        disabled={answerDisabled}
                                                                     />
                                                                     <span>{option}</span>
                                                                 </label>
@@ -728,13 +1239,13 @@ const ExamPage = () => {
                                                                 border: '1px solid #e2e8f0',
                                                                 borderRadius: '2px',
                                                                 fontFamily: 'inherit',
-                                                                opacity: !timerStarted ? 0.5 : 1,
-                                                                cursor: !timerStarted ? 'not-allowed' : 'text'
+                                                                opacity: answerDisabled ? 0.5 : 1,
+                                                                cursor: answerDisabled ? 'not-allowed' : 'text'
                                                             }}
                                                             placeholder="解答を入力..."
                                                             value={answers[uniqueKey] || ''}
                                                             onChange={(e) => handleAnswerChange(uniqueKey, e.target.value)}
-                                                            disabled={!timerStarted}
+                                                            disabled={answerDisabled}
                                                         />
                                                     )}
                                                 </div>
@@ -750,26 +1261,31 @@ const ExamPage = () => {
                         )}
                     </div>
 
-                    <div style={{ padding: '1.5rem', borderTop: 'var(--border-glass)', background: 'var(--color-bg-glass)' }}>
+                    <div className="answer-submit-bar" style={{ padding: '1.5rem', borderTop: 'var(--border-glass)', background: 'var(--color-bg-glass)' }}>
                         <button
+                            type="button"
                             className="btn btn-primary"
                             style={{
                                 width: '100%',
-                                opacity: grading ? 0.7 : 1,
-                                cursor: grading ? 'not-allowed' : 'pointer',
+                                opacity: grading || usageLoading || promoStatus.loading || isUsageBlocked ? 0.7 : 1,
+                                cursor: grading || usageLoading || promoStatus.loading || isUsageBlocked ? 'not-allowed' : 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 gap: '0.5rem'
                             }}
                             onClick={confirmSubmit}
-                            disabled={grading}
+                            disabled={grading || usageLoading || promoStatus.loading || isUsageBlocked}
                         >
                             {grading ? (
                                 <>
                                     <span className="spinner"></span>
                                     <span>採点中...</span>
                                 </>
+                            ) : promoStatus.loading ? (
+                                "確認中..."
+                            ) : isTimeLocked ? (
+                                "制限時間終了：提出して採点する"
                             ) : (
                                 "提出して採点する"
                             )}
@@ -792,20 +1308,182 @@ const ExamPage = () => {
                 }}>
                     <div className="glass-panel" style={{ background: 'white', padding: '2rem', maxWidth: '400px', width: '100%', textAlign: 'center', borderRadius: '2px' }}>
 
-                        <h3 style={{ marginBottom: '1rem' }}>試験を終了して採点しますか？</h3>
+                        <h3 style={{ marginBottom: '1rem' }}>{isTimeLocked ? '制限時間が終了しました' : '試験を終了して採点しますか？'}</h3>
                         <p style={{ color: 'var(--color-text-secondary)', marginBottom: '2rem', fontSize: '0.9rem' }}>
-                            一度提出すると、解答を修正することはできません。<br />
-                            採点と詳細な分析を開始します。
+                            {isTimeLocked ? (
+                                <>
+                                    解答の編集はできません。<br />
+                                    提出して採点を開始してください。
+                                </>
+                            ) : (
+                                <>
+                                    一度提出すると、解答を修正することはできません。<br />
+                                    採点と詳細な分析を開始します。
+                                </>
+                            )}
                         </p>
                         <div style={{ display: 'flex', gap: '1rem' }}>
-                            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowConfirmModal(false)}>
-                                まだ続ける
-                            </button>
-                            <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleSubmit}>
+                            {!isTimeLocked && (
+                                <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setShowConfirmModal(false)}>
+                                    まだ続ける
+                                </button>
+                            )}
+                            <button type="button" className="btn btn-primary" style={{ flex: 1 }} onClick={handleConfirmedSubmit}>
                                 提出する
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+            {/* Promo Code Modal */}
+            {showPromoModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(15, 23, 42, 0.65)',
+                    backdropFilter: 'blur(4px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2100,
+                    padding: '1rem'
+                }}>
+                    <form
+                        className="glass-panel"
+                        onSubmit={handlePromoSubmit}
+                        style={{
+                            background: 'white',
+                            padding: '2rem',
+                            maxWidth: '480px',
+                            width: '100%',
+                            borderRadius: '8px',
+                            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+                        }}
+                    >
+                        <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
+                            <div style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.4rem',
+                                color: '#15803d',
+                                background: '#f0fdf4',
+                                padding: '0.35rem 0.75rem',
+                                borderRadius: '9999px',
+                                fontWeight: 800,
+                                fontSize: '0.78rem',
+                                letterSpacing: '0.05em',
+                                marginBottom: '0.75rem'
+                            }}>
+                                <span>🎁</span> 公式LINE限定・無料開放特典
+                            </div>
+                            <h3 style={{ margin: '0 0 0.75rem', fontSize: '1.35rem', color: '#0f172a', fontWeight: 800 }}>
+                                2回目以降の採点コードを入力
+                            </h3>
+                            <p style={{ margin: 0, color: 'var(--color-text-secondary)', lineHeight: 1.7, fontSize: '0.92rem', textAlign: 'left' }}>
+                                スマサイをご利用いただきありがとうございます！2回目以降の採点には、公式LINEの友だち追加で配布されている<strong>プロモーションコード</strong>が必要です。
+                            </p>
+                        </div>
+
+                        <div style={{
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '6px',
+                            padding: '1.25rem',
+                            marginBottom: '1.25rem'
+                        }}>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#334155', marginBottom: '0.5rem' }}>
+                                ① 公式LINEを追加してコードを確認
+                            </div>
+                            <a
+                                href={MARKETING_CONFIG.lineUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    background: '#06C755',
+                                    color: '#ffffff',
+                                    padding: '0.8rem 1.2rem',
+                                    borderRadius: '6px',
+                                    textDecoration: 'none',
+                                    fontWeight: 800,
+                                    fontSize: '0.95rem',
+                                    boxShadow: '0 2px 4px rgba(6, 199, 85, 0.25)',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2C6.48 2 2 5.92 2 10.75c0 2.94 1.66 5.56 4.24 7.15-.18.66-.67 2.45-.77 2.82-.12.45.16.44.34.33.14-.09 1.95-1.32 2.76-1.87.46.08.94.12 1.43.12 5.52 0 10-3.92 10-8.75S17.52 2 12 2z"/>
+                                </svg>
+                                LINE友だち追加でコードを取得
+                            </a>
+                            <div style={{ textAlign: 'center', fontSize: '0.75rem', color: '#64748b', marginTop: '0.4rem' }}>
+                                ※友だち追加メッセージですぐにコードをお届けします
+                            </div>
+                        </div>
+
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <label style={{ display: 'block', fontWeight: 800, fontSize: '0.85rem', color: '#334155', marginBottom: '0.4rem' }}>
+                                ② 届いたコードを入力
+                            </label>
+                            <input
+                                type="text"
+                                value={promoCodeInput}
+                                onChange={(e) => {
+                                    setPromoCodeInput(e.target.value);
+                                    setPromoError('');
+                                }}
+                                placeholder="例: 公式LINEで届いたコードを入力"
+                                autoFocus
+                                style={{
+                                    width: '100%',
+                                    minHeight: '46px',
+                                    border: promoError ? '2px solid #ef4444' : '1px solid #cbd5e1',
+                                    borderRadius: '6px',
+                                    padding: '0.75rem 1rem',
+                                    fontSize: '1rem',
+                                    fontFamily: 'inherit',
+                                    boxSizing: 'border-box',
+                                    marginBottom: '0.5rem',
+                                    letterSpacing: '0.05em'
+                                }}
+                            />
+                            {promoError && (
+                                <div style={{ color: '#dc2626', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+                                    {promoError}
+                                </div>
+                            )}
+                            <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                                ※一度認証すれば、次回以降はコード入力不要でご利用いただけます。
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ flex: 1, padding: '0.75rem' }}
+                                onClick={() => {
+                                    pendingPromoSubmitRef.current = false;
+                                    setShowPromoModal(false);
+                                    setPromoError('');
+                                }}
+                                disabled={promoSubmitting}
+                            >
+                                キャンセル
+                            </button>
+                            <button
+                                type="submit"
+                                className="btn btn-primary"
+                                style={{ flex: 1.4, padding: '0.75rem' }}
+                                disabled={promoSubmitting || !promoCodeInput.trim()}
+                            >
+                                {promoSubmitting ? '認証中...' : '認証して採点へ進む'}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
             {/* Log & Progress Overlay */}

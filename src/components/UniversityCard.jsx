@@ -1,20 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 
 
 const UniversityCard = ({ university }) => {
     const navigate = useNavigate();
-    const { user } = useAuth();
 
     const handleClick = () => {
-        const isGuestGraded = localStorage.getItem('smashai_guest_graded') === 'true';
-        if (!user && isGuestGraded) {
-            document.dispatchEvent(new CustomEvent('openAuthModal', { 
-                detail: { message: 'ゲストアカウントの無料採点上限（1回）に達しました。無制限に利用するには無料会員登録を行ってください。' } 
-            }));
-            return;
-        }
         navigate(`/university/${university.id}`);
     };
 
