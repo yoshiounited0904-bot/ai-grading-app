@@ -73,6 +73,7 @@ function AdminResultAnalytics() {
     const [universityFilter, setUniversityFilter] = useState('all');
     const [analytics, setAnalytics] = useState({ users: [], results: [] });
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(null);
 
     const handleOpenResult = (result) => {
         navigate('/result', {
@@ -108,10 +109,13 @@ function AdminResultAnalytics() {
 
     const fetchAnalytics = async () => {
         setLoading(true);
+        setLoadError(null);
         const { data, error } = await getAdminResultAnalytics({ days: days === 'all' ? null : Number(days) });
         if (error) {
             console.error('Error fetching result analytics:', error);
-            alert('成績ログの取得に失敗しました。管理者が exam_results を閲覧できるRLSポリシーを確認してください。');
+            const msg = error?.message || (typeof error === 'string' ? error : '不明なエラー');
+            setLoadError(msg);
+            alert(`成績ログの取得に失敗しました。\n\n【詳細】\n${msg}\n\n※ Supabase の RLS ポリシー（管理者が exam_results を閲覧できる権限）が設定されているかご確認ください。`);
         } else {
             setAnalytics(data || { users: [], results: [] });
         }
@@ -178,6 +182,26 @@ function AdminResultAnalytics() {
 
     return (
         <div className="space-y-5">
+            {loadError && (
+                <div className="rounded-md border border-red-200 bg-red-50 p-4 text-red-900 shadow-sm">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                            <div className="font-bold text-sm">成績ログの取得でエラーが発生しました</div>
+                            <div className="text-xs font-mono text-red-700 mt-1 break-all">{loadError}</div>
+                            <div className="text-xs text-red-600 mt-1">
+                                ※ Supabase の RLS ポリシー（管理者への exam_results 閲覧許可）が未適用の可能性があります。
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={fetchAnalytics}
+                            className="rounded bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700 transition"
+                        >
+                            再試行
+                        </button>
+                    </div>
+                </div>
+            )}
             <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4">
                 <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_220px_220px_auto] gap-3 items-end">
                     <label className="flex flex-col gap-1">

@@ -45,10 +45,17 @@ const buildDateFilter = (query, days) => {
     return query.gte('created_at', since.toISOString());
 };
 
+const hasColumnError = (error, columnName) => {
+    const message = String(error?.message || error?.details || error || '').toLowerCase();
+    return message.includes(columnName.toLowerCase());
+};
+
 export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) => {
     const safeLimit = Math.min(Math.max(Number(limit) || 500, 50), 1500);
 
-    const profilesResult = await runAdminAnalyticsQuery(
+    // 1. プロフィール一覧の取得（RLSやカラム不一致が発生しても成績ログ自体の取得は継続する）
+    let profilesData = [];
+    let profilesResult = await runAdminAnalyticsQuery(
         () => supabase
             .from('profiles')
             .select('id, username, first_choice_university, grade, role, plan, created_at')
@@ -56,31 +63,46 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         'ユーザー一覧の取得'
     );
 
-    if (profilesResult.error) {
-        return { data: null, error: profilesResult.error };
+    if (profilesResult.error && hasColumnError(profilesResult.error, 'plan')) {
+        profilesResult = await runAdminAnalyticsQuery(
+            () => supabase
+                .from('profiles')
+                .select('id, username, first_choice_university, grade, role, created_at')
+                .limit(2000),
+            'ユーザー一覧の取得(フォールバック)'
+        );
     }
 
-    const resultsResult = await runAdminAnalyticsQuery(
+    if (profilesResult.error) {
+        console.warn('AdminResultAnalytics: プロフィール一覧の取得に失敗（成績ログ表示を優先します）:', profilesResult.error);
+    } else {
+        profilesData = profilesResult.data || [];
+    }
+
+    // 2. 成績ログの取得（faculty_name や pdf_path がテーブルに存在しない場合のフォールバックを実装）
+    const fullSelectColumns = `
+        id,
+        user_id,
+        university_name,
+        faculty_name,
+        exam_subject,
+        exam_year,
+        score,
+        max_score,
+        pass_probability,
+        section_scores,
+        question_feedback,
+        weakness_analysis,
+        answers,
+        pdf_path,
+        created_at
+    `;
+
+    let resultsResult = await runAdminAnalyticsQuery(
         () => buildDateFilter(
             supabase
                 .from('exam_results')
-                .select(`
-                    id,
-                    user_id,
-                    university_name,
-                    faculty_name,
-                    exam_subject,
-                    exam_year,
-                    score,
-                    max_score,
-                    pass_probability,
-                    section_scores,
-                    question_feedback,
-                    weakness_analysis,
-                    answers,
-                    pdf_path,
-                    created_at
-                `),
+                .select(fullSelectColumns),
             days
         )
             .order('created_at', { ascending: false })
@@ -88,12 +110,42 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         '成績ログの取得'
     );
 
+    if (resultsResult.error && (hasColumnError(resultsResult.error, 'faculty_name') || hasColumnError(resultsResult.error, 'pdf_path'))) {
+        console.warn('AdminResultAnalytics: 未対応のカラムがあるためフォールバッククエリを実行します:', resultsResult.error);
+        const fallbackSelectColumns = `
+            id,
+            user_id,
+            university_name,
+            exam_subject,
+            exam_year,
+            score,
+            max_score,
+            pass_probability,
+            section_scores,
+            question_feedback,
+            weakness_analysis,
+            answers,
+            created_at
+        `;
+        resultsResult = await runAdminAnalyticsQuery(
+            () => buildDateFilter(
+                supabase
+                    .from('exam_results')
+                    .select(fallbackSelectColumns),
+                days
+            )
+                .order('created_at', { ascending: false })
+                .limit(safeLimit),
+            '成績ログの取得(フォールバック)'
+        );
+    }
+
     if (resultsResult.error) {
         return { data: null, error: resultsResult.error };
     }
 
-    const visibleUsers = (profilesResult.data || []).filter(user => user?.role !== 'admin');
-    const usersById = new Map((profilesResult.data || []).map(user => [user.id, user]));
+    const visibleUsers = profilesData.filter(user => user?.role !== 'admin');
+    const usersById = new Map(profilesData.map(user => [user.id, user]));
     const results = (resultsResult.data || []).filter(result => {
         const user = usersById.get(result.user_id) || null;
         return user?.role !== 'admin';
@@ -108,7 +160,7 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         return {
             ...result,
             scoreRate,
-            userName: user?.username || '名前なし',
+            userName: user?.username || (result.user_id ? `生徒 (${result.user_id.slice(0, 8)})` : '名前なし'),
             userGrade: user?.grade || '',
             userFirstChoice: user?.first_choice_university || '',
             userPlan: user?.plan || 'free',
