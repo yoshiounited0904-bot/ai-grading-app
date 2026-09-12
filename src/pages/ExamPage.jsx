@@ -939,43 +939,6 @@ const ExamPage = () => {
                                         <li>途中で中断できません</li>
                                     </ul>
                                 </div>
-                                {shouldGateWithPromoCode && (
-                                    <div style={{
-                                        background: '#f0fdf4',
-                                        border: '1px solid #bbf7d0',
-                                        borderRadius: '6px',
-                                        padding: '0.85rem 1rem',
-                                        marginBottom: '1rem',
-                                        textAlign: 'left'
-                                    }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, color: '#166534', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
-                                            <span>🎁</span> 2回目以降の採点特典
-                                        </div>
-                                        <p style={{ margin: 0, fontSize: '0.8rem', color: '#15803d', lineHeight: 1.5 }}>
-                                            採点提出には公式LINE限定コードの入力が必要です。あらかじめコードを認証しておくとスムーズです。
-                                        </p>
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPromoModal(true)}
-                                            style={{
-                                                marginTop: '0.5rem',
-                                                background: '#06C755',
-                                                color: '#fff',
-                                                border: 'none',
-                                                borderRadius: '4px',
-                                                padding: '0.4rem 0.8rem',
-                                                fontSize: '0.8rem',
-                                                fontWeight: 700,
-                                                cursor: 'pointer',
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '0.3rem'
-                                            }}
-                                        >
-                                            コードを事前に認証する
-                                        </button>
-                                    </div>
-                                )}
                                 <UsageLimitCard
                                     usage={displayedUsageStatus}
                                     loading={usageLoading}
