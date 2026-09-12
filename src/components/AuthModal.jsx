@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { signUp, signIn, requestPasswordReset } from '../services/authService'
 
+const REFERRAL_OPTIONS = [
+    'X（Twitter）',
+    'ウェブ',
+    '知り合いの紹介',
+    'その他'
+]
+
 const AuthModal = ({ isOpen, onClose }) => {
     const [isSignUp, setIsSignUp] = useState(false)
     const [isPasswordReset, setIsPasswordReset] = useState(false)
@@ -9,6 +16,7 @@ const AuthModal = ({ isOpen, onClose }) => {
     const [password, setPassword] = useState('')
     const [username, setUsername] = useState('')
     const [grade, setGrade] = useState('')
+    const [referralSource, setReferralSource] = useState('')
     const [checkedTerms, setCheckedTerms] = useState(false)
     const [checkedAI, setCheckedAI] = useState(false)
     const [loading, setLoading] = useState(false)
@@ -62,9 +70,15 @@ const AuthModal = ({ isOpen, onClose }) => {
             return
         }
 
+        if (isSignUp && !referralSource) {
+            setError('このサイトをどこで知ったか選択してください')
+            setLoading(false)
+            return
+        }
+
         try {
             const { data, error: authError } = isSignUp
-                ? await signUp(email, password, username, '', grade, true)
+                ? await signUp(email, password, username, '', grade, true, referralSource)
                 : await signIn(email, password)
 
             if (authError) {
@@ -167,6 +181,20 @@ const AuthModal = ({ isOpen, onClose }) => {
                                     <option value="既卒">既卒生</option>
                                 </select>
                             </div>
+                            <div className="form-group">
+                                <label>このサイトをどこで知りましたか？ <span style={{ color: '#ef4444' }}>*</span></label>
+                                <select
+                                    className="form-control"
+                                    value={referralSource}
+                                    onChange={e => setReferralSource(e.target.value)}
+                                    required
+                                >
+                                    <option value="">選択してください</option>
+                                    {REFERRAL_OPTIONS.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                    ))}
+                                </select>
+                            </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', margin: '1rem 0', padding: '1rem', background: '#f8fafc', borderRadius: '2px', border: '1px solid #e2e8f0' }}>
                                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', cursor: 'pointer', fontSize: '0.8rem', color: '#374151', lineHeight: '1.5' }}>
@@ -197,13 +225,13 @@ const AuthModal = ({ isOpen, onClose }) => {
 
                 <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
                     {isPasswordReset ? (
-                        <p>ログイン画面に戻る <span onClick={() => { setIsPasswordReset(false); setMessage(''); setError(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
+                        <p>ログイン画面に戻る <span onClick={() => { setIsPasswordReset(false); setMessage(''); setError(''); setReferralSource(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
                     ) : isSignUp ? (
-                        <p>すでにアカウントをお持ちですか？ <span onClick={() => { setIsSignUp(false); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
+                        <p>すでにアカウントをお持ちですか？ <span onClick={() => { setIsSignUp(false); setError(''); setMessage(''); setReferralSource(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
                     ) : (
                         <>
-                            <p style={{ marginBottom: '0.5rem' }}>パスワードを忘れた方は <span onClick={() => { setIsPasswordReset(true); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>再設定</span></p>
-                            <p>アカウントをお持ちでないですか？ <span onClick={() => { setIsSignUp(true); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>新規登録</span></p>
+                            <p style={{ marginBottom: '0.5rem' }}>パスワードを忘れた方は <span onClick={() => { setIsPasswordReset(true); setError(''); setMessage(''); setReferralSource(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>再設定</span></p>
+                            <p>アカウントをお持ちでないですか？ <span onClick={() => { setIsSignUp(true); setError(''); setMessage(''); setReferralSource(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>新規登録</span></p>
                         </>
                     )}
                 </div>

@@ -27,7 +27,7 @@ const withAuthTimeout = async (promise, label) => {
 }
 
 // サインアップ
-export const signUp = async (email, password, username, firstChoiceUniversity, grade, termsAgreed = false) => {
+export const signUp = async (email, password, username, firstChoiceUniversity, grade, termsAgreed = false, referralSource = '') => {
     const { data, error } = await withAuthTimeout(
         supabase.auth.signUp({
             email,
@@ -40,18 +40,27 @@ export const signUp = async (email, password, username, firstChoiceUniversity, g
 
     // プロフィール作成
     if (data.user) {
+        const profilePayload = {
+            id: data.user.id,
+            username,
+            first_choice_university: firstChoiceUniversity,
+            grade,
+            terms_agreed_at: termsAgreed ? new Date().toISOString() : null,
+            referral_source: referralSource || null
+        }
+
         const { error: profileError } = await supabase
             .from('profiles')
-            .insert([
-                {
-                    id: data.user.id,
-                    username,
-                    first_choice_university: firstChoiceUniversity,
-                    grade,
-                    terms_agreed_at: termsAgreed ? new Date().toISOString() : null
-                }
-            ])
-        if (profileError) console.error('Profile creation error:', profileError)
+            .insert([profilePayload])
+
+        if (profileError) {
+            console.error('Profile creation error:', profileError)
+            // referral_source 列が未追加の場合のフォールバック
+            if (String(profileError?.message || '').includes('referral_source')) {
+                delete profilePayload.referral_source
+                await supabase.from('profiles').insert([profilePayload])
+            }
+        }
     }
 
     return { data, error }

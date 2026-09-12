@@ -77,6 +77,21 @@ function AdminUserDashboard() {
         return statuses.sort((a, b) => getSubscriptionStatusLabel(a).localeCompare(getSubscriptionStatusLabel(b), 'ja'));
     }, [users]);
 
+    const referralStats = useMemo(() => {
+        const stats = { 'X（Twitter）': 0, 'ウェブ': 0, '知り合いの紹介': 0, 'その他': 0, '未回答': 0 };
+        users.forEach((u) => {
+            const src = u.referral_source;
+            if (src && stats[src] !== undefined) {
+                stats[src]++;
+            } else if (src) {
+                stats['その他']++;
+            } else {
+                stats['未回答']++;
+            }
+        });
+        return stats;
+    }, [users]);
+
     const filteredUsers = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return users.filter((user) => {
@@ -89,6 +104,7 @@ function AdminUserDashboard() {
                 user.id,
                 user.role,
                 user.plan,
+                user.referral_source,
                 status,
                 getSubscriptionStatusLabel(status),
                 user.first_choice_university,
@@ -112,6 +128,35 @@ function AdminUserDashboard() {
                         ユーザー管理
                         <span className="text-xs bg-navy-blue text-white px-2 py-1 rounded-full font-mono">USERS</span>
                     </h1>
+                </div>
+
+                {/* 認知経路アンケート集計 */}
+                <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4 mb-5">
+                    <div className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em] mb-3">
+                        認知経路アンケート集計（登録時アンケート）
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                        <div className="bg-sky-50 border border-sky-200/60 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-sky-700">X（Twitter）</div>
+                            <div className="text-xl font-black text-sky-900 mt-1">{referralStats['X（Twitter）']}人</div>
+                        </div>
+                        <div className="bg-emerald-50 border border-emerald-200/60 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-emerald-700">ウェブ</div>
+                            <div className="text-xl font-black text-emerald-900 mt-1">{referralStats['ウェブ']}人</div>
+                        </div>
+                        <div className="bg-violet-50 border border-violet-200/60 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-violet-700">知り合いの紹介</div>
+                            <div className="text-xl font-black text-violet-900 mt-1">{referralStats['知り合いの紹介']}人</div>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200/60 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-amber-700">その他</div>
+                            <div className="text-xl font-black text-amber-900 mt-1">{referralStats['その他']}人</div>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200/60 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-gray-500">未回答</div>
+                            <div className="text-xl font-black text-gray-700 mt-1">{referralStats['未回答']}人</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4 mb-5">
@@ -175,6 +220,7 @@ function AdminUserDashboard() {
                                     <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
                                         <th className="px-6 py-2 text-left">ユーザー情報</th>
                                         <th className="px-6 py-2 text-left">第一志望 / 学年</th>
+                                        <th className="px-6 py-2 text-left">認知経路</th>
                                         <th className="px-6 py-2 text-center">権限</th>
                                         <th className="px-6 py-2 text-center">プラン</th>
                                         <th className="px-6 py-2 text-left">Stripe</th>
@@ -195,6 +241,17 @@ function AdminUserDashboard() {
                                                     <span className="text-sm font-bold text-gray-700">{user.first_choice_university || '-'}</span>
                                                     <span className="text-[10px] text-gray-400 font-bold">{user.grade || '-'}</span>
                                                 </div>
+                                            </td>
+                                            <td className="bg-white px-6 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
+                                                    user.referral_source === 'X（Twitter）' ? 'bg-sky-50 text-sky-700 border border-sky-200' :
+                                                    user.referral_source === 'ウェブ' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                                    user.referral_source === '知り合いの紹介' ? 'bg-violet-50 text-violet-700 border border-violet-200' :
+                                                    user.referral_source ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                                                    'bg-gray-50 text-gray-400 border border-gray-200'
+                                                }`}>
+                                                    {user.referral_source || '未回答'}
+                                                </span>
                                             </td>
                                             <td className="bg-white px-6 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
                                                 <button
