@@ -8,10 +8,25 @@ const isLargeSequentialNumericOptions = (options) => (
     options.every((option, idx) => String(option).trim() === String(idx + 1))
 );
 
+const checkSectionMismatch = (q, secIdx) => {
+    const text = `${q?.id || ''} ${q?.label || ''}`;
+    const secNum = secIdx + 1;
+    const match = text.match(/(?:第|大問)([0-9ivx一二三四五六七八九十]+)(?:問)?/i);
+    if (match) {
+        const romanMap = { "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10 };
+        const kanjiMap = { "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
+        const raw = match[1].toLowerCase();
+        const parsed = parseInt(raw, 10) || romanMap[raw] || kanjiMap[raw];
+        if (parsed && parsed !== secNum) {
+            return `第${parsed}問`;
+        }
+    }
+    return null;
+};
+
 const normalizeStructure = (structure) => {
     if (!Array.isArray(structure)) return [];
-    const sorted = [...structure].sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
-    return sorted.map(section => {
+    return structure.map(section => {
         const questions = Array.isArray(section.questions) ? section.questions : [];
         return {
             ...section,
@@ -79,6 +94,19 @@ export default function AnswerVerifyPage() {
         ));
         setIsDirty(true);
     }, []);
+
+    const deleteQuestion = useCallback((sIdx, qIdx) => {
+        const q = sections[sIdx]?.questions?.[qIdx];
+        const qName = q?.label || q?.id || `設問${qIdx + 1}`;
+        if (!window.confirm(`「${qName}」をこの大問から削除しますか？\n（削除後は右上の「💾 保存」を押すと確定します）`)) return;
+        setSections(prev => prev.map((sec, si) =>
+            si !== sIdx ? sec : {
+                ...sec,
+                questions: sec.questions.filter((_, qi) => qi !== qIdx)
+            }
+        ));
+        setIsDirty(true);
+    }, [sections]);
 
     const handleSave = async () => {
         setSaving(true);
@@ -185,6 +213,11 @@ export default function AnswerVerifyPage() {
                                 <span>小問数: {section.questions.length}</span>
                                 <span>合計配点: {section.questions.reduce((s, q) => s + (parseInt(q.points) || 0), 0)}点</span>
                             </div>
+                            {section.questions.some(q => checkSectionMismatch(q, selectedSectionIdx)) && (
+                                <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold rounded-xl p-3 mb-4 flex items-center gap-2">
+                                    <span>⚠️ 他の大問の設問が混入している可能性があります。不要な小問は右端の「🗑️」で削除し、右上の「💾 保存」を押してください。</span>
+                                </div>
+                            )}
                             <div style={{ overflowX: 'auto' }}>
                                 <table style={{ minWidth: '520px' }} className="w-full text-xs">
                                     <thead>
@@ -194,10 +227,12 @@ export default function AnswerVerifyPage() {
                                             <th className="text-left pb-2 pr-3 whitespace-nowrap">選択肢</th>
                                             <th className="text-left pb-2 pr-3 whitespace-nowrap text-indigo-600">正解</th>
                                             <th className="text-left pb-2 whitespace-nowrap">配点</th>
+                                            <th className="text-center pb-2 pr-2 whitespace-nowrap">削除</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-50">
                                         {section.questions.map((q, qIdx) => {
+                                            const mismatch = checkSectionMismatch(q, selectedSectionIdx);
                                             const hasOptions = Array.isArray(q.options) && q.options.length > 0;
                                             const isSelection = ['selection', 'selection_multi'].includes(q.type);
                                             const currentAnswers = String(q.correctAnswer || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -226,7 +261,16 @@ export default function AnswerVerifyPage() {
 
                                             return (
                                                 <tr key={q.id || qIdx} className="hover:bg-gray-50/50 transition-colors">
-                                                    <td className="py-3 pr-3 font-black text-gray-700 whitespace-nowrap">{q.label || q.id}</td>
+                                                    <td className="py-3 pr-3 font-black text-gray-700 whitespace-nowrap">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span>{q.label || q.id}</span>
+                                                            {mismatch && (
+                                                                <span className="text-[9px] font-bold text-red-600 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded" title={`${mismatch}の設問が混入している可能性があります`}>
+                                                                    ⚠️ {mismatch}混入?
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
                                                     <td className="py-3 pr-3 whitespace-nowrap">
                                                         <span className={`px-1.5 py-0.5 rounded text-[9px] font-black ${
                                                             q.type === 'selection' ? 'bg-blue-50 text-blue-500' :
@@ -278,6 +322,16 @@ export default function AnswerVerifyPage() {
                                                             />
                                                             <span className="text-[10px] text-gray-400 font-black">点</span>
                                                         </div>
+                                                    </td>
+                                                    <td className="py-3 pr-2 text-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => deleteQuestion(selectedSectionIdx, qIdx)}
+                                                            title="この設問を削除"
+                                                            className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-all text-xs"
+                                                        >
+                                                            🗑️
+                                                        </button>
                                                     </td>
                                                 </tr>
                                             );

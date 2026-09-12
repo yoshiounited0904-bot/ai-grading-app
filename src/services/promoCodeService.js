@@ -63,12 +63,27 @@ export const markUserPromoVerified = async (userId, promoCode) => {
     markLocalPromoVerified();
     if (!userId) return { error: null };
 
+    const normalized = normalizePromoCode(promoCode);
+
+    // 1. Try RPC function first (SECURITY DEFINER, executes reliably)
+    try {
+        const { error: rpcError } = await supabase.rpc('verify_user_promo_code', {
+            p_promo_code: normalized
+        });
+        if (!rpcError) {
+            return { error: null };
+        }
+    } catch {
+        // Fall back to direct update
+    }
+
+    // 2. Direct table update fallback
     const { error } = await supabase
         .from('profiles')
         .update({
             promo_code_verified: true,
             promo_code_verified_at: new Date().toISOString(),
-            promo_code_value: normalizePromoCode(promoCode)
+            promo_code_value: normalized
         })
         .eq('id', userId);
 

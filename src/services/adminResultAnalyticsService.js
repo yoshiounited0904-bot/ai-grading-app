@@ -58,7 +58,7 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
     let profilesResult = await runAdminAnalyticsQuery(
         () => supabase
             .from('profiles')
-            .select('id, username, first_choice_university, grade, role, plan, created_at')
+            .select('id, username, first_choice_university, grade, role, plan, created_at, promo_code_verified, promo_code_value, promo_code_verified_at')
             .limit(2000),
         'ユーザー一覧の取得'
     );
@@ -67,7 +67,7 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         profilesResult = await runAdminAnalyticsQuery(
             () => supabase
                 .from('profiles')
-                .select('id, username, first_choice_university, grade, role, created_at')
+                .select('id, username, first_choice_university, grade, role, created_at, promo_code_verified, promo_code_value, promo_code_verified_at')
                 .limit(2000),
             'ユーザー一覧の取得(フォールバック)'
         );

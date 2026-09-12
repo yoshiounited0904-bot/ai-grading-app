@@ -237,13 +237,17 @@ const getSectionFeedback = (section, feedback = []) => {
     const sectionId = String(section?.id || '');
     const questionIds = getSectionQuestionIds(section);
     return (feedback || []).filter(item => {
-        if (item?.sectionId) {
+        if (item?.sectionId !== undefined && item?.sectionId !== null && String(item.sectionId) !== '') {
             return String(item.sectionId) === sectionId;
         }
-        const itemId = String(item.id || '');
-        const matchesByList = questionIds.has(itemId);
-        const matchesByPrefix = questionIds.size === 0 && sectionId && itemId.startsWith(`${sectionId}-`);
-        return matchesByList || matchesByPrefix;
+        if (item?.questionKey) {
+            const prefix = String(item.questionKey).split('_')[0];
+            if (prefix) return prefix === sectionId;
+        }
+        const itemId = String(item?.id || '');
+        const matchesByPrefix = sectionId && itemId.startsWith(`${sectionId}-`);
+        if (matchesByPrefix) return true;
+        return questionIds.has(itemId);
     });
 };
 
@@ -1940,13 +1944,7 @@ const ResultPage = () => {
                         {currentStructure && currentStructure.length > 0 ? (
                     currentStructure.map((section) => {
                         const sectionId = section.id;
-                        const sectionQuestionIds = section.questions?.map(q => q.id) || [];
-                        const sectionFeedback = (resultData.questionFeedback || []).filter(item => {
-                            const itemId = String(item.id);
-                            const matchesByList = sectionQuestionIds.some(qId => String(qId) === itemId);
-                            const matchesByPrefix = (sectionQuestionIds.length === 0 && itemId.startsWith(String(sectionId) + '-'));
-                            return matchesByList || matchesByPrefix;
-                        });
+                        const sectionFeedback = getSectionFeedback(section, resultData.questionFeedback);
                         const sectionWrongItems = sectionFeedback.filter(item => !item.correct);
                         const sectionAccuracy = sectionFeedback.length > 0 ? (sectionFeedback.length - sectionWrongItems.length) / sectionFeedback.length : 1;
                         const shouldShowSectionConsultation = sectionFeedback.length > 0 && sectionAccuracy < 0.6;
@@ -1966,7 +1964,7 @@ const ResultPage = () => {
                                             {sectionFeedback.map((item) => {
                                                 const status = getFeedbackStatus(item);
                                                 return (
-                                                <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${status.border}`, background: status.background, borderRadius: '0 2px 2px 0' }}>
+                                                <div key={item.questionKey || item.aiId || `${sectionId}_${item.id}`} style={{ padding: '1rem', borderLeft: `3px solid ${status.border}`, background: status.background, borderRadius: '0 2px 2px 0' }}>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                                                         <span style={{ fontWeight: '600' }}>{item.id}</span>
                                                         <span style={{ color: status.color, background: status.badgeBackground, fontWeight: '600', padding: '0.15rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', border: `1px solid ${status.border}` }}>{status.label}</span>

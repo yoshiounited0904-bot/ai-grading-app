@@ -167,6 +167,7 @@ function AdminResultAnalytics() {
     const summary = useMemo(() => {
         const studentUsers = analytics.users.filter(u => u?.role !== 'admin');
         const activeUserIds = new Set(filteredResults.map(result => result.user_id).filter(Boolean));
+        const promoVerifiedUsers = analytics.users.filter(u => u?.promo_code_verified).length;
         const rates = filteredResults
             .map(result => result.scoreRate)
             .filter(rate => Number.isFinite(rate));
@@ -177,6 +178,7 @@ function AdminResultAnalytics() {
 
         return {
             registeredUsers: studentUsers.length || analytics.users.length,
+            promoVerifiedUsers,
             activeUsers: activeUserIds.size,
             resultCount: filteredResults.length,
             averageRate,
@@ -285,9 +287,10 @@ function AdminResultAnalytics() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
                     ['登録者数', `${summary.registeredUsers}人`],
+                    ['プロモ入力', `${summary.promoVerifiedUsers}人`],
                     ['採点利用者', `${summary.activeUsers}人`],
                     ['採点回数', `${summary.resultCount}回`],
                     ['平均得点率', summary.averageRate === null ? '-' : `${summary.averageRate}%`],

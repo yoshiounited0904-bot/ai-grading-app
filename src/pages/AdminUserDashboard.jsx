@@ -31,6 +31,7 @@ function AdminUserDashboard() {
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
+    const [promoFilter, setPromoFilter] = useState('all');
 
     useEffect(() => {
         fetchUsers();
@@ -92,11 +93,45 @@ function AdminUserDashboard() {
         return stats;
     }, [users]);
 
+    const promoStats = useMemo(() => {
+        let verifiedCount = 0;
+        let latestVerifiedAt = null;
+        const codeCounts = {};
+
+        users.forEach((u) => {
+            if (u.promo_code_verified) {
+                verifiedCount++;
+                const code = u.promo_code_value || 'SUMASAI2026';
+                codeCounts[code] = (codeCounts[code] || 0) + 1;
+                if (u.promo_code_verified_at) {
+                    if (!latestVerifiedAt || new Date(u.promo_code_verified_at) > new Date(latestVerifiedAt)) {
+                        latestVerifiedAt = u.promo_code_verified_at;
+                    }
+                }
+            }
+        });
+
+        const total = users.length;
+        const unverifiedCount = Math.max(0, total - verifiedCount);
+        const rate = total > 0 ? Math.round((verifiedCount / total) * 100) : 0;
+
+        return {
+            verifiedCount,
+            unverifiedCount,
+            total,
+            rate,
+            latestVerifiedAt,
+            codeCounts
+        };
+    }, [users]);
+
     const filteredUsers = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return users.filter((user) => {
             const status = getSubscriptionStatus(user);
             if (statusFilter !== 'all' && status !== statusFilter) return false;
+            if (promoFilter === 'verified' && !user.promo_code_verified) return false;
+            if (promoFilter === 'unverified' && user.promo_code_verified) return false;
             if (!query) return true;
 
             const searchableText = [
@@ -105,17 +140,22 @@ function AdminUserDashboard() {
                 user.role,
                 user.plan,
                 user.referral_source,
+                user.promo_code_value,
+                user.promo_code_verified ? 'プロモコード入力済' : 'プロモコード未入力',
                 status,
                 getSubscriptionStatusLabel(status),
                 user.first_choice_university,
                 user.grade,
                 user.stripe_customer_id,
-                user.premium_until ? new Date(user.premium_until).toLocaleDateString('ja-JP') : ''
-            ].join(' ').toLowerCase();
+                user.stripe_subscription_id
+            ]
+                .filter(Boolean)
+                .map(normalizeSearchText)
+                .join(' ');
 
             return searchableText.includes(query);
         });
-    }, [searchQuery, statusFilter, users]);
+    }, [promoFilter, searchQuery, statusFilter, users]);
 
     return (
         <div className="min-h-screen bg-indigo-50/30 py-12 px-4 sm:px-6 lg:px-8">
@@ -159,14 +199,55 @@ function AdminUserDashboard() {
                     </div>
                 </div>
 
+                {/* プロモコード入力集計 */}
+                <div className="bg-white rounded-md border-2 border-emerald-100 shadow-sm p-4 mb-5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div className="text-[10px] font-black text-emerald-900/60 uppercase tracking-[0.18em] flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                            公式LINE無料開放 プロモコード入力状況
+                        </div>
+                        {promoStats.latestVerifiedAt && (
+                            <span className="text-[11px] font-mono text-gray-400">
+                                最終入力: {new Date(promoStats.latestVerifiedAt).toLocaleString('ja-JP')}
+                            </span>
+                        )}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-emerald-50/80 border border-emerald-200/80 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-emerald-800">入力済み</div>
+                            <div className="text-2xl font-black text-emerald-900 mt-1">
+                                {promoStats.verifiedCount}<span className="text-sm font-bold text-emerald-700 ml-0.5">人</span>
+                            </div>
+                        </div>
+                        <div className="bg-gray-50 border border-gray-200 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-gray-600">未入力</div>
+                            <div className="text-2xl font-black text-gray-800 mt-1">
+                                {promoStats.unverifiedCount}<span className="text-sm font-bold text-gray-500 ml-0.5">人</span>
+                            </div>
+                        </div>
+                        <div className="bg-indigo-50/70 border border-indigo-200/70 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-indigo-800">入力率</div>
+                            <div className="text-2xl font-black text-navy-blue mt-1">
+                                {promoStats.rate}<span className="text-sm font-bold text-indigo-700 ml-0.5">%</span>
+                            </div>
+                        </div>
+                        <div className="bg-amber-50/70 border border-amber-200/70 rounded-md p-3 text-center">
+                            <div className="text-[11px] font-bold text-amber-800">登録総数</div>
+                            <div className="text-2xl font-black text-amber-900 mt-1">
+                                {promoStats.total}<span className="text-sm font-bold text-amber-700 ml-0.5">人</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4 mb-5">
-                    <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3 items-end">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_180px_auto] gap-3 items-end">
                         <label className="flex flex-col gap-1">
                             <span className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em]">検索</span>
                             <input
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                placeholder="名前・ユーザーID・大学・Stripe ID・ステータスで検索"
+                                placeholder="名前・ユーザーID・大学・Stripe ID・プロモコード等で検索"
                                 className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-navy-blue outline-none focus:border-navy-blue/40 focus:bg-white"
                             />
                         </label>
@@ -183,11 +264,24 @@ function AdminUserDashboard() {
                                 ))}
                             </select>
                         </label>
+                        <label className="flex flex-col gap-1">
+                            <span className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em]">プロモコード</span>
+                            <select
+                                value={promoFilter}
+                                onChange={(e) => setPromoFilter(e.target.value)}
+                                className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-navy-blue outline-none focus:border-navy-blue/40 focus:bg-white"
+                            >
+                                <option value="all">すべて</option>
+                                <option value="verified">入力済みのみ</option>
+                                <option value="unverified">未入力のみ</option>
+                            </select>
+                        </label>
                         <button
                             type="button"
                             onClick={() => {
                                 setSearchQuery('');
                                 setStatusFilter('all');
+                                setPromoFilter('all');
                             }}
                             className="rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-black text-navy-blue hover:bg-gray-50"
                         >
@@ -221,6 +315,7 @@ function AdminUserDashboard() {
                                         <th className="px-6 py-2 text-left">ユーザー情報</th>
                                         <th className="px-6 py-2 text-left">第一志望 / 学年</th>
                                         <th className="px-6 py-2 text-left">認知経路</th>
+                                        <th className="px-6 py-2 text-left">プロモコード</th>
                                         <th className="px-6 py-2 text-center">権限</th>
                                         <th className="px-6 py-2 text-center">プラン</th>
                                         <th className="px-6 py-2 text-left">Stripe</th>
@@ -252,6 +347,24 @@ function AdminUserDashboard() {
                                                 }`}>
                                                     {user.referral_source || '未回答'}
                                                 </span>
+                                            </td>
+                                            <td className="bg-white px-6 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                                {user.promo_code_verified ? (
+                                                    <div className="flex flex-col">
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 w-fit">
+                                                            <span>✓</span> {user.promo_code_value || '入力済'}
+                                                        </span>
+                                                        {user.promo_code_verified_at && (
+                                                            <span className="text-[10px] text-gray-400 font-mono mt-0.5">
+                                                                {new Date(user.promo_code_verified_at).toLocaleDateString('ja-JP')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-gray-50 text-gray-400 border border-gray-200">
+                                                        未入力
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className="bg-white px-6 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
                                                 <button
