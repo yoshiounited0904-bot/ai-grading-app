@@ -29,6 +29,7 @@ import ConsultationPage from './pages/ConsultationPage';
 import PremiumPage from './pages/PremiumPage';
 import { MARKETING_CONFIG } from './config/marketingConfig';
 import { onAuthStateChange } from './services/authService';
+import RealtimeGradingToast from './components/RealtimeGradingToast';
 
 function AuthRedirectHandler() {
   const navigate = useNavigate();
@@ -83,6 +84,7 @@ function App() {
   return (
     <Router>
       <AuthRedirectHandler />
+      <RealtimeGradingToast />
       <div className="min-h-screen flex flex-col">
         <Navbar />
         <>
