@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Home from './pages/Home';
 import ExamPage from './pages/ExamPage';
 import ResultPage from './pages/ResultPage';
@@ -28,6 +28,39 @@ import { useAuth } from './contexts/AuthContext';
 import ConsultationPage from './pages/ConsultationPage';
 import PremiumPage from './pages/PremiumPage';
 import { MARKETING_CONFIG } from './config/marketingConfig';
+import { onAuthStateChange } from './services/authService';
+
+function AuthRedirectHandler() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // 1. URL の search または hash に type=recovery が含まれているか判定
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const isRecovery = searchParams.get('type') === 'recovery' || hashParams.get('type') === 'recovery';
+
+    if (isRecovery && location.pathname !== '/reset-password') {
+      navigate('/reset-password' + window.location.search + window.location.hash, { replace: true });
+      return;
+    }
+
+    // 2. Supabase の PASSWORD_RECOVERY イベントを検知して自動遷移
+    const { data: { subscription } } = onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        if (location.pathname !== '/reset-password') {
+          navigate('/reset-password' + window.location.search + window.location.hash, { replace: true });
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [navigate, location]);
+
+  return null;
+}
 
 function App() {
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -49,6 +82,7 @@ function App() {
 
   return (
     <Router>
+      <AuthRedirectHandler />
       <div className="min-h-screen flex flex-col">
         <Navbar />
         <>

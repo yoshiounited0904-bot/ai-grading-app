@@ -156,6 +156,7 @@ serve(async (req) => {
     const allAiFeedback: Array<{
       id: string;
       score: number;
+      points?: number;
       correct: boolean;
       explanation: string;
       essayResult?: unknown;
@@ -284,7 +285,7 @@ ${userAnswer}
   "relevanceReason": "答案がこの設問に答えているかの判定理由を日本語で具体的に書く。",
   "offTopic": 設問と無関係ならtrue、それ以外はfalse,
   "score": 得点（数値）,
-  "correct": 合否（得点が配点の60%以上の場合はtrue、それ以外はfalse）,
+  "correct": 合否（得点が配点満点以上の場合だけtrue。0点および部分点はfalse）,
   "explanation": "採点理由を日本語で120〜240文字。設問条件に対して満たせている点、足りない点、減点理由を具体的に書く。",
   "grammarErrors": [
     { "error": "<エラー箇所>", "correction": "<修正案>" }
@@ -386,9 +387,8 @@ ${userAnswer}
             }
           }
           finalScore = clampScoreByRelevance(finalScore, outputResult, q.points);
-          const correct = typeof outputResult.correct === "boolean"
-            ? outputResult.correct && finalScore >= q.points * 0.6
-            : finalScore >= q.points * 0.6;
+          const questionPointLimit = Math.max(0, Number(q.points) || 0);
+          const correct = questionPointLimit > 0 && finalScore >= questionPointLimit;
           const explanation = buildFallbackEssayExplanation(
             outputResult,
             finalScore,
@@ -399,6 +399,7 @@ ${userAnswer}
           allAiFeedback.push({
             id: q.id,
             score: finalScore,
+            points: q.points,
             correct,
             explanation,
             essayResult: outputResult,
@@ -451,8 +452,9 @@ ${userAnswer}
 
         // 文法減点の計算
         const grammarErrors = result.grammarErrors || [];
-        let finalScore = forceZeroTriggered ? 0 : Math.floor(Math.max(0, Math.min(q.points, totalElementPoints - grammarErrors.length)));
-        let correct = finalScore >= q.points * 0.6;
+        const questionPointLimit = Math.max(0, Number(q.points) || 0);
+        let finalScore = forceZeroTriggered ? 0 : Math.floor(Math.max(0, Math.min(questionPointLimit, totalElementPoints - grammarErrors.length)));
+        let correct = questionPointLimit > 0 && finalScore >= questionPointLimit;
         let explanation = buildNewEssayExplanation(result, scoringElements, finalScore, q.points, forceZeroTriggered);
         let outputEssayResult = result;
         let outputScoringElements: unknown = scoringElements;
@@ -487,9 +489,7 @@ ${userAnswer}
 
             if (fallbackScore > finalScore || !hasUsableModelAnswer || !q.gradingInstruction) {
               finalScore = fallbackScore;
-              correct = typeof reviewedFallbackResult.correct === "boolean"
-                ? reviewedFallbackResult.correct && fallbackScore >= q.points * 0.6
-                : fallbackScore >= q.points * 0.6;
+              correct = questionPointLimit > 0 && fallbackScore >= questionPointLimit;
               explanation = buildFallbackEssayExplanation(
                 reviewedFallbackResult,
                 finalScore,
@@ -507,6 +507,7 @@ ${userAnswer}
         allAiFeedback.push({
           id: q.id,
           score: finalScore,
+          points: q.points,
           correct,
           explanation,
           essayResult: outputEssayResult,
@@ -520,7 +521,7 @@ ${userAnswer}
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        allAiFeedback.push({ id: q.id, score: 0, correct: false, explanation: `【採点エラー】${msg}` });
+        allAiFeedback.push({ id: q.id, score: 0, points: q.points, correct: false, explanation: `【採点エラー】${msg}` });
       }
     }
 
@@ -564,7 +565,7 @@ ${questions.map(q => `
     {
       "id": "設問ID",
       "score": 得点（数値）,
-      "correct": 合否（得点が配点の60%以上の場合はtrue、それ以外はfalse）,
+      "correct": 合否（得点が配点満点以上の場合だけtrue。0点および部分点はfalse）,
       "explanation": "採点結果の詳細と、なぜその得点になったかの理由（日本語で100〜200文字）"
     }
   ],
@@ -577,7 +578,25 @@ ${questions.map(q => `
         });
         const result = JSON.parse(sanitizeJson(text));
         if (result.aiFeedback) {
-          allAiFeedback.push(...result.aiFeedback);
+          const questionById = new Map(questions.map((q) => [String(q.id), q]));
+          const normalizedFeedback = (Array.isArray(result.aiFeedback) ? result.aiFeedback : []).map((feedback: {
+            id?: string;
+            score?: unknown;
+            explanation?: string;
+          }) => {
+            const question = questionById.get(String(feedback.id ?? ""));
+            const pointLimit = Math.max(0, Number(question?.points) || 0);
+            const score = Math.floor(Math.max(0, Math.min(pointLimit, Number(feedback.score) || 0)));
+            return {
+              ...feedback,
+              id: String(feedback.id ?? ""),
+              score,
+              points: pointLimit,
+              correct: pointLimit > 0 && score >= pointLimit,
+              explanation: feedback.explanation || "",
+            };
+          });
+          allAiFeedback.push(...normalizedFeedback);
         }
         if (result.sectionAdvice) {
           aggregatedWeakness += (aggregatedWeakness ? "\n" : "") + result.sectionAdvice;
@@ -585,7 +604,7 @@ ${questions.map(q => `
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         questions.forEach((q) => {
-          allAiFeedback.push({ id: q.id, score: 0, correct: false, explanation: `【採点エラー】${msg}` });
+          allAiFeedback.push({ id: q.id, score: 0, points: q.points, correct: false, explanation: `【採点エラー】${msg}` });
         });
       }
     }
@@ -603,7 +622,7 @@ ${questions.map(q => `
         correctAnswer: f.correctAnswer,
         points: Number(f.points) || 0,
       })),
-      ...(allAiFeedback as Array<{ id: string; score: number; correct: boolean; explanation?: string }>),
+      ...(allAiFeedback as Array<{ id: string; score: number; points?: number; correct: boolean; explanation?: string }>),
     ];
 
     let weaknessAnalysis = aggregatedWeakness || "全体のパフォーマンスに基づいたアドバイスがここに表示されます。";
@@ -654,7 +673,11 @@ ${String(examMeta?.detailedAnalysis || "").slice(0, 6000) || "詳細解説デー
 
     const flooredAiFeedback = allAiFeedback.map((item) => ({
       ...item,
-      score: Math.floor(Math.max(0, Number(item.score) || 0)),
+      score: Math.floor(Math.max(0, Math.min(Math.max(0, Number(item.points) || 0), Number(item.score) || 0))),
+      points: Math.max(0, Number(item.points) || 0),
+    })).map((item) => ({
+      ...item,
+      correct: item.points > 0 && item.score >= item.points,
     }));
 
     return new Response(JSON.stringify({ aiFeedback: flooredAiFeedback, weaknessAnalysis }), {

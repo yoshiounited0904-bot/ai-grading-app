@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { recoverPasswordSessionFromUrl, requestPasswordReset, updatePassword } from '../services/authService';
+import { recoverPasswordSessionFromUrl, requestPasswordReset, updatePassword, onAuthStateChange } from '../services/authService';
 
 const ResetPasswordPage = () => {
     const navigate = useNavigate();
@@ -27,13 +27,26 @@ const ResetPasswordPage = () => {
                 setError(recoverError.message || '再設定リンクの確認に失敗しました。メール内の最新リンクから開き直してください。');
             } else {
                 setSessionReady(true);
+                setError('');
             }
             setRecoveringSession(false);
         };
 
         recover();
+
+        // onAuthStateChange で PASSWORD_RECOVERY またはセッション復帰を検知した場合も即座に有効化
+        const { data: { subscription } } = onAuthStateChange((event, session) => {
+            if (cancelled) return;
+            if (event === 'PASSWORD_RECOVERY' || (session && event === 'SIGNED_IN')) {
+                setSessionReady(true);
+                setRecoveringSession(false);
+                setError('');
+            }
+        });
+
         return () => {
             cancelled = true;
+            subscription.unsubscribe();
         };
     }, []);
 

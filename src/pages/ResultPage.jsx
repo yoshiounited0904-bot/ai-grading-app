@@ -247,10 +247,70 @@ const getSectionFeedback = (section, feedback = []) => {
     });
 };
 
+const isEssayForceZeroTriggered = (essayResult, scoringElements) => {
+    const elementResults = Array.isArray(essayResult?.elementResults) ? essayResult.elementResults : [];
+    if (!Array.isArray(scoringElements) || elementResults.length === 0) return false;
+
+    return elementResults.some((res) => {
+        const el = scoringElements.find((item) => item.id === res.elementId);
+        if (!el) return false;
+        if (el.type === 'force_zero') return res.status === 'full';
+        if (el.type === 'character_count') {
+            return res.status === 'none' && el.forceZeroOnFail !== false;
+        }
+        return false;
+    });
+};
+
 const getFeedbackScore = (item) => {
+    if (isEssayForceZeroTriggered(item?.essayResult, item?.scoringElements)) return 0;
     const explicitScore = toFiniteNumber(item?.score);
     if (explicitScore !== null) return Math.floor(explicitScore);
     return item?.correct ? Math.floor(toFiniteNumber(item?.points) || 0) : 0;
+};
+
+const getFeedbackMaxPoints = (item) => {
+    const points = toFiniteNumber(item?.points);
+    if (points !== null && points > 0) return Math.floor(points);
+    const maxPoints = toFiniteNumber(item?.maxPoints);
+    return maxPoints !== null && maxPoints > 0 ? Math.floor(maxPoints) : null;
+};
+
+const FEEDBACK_STATUS = {
+    correct: {
+        label: '正解',
+        color: '#10b981',
+        background: 'rgba(16,185,129,0.03)',
+        badgeBackground: '#ecfdf5',
+        border: '#10b981'
+    },
+    partial: {
+        label: '部分点',
+        color: '#d97706',
+        background: 'rgba(245,158,11,0.06)',
+        badgeBackground: '#fffbeb',
+        border: '#f59e0b'
+    },
+    wrong: {
+        label: '不正解',
+        color: '#ef4444',
+        background: 'rgba(239,68,68,0.03)',
+        badgeBackground: '#fef2f2',
+        border: '#ef4444'
+    }
+};
+
+const getFeedbackStatus = (item) => {
+    const score = getFeedbackScore(item);
+    const maxPoints = getFeedbackMaxPoints(item);
+    if (maxPoints !== null) {
+        if (score >= maxPoints) return { key: 'correct', ...FEEDBACK_STATUS.correct };
+        if (score <= 0) return { key: 'wrong', ...FEEDBACK_STATUS.wrong };
+        return { key: 'partial', ...FEEDBACK_STATUS.partial };
+    }
+    if (item?.correct) return { key: 'correct', ...FEEDBACK_STATUS.correct };
+    if (score > 0) return { key: 'partial', ...FEEDBACK_STATUS.partial };
+    return { key: 'wrong', ...FEEDBACK_STATUS.wrong };
 };
 
 const buildAdmissionThresholds = (resultData, currentStructure = []) => {
@@ -314,9 +374,10 @@ const buildPremiumAdmissionAnalysis = (resultData, currentStructure = []) => {
         const maxScore = toFiniteNumber(section.totalPoints || section.allocatedPoints)
             || (section.questions || []).reduce((sum, q) => sum + (toFiniteNumber(q.points) || 0), 0)
             || sectionFeedback.reduce((sum, item) => sum + (toFiniteNumber(item.points) || 0), 0);
-        const score = sectionFeedback.reduce((sum, item) => sum + getFeedbackScore(item), 0);
+        const rawSectionScore = sectionFeedback.reduce((sum, item) => sum + getFeedbackScore(item), 0);
+        const score = maxScore > 0 ? Math.min(rawSectionScore, maxScore) : rawSectionScore;
         const lostPoints = Math.max(0, maxScore - score);
-        const scoreRate = maxScore > 0 ? Math.round((score / maxScore) * 100) : null;
+        const scoreRate = maxScore > 0 ? Math.min(100, Math.round((score / maxScore) * 100)) : null;
         return {
             sectionId: section.id,
             label: section.label || section.title || `第${index + 1}問`,
@@ -496,17 +557,23 @@ const EssayGradingDetail = ({ item }) => {
     const grammarErrors = essayResult.grammarErrors || [];
     const overallComment = essayResult.overallComment || "";
     const hasElementRubric = Array.isArray(scoringElements) && scoringElements.length > 0 && elementResults.length > 0;
+    const finalPoints = getFeedbackMaxPoints(item);
+    const forceZeroTriggered = isEssayForceZeroTriggered(essayResult, scoringElements);
+    const rawFinalScore = forceZeroTriggered ? 0 : floorDisplayScore(item.score ?? essayResult.score, 0);
+    const finalScore = forceZeroTriggered ? 0 : (finalPoints ? Math.min(rawFinalScore, finalPoints) : rawFinalScore);
+    const finalStatus = getFeedbackStatus({ ...item, score: finalScore, points: finalPoints ?? item.points });
 
     if (!hasElementRubric) {
-        const score = floorDisplayScore(item.score ?? essayResult.score, 0);
-        const points = Number.isFinite(Number(item.points)) ? Number(item.points) : null;
         return (
             <div className="essay-grading-detail" style={{ marginTop: '1rem', background: '#fff', borderRadius: '2px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                 <div style={{ padding: '1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b' }}>自由記述 採点結果</span>
-                    <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', fontWeight: '800' }}>
-                        {points ? `${score} / ${points}点` : `${score}点`}
-                    </span>
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <span style={{ background: finalStatus.badgeBackground, color: finalStatus.color, border: `1px solid ${finalStatus.border}`, padding: '0.2rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', fontWeight: '800' }}>{finalStatus.label}</span>
+                        <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', fontWeight: '800' }}>
+                            {finalPoints ? `${finalScore} / ${finalPoints}点` : `${finalScore}点`}
+                        </span>
+                    </div>
                 </div>
                 {essayResult.explanation && (
                     <div style={{ padding: '0.75rem', fontSize: '0.75rem', color: '#334155', lineHeight: '1.6' }}>
@@ -561,6 +628,10 @@ const EssayGradingDetail = ({ item }) => {
             <div style={{ padding: '1rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <span style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b' }}>英作文 採点内訳</span>
                 <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', fontWeight: '700', flexWrap: 'wrap' }}>
+                    <span style={{ background: finalStatus.badgeBackground, color: finalStatus.color, border: `1px solid ${finalStatus.border}`, padding: '0.2rem 0.5rem', borderRadius: '2px', fontWeight: '800' }}>{finalStatus.label}</span>
+                    <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '2px', fontWeight: '800' }}>
+                        最終: {finalPoints ? `${finalScore}/${finalPoints}点` : `${finalScore}点`}
+                    </span>
                     <span style={{ background: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '2px' }}>内容: {Math.floor(contentSum)}点</span>
                     <span style={{ background: '#f3e8ff', color: '#6b21a8', padding: '0.2rem 0.5rem', borderRadius: '2px' }}>論理: {Math.floor(logicSum)}点</span>
                     {characterSum > 0 && (
@@ -575,6 +646,18 @@ const EssayGradingDetail = ({ item }) => {
                 </div>
             </div>
 
+            {forceZeroTriggered && (
+                <div style={{ padding: '0.65rem 0.75rem', background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#b91c1c', fontSize: '0.75rem', fontWeight: '800', lineHeight: 1.6 }}>
+                    強制0点条件に該当したため、最終得点は0点です。
+                </div>
+            )}
+
+            {finalPoints && !forceZeroTriggered && rawFinalScore > finalPoints && (
+                <div style={{ padding: '0.65rem 0.75rem', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '0.75rem', lineHeight: 1.6 }}>
+                    採点基準の合計は配点を超える設定です。最終得点は配点上限の {finalPoints} 点に丸めています。
+                </div>
+            )}
+
             <div style={{ padding: '0.75rem' }}>
                 <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '0.5rem', paddingLeft: '0.25rem' }}>採点基準ごとの結果</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -586,7 +669,19 @@ const EssayGradingDetail = ({ item }) => {
                         let statusColor = '#ef4444';
                         let bgStatus = '#fef2f2';
                         let scoreText = '0点';
-                        if (res.status === 'full') {
+                        if (el.type === 'force_zero') {
+                            if (res.status === 'full') {
+                                mark = '✕';
+                                statusColor = '#ef4444';
+                                bgStatus = '#fef2f2';
+                                scoreText = '強制0点';
+                            } else {
+                                mark = '◯';
+                                statusColor = '#10b981';
+                                bgStatus = '#ecfdf5';
+                                scoreText = '発動なし';
+                            }
+                        } else if (res.status === 'full') {
                             mark = '◯';
                             statusColor = '#10b981';
                             bgStatus = '#ecfdf5';
@@ -1857,7 +1952,8 @@ const ResultPage = () => {
                         const shouldShowSectionConsultation = sectionFeedback.length > 0 && sectionAccuracy < 0.6;
                         const sectionLabel = section.label || section.title || `大問 ${sectionId}`;
                         const sectionTotalPoints = section.totalPoints || section.allocatedPoints || section.questions?.reduce((sum, q) => sum + (q.points || 0), 0) || null;
-                        const sectionScore = sectionFeedback.reduce((sum, item) => sum + (item.correct ? (Number(item.points) || 0) : 0), 0);
+                        const sectionRawScore = sectionFeedback.reduce((sum, item) => sum + getFeedbackScore(item), 0);
+                        const sectionScore = sectionTotalPoints ? Math.min(sectionRawScore, Number(sectionTotalPoints)) : sectionRawScore;
                         return (
                             <div key={sectionId} className="glass-panel result-section-card" style={{ padding: '1.5rem' }}>
                                 <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '1.25rem', color: 'var(--color-text-primary)', borderBottom: '2px solid var(--color-accent-primary)', paddingBottom: '0.5rem' }}>
@@ -1867,11 +1963,13 @@ const ResultPage = () => {
                                 <div className="result-feedback-row" style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
                                     <div style={{ flex: '1 1 500px', minWidth: 0 }}>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                            {sectionFeedback.map((item) => (
-                                                <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${item.correct ? '#10b981' : '#ef4444'}`, background: item.correct ? 'rgba(16,185,129,0.03)' : 'rgba(239,68,68,0.03)', borderRadius: '0 2px 2px 0' }}>
+                                            {sectionFeedback.map((item) => {
+                                                const status = getFeedbackStatus(item);
+                                                return (
+                                                <div key={item.id} style={{ padding: '1rem', borderLeft: `3px solid ${status.border}`, background: status.background, borderRadius: '0 2px 2px 0' }}>
                                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                                                         <span style={{ fontWeight: '600' }}>{item.id}</span>
-                                                        <span style={{ color: item.correct ? '#10b981' : '#ef4444', fontWeight: '600', padding: '0.15rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', border: `1px solid ${item.correct ? '#10b981' : '#ef4444'}` }}>{item.correct ? '正解' : '不正解'}</span>
+                                                        <span style={{ color: status.color, background: status.badgeBackground, fontWeight: '600', padding: '0.15rem 0.5rem', borderRadius: '2px', fontSize: '0.75rem', border: `1px solid ${status.border}` }}>{status.label}</span>
                                                     </div>
                                                     <div style={{ fontSize: '0.85rem' }}>
                                                         <span style={{ fontWeight: '600' }}>解答:</span> {item.userAnswer || '(無回答)'} <span style={{ color: '#cbd5e1' }}>→</span> <span style={{ fontWeight: '600' }}>正解:</span> {item.correctAnswer}
@@ -1889,7 +1987,8 @@ const ResultPage = () => {
                                                          setReportingItem(item);
                                                      }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline' }}>採点ミスを報告</button></div>
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                     {window.innerWidth > 768 ? (

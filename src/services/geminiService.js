@@ -84,6 +84,21 @@ const floorScore = (value, fallback = 0) => {
     return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
 };
 
+const hasEssayForceZeroTriggered = (essayResult, scoringElements) => {
+    const elementResults = Array.isArray(essayResult?.elementResults) ? essayResult.elementResults : [];
+    if (!Array.isArray(scoringElements) || elementResults.length === 0) return false;
+
+    return elementResults.some((res) => {
+        const el = scoringElements.find((item) => item.id === res.elementId);
+        if (!el) return false;
+        if (el.type === "force_zero") return res.status === "full";
+        if (el.type === "character_count") {
+            return res.status === "none" && el.forceZeroOnFail !== false;
+        }
+        return false;
+    });
+};
+
 const calculateAllocatedMaxScore = (examData) => {
     const sections = Array.isArray(examData?.structure) ? examData.structure : [];
     return sections.reduce((sectionSum, section) => {
@@ -230,12 +245,15 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
                 const aiLookupId = f.aiId || f.questionKey || f.id;
                 const ai = aiFeedback.find((a) => a.id === aiLookupId);
                 if (ai) {
-                    const aiScore = floorScore(ai.score, 0);
-                    const aiCorrect = aiScore >= (Number(f.points) || 0) * 0.6;
+                    const pointLimit = Math.max(0, Number(f.points) || Number(ai.points) || 0);
+                    const forceZeroTriggered = hasEssayForceZeroTriggered(ai.essayResult, ai.scoringElements);
+                    const aiScore = forceZeroTriggered ? 0 : Math.min(pointLimit, floorScore(ai.score, 0));
+                    const aiCorrect = pointLimit > 0 && aiScore >= pointLimit;
                     totalScore += aiScore;
                     return { 
                         ...f, 
                         score: aiScore, 
+                        points: pointLimit || f.points,
                         correct: aiCorrect, 
                         explanation: ai.explanation ? ai.explanation.replace(/\*/g, "") : "",
                         essayResult: ai.essayResult,
