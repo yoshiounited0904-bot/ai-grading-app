@@ -71,13 +71,16 @@ export const signIn = async (email, password) => {
 
 // パスワード再設定メール送信
 export const requestPasswordReset = async (email) => {
-    const redirectTo = `${window.location.origin}/reset-password`
+    // スマホ等の他端末でメールリンクを開いた際に「localhostに接続できない」エラーを防ぐため、本番ドメインを優先
+    const isLocalhost = typeof window !== 'undefined' && /localhost|127\.0\.0\.1/i.test(window.location.hostname);
+    const origin = isLocalhost ? 'https://smart-saiten.com' : window.location.origin;
+    const redirectTo = `${origin}/reset-password`;
     const { data, error } = await withAuthTimeout(
         supabase.auth.resetPasswordForEmail(email, { redirectTo }),
         'パスワード再設定メール送信'
-    )
-    return { data, error }
-}
+    );
+    return { data, error };
+};
 
 // パスワード再設定リンクから戻った時の一時セッション復元
 export const recoverPasswordSessionFromUrl = async () => {
