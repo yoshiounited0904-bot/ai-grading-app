@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { signUp, signIn } from '../services/authService'
+import { signUp, signIn, requestPasswordReset } from '../services/authService'
 
 const AuthModal = ({ isOpen, onClose }) => {
     const [isSignUp, setIsSignUp] = useState(false)
+    const [isPasswordReset, setIsPasswordReset] = useState(false)
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [username, setUsername] = useState('')
@@ -32,6 +33,22 @@ const AuthModal = ({ isOpen, onClose }) => {
         setError('')
         setMessage('')
         setLoading(true)
+
+        if (isPasswordReset) {
+            try {
+                const { error: resetError } = await requestPasswordReset(email)
+                if (resetError) {
+                    setError(resetError.message)
+                } else {
+                    setMessage('パスワード再設定用のメールを送信しました。メール内のリンクから新しいパスワードを設定してください。')
+                }
+            } catch (err) {
+                setError('予期せぬエラーが発生しました。')
+            } finally {
+                setLoading(false)
+            }
+            return
+        }
 
         if (isSignUp && (!checkedTerms || !checkedAI)) {
             setError('利用規約と自動採点へのデータ送信同意が必要です')
@@ -78,7 +95,7 @@ const AuthModal = ({ isOpen, onClose }) => {
             <div className="modal-content glass-panel" onClick={e => e.stopPropagation()} style={{ maxWidth: '450px', width: '90%', borderRadius: '2px' }}>
                 <button className="modal-close" onClick={onClose}>&times;</button>
                 <h2 style={{ marginBottom: '1.5rem', textAlign: 'center', color: 'var(--color-accent-primary)' }}>
-                    {isSignUp ? '新規登録' : 'ログイン'}
+                    {isPasswordReset ? 'パスワード再設定' : (isSignUp ? '新規登録' : 'ログイン')}
                 </h2>
 
                 {error && <div style={{ color: '#ef4444', marginBottom: '1rem', textAlign: 'center', fontSize: '0.9rem' }}>{error}</div>}
@@ -110,18 +127,20 @@ const AuthModal = ({ isOpen, onClose }) => {
                             required
                         />
                     </div>
-                    <div className="form-group">
-                        <label>パスワード</label>
-                        <input
-                            type="password"
-                            className="form-control"
-                            value={password}
-                            onChange={e => setPassword(e.target.value)}
-                            required
-                        />
-                    </div>
+                    {!isPasswordReset && (
+                        <div className="form-group">
+                            <label>パスワード</label>
+                            <input
+                                type="password"
+                                className="form-control"
+                                value={password}
+                                onChange={e => setPassword(e.target.value)}
+                                required
+                            />
+                        </div>
+                    )}
 
-                    {isSignUp && (
+                    {isSignUp && !isPasswordReset && (
                         <>
                              <div className="form-group">
                                  <label>ユーザー名 <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: '#64748b' }}>(最大15文字)</span></label>
@@ -172,15 +191,20 @@ const AuthModal = ({ isOpen, onClose }) => {
                         style={{ width: '100%', marginTop: '1rem', padding: '0.8rem' }}
                         disabled={loading}
                     >
-                        {loading ? '処理中...' : (isSignUp ? '登録する' : 'ログインする')}
+                        {loading ? '処理中...' : (isPasswordReset ? '再設定メールを送る' : (isSignUp ? '登録する' : 'ログインする'))}
                     </button>
                 </form>
 
                 <div style={{ marginTop: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
-                    {isSignUp ? (
-                        <p>すでにアカウントをお持ちですか？ <span onClick={() => setIsSignUp(false)} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
+                    {isPasswordReset ? (
+                        <p>ログイン画面に戻る <span onClick={() => { setIsPasswordReset(false); setMessage(''); setError(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
+                    ) : isSignUp ? (
+                        <p>すでにアカウントをお持ちですか？ <span onClick={() => { setIsSignUp(false); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>ログイン</span></p>
                     ) : (
-                        <p>アカウントをお持ちでないですか？ <span onClick={() => setIsSignUp(true)} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>新規登録</span></p>
+                        <>
+                            <p style={{ marginBottom: '0.5rem' }}>パスワードを忘れた方は <span onClick={() => { setIsPasswordReset(true); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>再設定</span></p>
+                            <p>アカウントをお持ちでないですか？ <span onClick={() => { setIsSignUp(true); setError(''); setMessage(''); }} style={{ color: 'var(--color-accent-primary)', cursor: 'pointer', fontWeight: '600' }}>新規登録</span></p>
+                        </>
                     )}
                 </div>
             </div>

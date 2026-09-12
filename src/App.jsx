@@ -19,6 +19,7 @@ import AdminUserDashboard from './pages/AdminUserDashboard';
 import AnswerVerifyPage from './pages/AnswerVerifyPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import Footer from './components/Footer';
 import { useAuth } from './contexts/AuthContext';
 import { isAdminEmail } from './config/adminConfig';
@@ -53,6 +54,7 @@ function App() {
             <Routes>
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="*" element={<PendingApprovalPage />} />
             </Routes>
           </div>
@@ -64,6 +66,7 @@ function App() {
                 <Route path="/pending" element={<PendingApprovalPage />} />
                 <Route path="/terms" element={<TermsPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/university/:universityId" element={<UniversityPage />} />
                 <Route path="/university/:universityId/faculty/:facultyId" element={<FacultyPage />} />
                 <Route path="/exam/:id" element={<ExamPage />} />
