@@ -1554,6 +1554,29 @@ const ResultPage = () => {
 
     return (
         <div className="container result-page" style={{ maxWidth: '1400px', paddingBottom: '4rem' }}>
+            {location.state?.fromAdmin && (
+                <div style={{ marginBottom: '1.25rem' }}>
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => navigate('/admin')}
+                        style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            padding: '0.5rem 1rem',
+                            fontSize: '0.85rem',
+                            fontWeight: 800,
+                            borderRadius: '6px',
+                            background: '#ffffff',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.08)'
+                        }}
+                    >
+                        <span>←</span>
+                        <span>成績ログ一覧に戻る</span>
+                    </button>
+                </div>
+            )}
             <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
                 <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>採点結果</h1>
                 <p style={{ color: 'var(--color-text-secondary)' }}>{resultMetaParts.join(' - ')}</p>
@@ -2284,7 +2307,12 @@ const ResultPage = () => {
                 </div>
             )}
 
-            <div style={{ marginTop: '3rem', textAlign: 'center' }}>
+            <div style={{ marginTop: '3rem', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                {location.state?.fromAdmin && (
+                    <button className="btn btn-primary" onClick={() => navigate('/admin')}>
+                        ← 成績ログ一覧に戻る
+                    </button>
+                )}
                 <button className="btn btn-secondary" onClick={() => navigate('/')}>トップに戻る</button>
             </div>
 

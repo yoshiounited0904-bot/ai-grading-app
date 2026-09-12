@@ -76,6 +76,9 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
                     pass_probability,
                     section_scores,
                     question_feedback,
+                    weakness_analysis,
+                    answers,
+                    pdf_path,
                     created_at
                 `),
             days

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getAdminResultAnalytics } from '../services/adminResultAnalyticsService';
 
 const formatDateTime = (value) => {
@@ -65,12 +66,45 @@ const summarizeSectionScores = (sectionScores) => {
 };
 
 function AdminResultAnalytics() {
+    const navigate = useNavigate();
     const [days, setDays] = useState('30');
     const [searchQuery, setSearchQuery] = useState('');
     const [userFilter, setUserFilter] = useState('all');
     const [universityFilter, setUniversityFilter] = useState('all');
     const [analytics, setAnalytics] = useState({ users: [], results: [] });
     const [loading, setLoading] = useState(true);
+
+    const handleOpenResult = (result) => {
+        navigate('/result', {
+            state: {
+                result: {
+                    id: result.id,
+                    score: result.score,
+                    maxScore: result.max_score,
+                    passProbability: result.pass_probability,
+                    weaknessAnalysis: result.weakness_analysis,
+                    weakness_analysis: result.weakness_analysis,
+                    questionFeedback: result.question_feedback,
+                    question_feedback: result.question_feedback,
+                    section_scores: result.section_scores,
+                    rawScore: result.answers?.rawScore,
+                    rawMaxScore: result.answers?.rawMaxScore,
+                    compressedScore: result.answers?.compressedScore,
+                    compressedMaxScore: result.answers?.compressedMaxScore,
+                    scoreCompression: result.answers?.scoreCompression || null,
+                    scoreCap: result.answers?.scoreCap || null
+                },
+                universityName: result.university_name,
+                facultyName: result.faculty_name,
+                examSubject: result.exam_subject,
+                examYear: result.exam_year,
+                answers: result.answers,
+                pdfPath: result.pdf_path || result.answers?.pdfPath || null,
+                isNewResult: false,
+                fromAdmin: true
+            }
+        });
+    };
 
     const fetchAnalytics = async () => {
         setLoading(true);
@@ -234,6 +268,12 @@ function AdminResultAnalytics() {
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
+                        <div className="flex items-center justify-between text-xs font-bold text-navy-blue/60 mb-2 px-1">
+                            <span className="flex items-center gap-1.5">
+                                <span className="text-sm">👆</span>
+                                各成績行をタップすると、そのユーザーが受け取った採点結果・各問フィードバック画面を確認できます
+                            </span>
+                        </div>
                         <table className="min-w-full border-separate border-spacing-y-3">
                             <thead>
                                 <tr className="text-navy-blue/40 font-black text-[10px] uppercase tracking-[0.2em]">
@@ -243,17 +283,23 @@ function AdminResultAnalytics() {
                                     <th className="px-4 py-2 text-center">得点</th>
                                     <th className="px-4 py-2 text-center">判定</th>
                                     <th className="px-4 py-2 text-left">大問別</th>
+                                    <th className="px-4 py-2 text-center">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredResults.map((result) => (
-                                    <tr key={result.id} className="group transition-all duration-300">
-                                        <td className="bg-white px-4 py-4 rounded-l-xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm whitespace-nowrap">
+                                    <tr
+                                        key={result.id}
+                                        onClick={() => handleOpenResult(result)}
+                                        className="group transition-all duration-200 cursor-pointer hover:scale-[1.002]"
+                                        title="クリックしてこのユーザーの採点フィードバック詳細を表示"
+                                    >
+                                        <td className="bg-white px-4 py-4 rounded-l-xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm whitespace-nowrap">
                                             <span className="text-xs font-mono text-gray-500">{formatDateTime(result.created_at)}</span>
                                         </td>
-                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[180px]">
+                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm min-w-[180px]">
                                             <div className="flex flex-col">
-                                                <span className="font-black text-navy-blue">{result.userName}</span>
+                                                <span className="font-black text-navy-blue group-hover:text-indigo-600 transition-colors">{result.userName}</span>
                                                 <span className="text-[10px] text-gray-400 font-mono">{String(result.user_id || '').slice(0, 8)}...</span>
                                                 {(result.userGrade || result.userFirstChoice) && (
                                                     <span className="text-[10px] text-gray-400 font-bold mt-1">
@@ -262,27 +308,41 @@ function AdminResultAnalytics() {
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[340px]">
+                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm min-w-[320px]">
                                             <div className="flex flex-col">
-                                                <span className="text-sm font-black text-navy-blue leading-snug">{getExamTitle(result)}</span>
+                                                <span className="text-sm font-black text-navy-blue leading-snug group-hover:text-indigo-600 transition-colors">{getExamTitle(result)}</span>
                                                 <span className="text-[10px] text-gray-300 font-mono mt-1"># {result.id}</span>
                                             </div>
                                         </td>
-                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center whitespace-nowrap">
-                                            <div className="inline-flex flex-col items-center justify-center rounded-lg bg-red-50 px-3 py-1 border border-red-100">
+                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm text-center whitespace-nowrap">
+                                            <div className="inline-flex flex-col items-center justify-center rounded-lg bg-red-50 px-3 py-1 border border-red-100 group-hover:bg-red-100/70 transition-colors">
                                                 <span className="text-sm font-black text-red-700">{formatScore(result)}</span>
                                                 <span className="text-[10px] font-bold text-red-400">{result.scoreRate === null ? '-' : `${result.scoreRate}%`}</span>
                                             </div>
                                         </td>
-                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm text-center">
                                             <span className="inline-flex min-w-10 items-center justify-center rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-black text-indigo-600">
                                                 {result.pass_probability || '-'}
                                             </span>
                                         </td>
-                                        <td className="bg-white px-4 py-4 rounded-r-xl border-y-2 border-r-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[260px]">
+                                        <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm min-w-[240px]">
                                             <span className="text-xs font-bold text-gray-500">
                                                 {summarizeSectionScores(result.section_scores) || '大問別データなし'}
                                             </span>
+                                        </td>
+                                        <td className="bg-white px-4 py-4 rounded-r-xl border-y-2 border-r-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm text-center whitespace-nowrap">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleOpenResult(result);
+                                                }}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-navy-blue text-white text-xs font-bold shadow-sm hover:bg-navy-blue/80 hover:shadow transition-all"
+                                                title="採点フィードバック画面を開く"
+                                            >
+                                                <span>詳細</span>
+                                                <span>→</span>
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
