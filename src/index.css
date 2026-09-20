@@ -1,5 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
 
 :root {
   /* Educational Publisher Theme */
@@ -18,7 +18,7 @@
   --color-silver: #a0a0a0;
   --color-silver-light: #e0ddd8;
 
-  --font-primary: 'Noto Sans JP', system-ui, -apple-system, sans-serif;
+  --font-primary: 'BIZ UDPGothic', system-ui, -apple-system, sans-serif;
   --font-heading: 'Noto Serif JP', serif;
 
   --shadow-glass: 0 2px 8px 0 rgba(0, 0, 0, 0.06);
