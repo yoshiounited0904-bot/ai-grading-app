@@ -29,7 +29,6 @@ const isUuid = (value: unknown) =>
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -67,6 +66,31 @@ serve(async (req) => {
   if (!actorIsAdmin) {
     return json({ error: "管理者権限が必要です" }, 403);
   }
+
+  // GET: return user email mapping
+  if (req.method === "GET") {
+    const emailMap: Record<string, string> = {};
+    let page = 1;
+    const perPage = 1000;
+    while (true) {
+      const { data: listData, error: listError } = await adminClient.auth.admin.listUsers({
+        page,
+        perPage,
+      });
+      if (listError) {
+        console.error("admin listUsers error:", listError);
+        return json({ error: "ユーザー一覧の取得に失敗しました" }, 500);
+      }
+      for (const u of listData.users) {
+        if (u.id && u.email) emailMap[u.id] = u.email;
+      }
+      if (listData.users.length < perPage) break;
+      page++;
+    }
+    return json({ emailMap });
+  }
+
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   let body: Record<string, unknown>;
   try {

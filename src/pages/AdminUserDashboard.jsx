@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getAdminProfiles, updateUserRole, updateUserPlan } from '../services/adminUserService';
+import { getAdminProfiles, updateUserRole, updateUserPlan, getAdminUserEmails } from '../services/adminUserService';
 
 const normalizeSearchText = (value) => String(value || '').toLowerCase().trim();
 
@@ -157,7 +157,10 @@ function AdminUserDashboard() {
         });
     }, [promoFilter, searchQuery, statusFilter, users]);
 
-    const exportToExcel = () => {
+    const [exporting, setExporting] = useState(false);
+
+    const exportToExcel = async () => {
+        setExporting(true);
         const escapeCSV = (val) => {
             const s = String(val ?? '');
             if (s.includes(',') || s.includes('"') || s.includes('\n')) {
@@ -166,8 +169,17 @@ function AdminUserDashboard() {
             return s;
         };
 
+        // メアド取得
+        let emailMap = {};
+        try {
+            const result = await getAdminUserEmails();
+            emailMap = result?.emailMap || {};
+        } catch (err) {
+            console.error('Email fetch failed, exporting without emails:', err);
+        }
+
         const headers = [
-            'ユーザー名', 'ユーザーID', '第一志望大学', '学年',
+            'ユーザー名', 'メールアドレス', 'ユーザーID', '第一志望大学', '学年',
             '認知経路', 'プロモコード', 'プロモコード入力日',
             '権限', 'プラン', 'サブスク状態', 'プレミアム期限',
             'Stripe顧客ID', 'Stripeサブスク ID', '登録日'
@@ -175,6 +187,7 @@ function AdminUserDashboard() {
 
         const rows = filteredUsers.map(u => [
             u.username || '',
+            emailMap[u.id] || '',
             u.id || '',
             u.first_choice_university || '',
             u.grade || '',
@@ -198,6 +211,7 @@ function AdminUserDashboard() {
         a.download = `スマサイ_ユーザーデータ_${new Date().toISOString().slice(0, 10)}.csv`;
         a.click();
         URL.revokeObjectURL(url);
+        setExporting(false);
     };
 
     return (
@@ -333,9 +347,10 @@ function AdminUserDashboard() {
                         <button
                             type="button"
                             onClick={exportToExcel}
-                            className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 flex items-center gap-1.5"
+                            disabled={exporting}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 flex items-center gap-1.5 disabled:opacity-50"
                         >
-                            📥 Excelエクスポート
+                            {exporting ? '⏳ エクスポート中...' : '📥 Excelエクスポート'}
                         </button>
                     </div>
                     <div className="mt-3 text-xs font-bold text-gray-400">

@@ -30,3 +30,18 @@ export const updateUserPlan = async (userId, plan) => {
     });
     return { data, error };
 };
+
+/**
+ * auth.usersからメールアドレスのマッピングを取得する（管理者専用）
+ * @returns {{ emailMap: Record<string, string> } | null}
+ */
+export const getAdminUserEmails = async () => {
+    const { data, error } = await supabase.functions.invoke('admin-update-profile', {
+        method: 'GET',
+    });
+    if (error) {
+        console.error('Failed to fetch user emails:', error);
+        return null;
+    }
+    return data;
+};
