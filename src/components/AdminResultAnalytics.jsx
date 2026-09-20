@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAdminResultAnalytics } from '../services/adminResultAnalyticsService';
+import { supabase } from '../services/supabaseClient';
 
 const formatDateTime = (value) => {
     if (!value) return '-';
@@ -75,37 +76,56 @@ function AdminResultAnalytics() {
     const [analytics, setAnalytics] = useState({ users: [], results: [] });
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(null);
+    const [openingResultId, setOpeningResultId] = useState(null);
 
-    const handleOpenResult = (result) => {
-        navigate('/result', {
-            state: {
-                result: {
-                    id: result.id,
-                    score: result.score,
-                    maxScore: result.max_score,
-                    passProbability: result.pass_probability,
-                    weaknessAnalysis: result.weakness_analysis,
-                    weakness_analysis: result.weakness_analysis,
-                    questionFeedback: result.question_feedback,
-                    question_feedback: result.question_feedback,
-                    section_scores: result.section_scores,
-                    rawScore: result.answers?.rawScore,
-                    rawMaxScore: result.answers?.rawMaxScore,
-                    compressedScore: result.answers?.compressedScore,
-                    compressedMaxScore: result.answers?.compressedMaxScore,
-                    scoreCompression: result.answers?.scoreCompression || null,
-                    scoreCap: result.answers?.scoreCap || null
-                },
-                universityName: result.university_name,
-                facultyName: result.faculty_name,
-                examSubject: result.exam_subject,
-                examYear: result.exam_year,
-                answers: result.answers,
-                pdfPath: result.pdf_path || result.answers?.pdfPath || null,
-                isNewResult: false,
-                fromAdmin: true
-            }
-        });
+    const handleOpenResult = async (result) => {
+        if (openingResultId) return; // Prevent double-clicks
+        setOpeningResultId(result.id);
+        try {
+            // Fetch the heavy payload (answers, weakness_analysis, etc.) here instead of pulling 32MB up front
+            const { data: detailedResult, error } = await supabase
+                .from('exam_results')
+                .select('answers, weakness_analysis, question_feedback, pdf_path')
+                .eq('id', result.id)
+                .single();
+
+            if (error) throw error;
+
+            navigate('/result', {
+                state: {
+                    result: {
+                        id: result.id,
+                        score: result.score,
+                        maxScore: result.max_score,
+                        passProbability: result.pass_probability,
+                        weaknessAnalysis: detailedResult?.weakness_analysis,
+                        weakness_analysis: detailedResult?.weakness_analysis,
+                        questionFeedback: detailedResult?.question_feedback,
+                        question_feedback: detailedResult?.question_feedback,
+                        section_scores: result.section_scores,
+                        rawScore: detailedResult?.answers?.rawScore,
+                        rawMaxScore: detailedResult?.answers?.rawMaxScore,
+                        compressedScore: detailedResult?.answers?.compressedScore,
+                        compressedMaxScore: detailedResult?.answers?.compressedMaxScore,
+                        scoreCompression: detailedResult?.answers?.scoreCompression || null,
+                        scoreCap: detailedResult?.answers?.scoreCap || null
+                    },
+                    universityName: result.university_name,
+                    facultyName: result.faculty_name,
+                    examSubject: result.exam_subject,
+                    examYear: result.exam_year,
+                    answers: detailedResult?.answers,
+                    pdfPath: detailedResult?.pdf_path || detailedResult?.answers?.pdfPath || null,
+                    isNewResult: false,
+                    fromAdmin: true
+                }
+            });
+        } catch (err) {
+            console.error('Failed to load detailed result:', err);
+            alert('成績データの詳細取得に失敗しました。');
+        } finally {
+            setOpeningResultId(null);
+        }
     };
 
     const fetchAnalytics = async () => {
@@ -418,10 +438,15 @@ function AdminResultAnalytics() {
                                     <tr
                                         key={result.id}
                                         onClick={() => handleOpenResult(result)}
-                                        className="group transition-all duration-200 cursor-pointer hover:scale-[1.002]"
+                                        className={`group transition-all duration-200 cursor-pointer hover:scale-[1.002] ${openingResultId === result.id ? 'opacity-50 pointer-events-none' : ''}`}
                                         title="クリックしてこのユーザーの採点フィードバック詳細を表示"
                                     >
-                                        <td className="bg-white px-4 py-4 rounded-l-xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm whitespace-nowrap">
+                                        <td className="bg-white px-4 py-4 rounded-l-xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm whitespace-nowrap relative">
+                                            {openingResultId === result.id && (
+                                                <div className="absolute inset-0 flex items-center justify-center bg-white/50 rounded-l-xl">
+                                                    <div className="animate-spin h-4 w-4 border-2 border-navy-blue border-t-transparent rounded-full"></div>
+                                                </div>
+                                            )}
                                             <span className="text-xs font-mono text-gray-500">{formatDateTime(result.created_at)}</span>
                                         </td>
                                         <td className="bg-white px-4 py-4 border-y-2 border-gray-100 group-hover:border-navy-blue/40 group-hover:bg-indigo-50/20 shadow-sm min-w-[180px]">

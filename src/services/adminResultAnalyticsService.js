@@ -79,7 +79,6 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         profilesData = profilesResult.data || [];
     }
 
-    // 2. 成績ログの取得（faculty_name や pdf_path がテーブルに存在しない場合のフォールバックを実装）
     const fullSelectColumns = `
         id,
         user_id,
@@ -91,10 +90,6 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
         max_score,
         pass_probability,
         section_scores,
-        question_feedback,
-        weakness_analysis,
-        answers,
-        pdf_path,
         created_at
     `;
 
@@ -122,9 +117,6 @@ export const getAdminResultAnalytics = async ({ days = 30, limit = 500 } = {}) =
             max_score,
             pass_probability,
             section_scores,
-            question_feedback,
-            weakness_analysis,
-            answers,
             created_at
         `;
         resultsResult = await runAdminAnalyticsQuery(
