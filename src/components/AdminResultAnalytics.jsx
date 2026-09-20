@@ -153,17 +153,25 @@ function AdminResultAnalytics() {
     }, [analytics.results, analytics.users]);
 
     const universityOptions = useMemo(
-        () => getUniqueOptions(analytics.results, result => result.university_name),
+        () => getUniqueOptions(analytics.results, result => {
+            const uni = String(result.university_name || '').trim();
+            const match = uni.match(/^(.+?大学)/);
+            return match ? match[1] : uni;
+        }),
         [analytics.results]
     );
 
     const filteredResults = useMemo(() => {
         const query = normalizeSearchText(searchQuery);
         return analytics.results.filter((result) => {
+            const resultUniRaw = String(result.university_name || '').trim();
+            const resultUniMatch = resultUniRaw.match(/^(.+?大学)/);
+            const resultUniNormalized = resultUniMatch ? resultUniMatch[1] : resultUniRaw;
+
             if (roleFilter === 'students' && result.isAdminResult) return false;
             if (roleFilter === 'admin' && !result.isAdminResult) return false;
             if (userFilter !== 'all' && result.user_id !== userFilter) return false;
-            if (universityFilter !== 'all' && result.university_name !== universityFilter) return false;
+            if (universityFilter !== 'all' && resultUniNormalized !== universityFilter) return false;
             if (!query) return true;
 
             const searchable = [
@@ -209,8 +217,19 @@ function AdminResultAnalytics() {
     const examUsageStats = useMemo(() => {
         const stats = {};
         filteredResults.forEach(r => {
-            const uni = r.university_name || '大学不明';
-            const fac = r.faculty_name || '学部不明';
+            let uni = String(r.university_name || '').trim();
+            let fac = String(r.faculty_name || '').trim();
+            
+            // Normalize "XXX大学 YYY学部" format from dirty data
+            const match = uni.match(/^(.+?大学)\s*(.+)?$/);
+            if (match) {
+                uni = match[1];
+                if (!fac && match[2]) fac = match[2];
+            }
+            
+            uni = uni || '大学不明';
+            fac = fac || '学部不明';
+            
             const year = r.exam_year ? `${r.exam_year}年度` : '';
             const subj = r.exam_subject || '';
             const examKey = [year, subj].filter(Boolean).join(' ');
