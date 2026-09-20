@@ -186,6 +186,45 @@ function AdminResultAnalytics() {
         };
     }, [analytics.users, filteredResults]);
 
+    const examUsageStats = useMemo(() => {
+        const stats = {};
+        filteredResults.forEach(r => {
+            const uni = r.university_name || '大学不明';
+            const fac = r.faculty_name || '学部不明';
+            const year = r.exam_year ? `${r.exam_year}年度` : '';
+            const subj = r.exam_subject || '';
+            const examKey = [year, subj].filter(Boolean).join(' ');
+
+            if (!stats[uni]) stats[uni] = { total: 0, faculties: {} };
+            stats[uni].total++;
+
+            if (!stats[uni].faculties[fac]) stats[uni].faculties[fac] = { total: 0, exams: {} };
+            stats[uni].faculties[fac].total++;
+
+            if (examKey) {
+                if (!stats[uni].faculties[fac].exams[examKey]) stats[uni].faculties[fac].exams[examKey] = 0;
+                stats[uni].faculties[fac].exams[examKey]++;
+            }
+        });
+
+        // Convert to array and sort by total descending
+        return Object.entries(stats)
+            .map(([uni, data]) => ({
+                university: uni,
+                total: data.total,
+                faculties: Object.entries(data.faculties)
+                    .map(([fac, fData]) => ({
+                        faculty: fac,
+                        total: fData.total,
+                        exams: Object.entries(fData.exams)
+                            .map(([exam, count]) => ({ exam, count }))
+                            .sort((a, b) => b.count - a.count)
+                    }))
+                    .sort((a, b) => b.total - a.total)
+            }))
+            .sort((a, b) => b.total - a.total);
+    }, [filteredResults]);
+
     return (
         <div className="space-y-5">
             {loadError && (
@@ -302,6 +341,48 @@ function AdminResultAnalytics() {
                     </div>
                 ))}
             </div>
+
+            {/* 問題利用状況の集計 */}
+            {examUsageStats.length > 0 && (
+                <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4">
+                    <div className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em] mb-4 flex items-center gap-2">
+                        <span>解かれている問題の集計（大学・学部別）</span>
+                        <span className="text-xs normal-case bg-indigo-50 px-2 py-0.5 rounded text-indigo-700">全{summary.resultCount}回</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {examUsageStats.map(uniStat => (
+                            <div key={uniStat.university} className="border border-gray-100 rounded-lg bg-gray-50/50 p-3">
+                                <div className="flex items-center justify-between border-b border-gray-200 pb-2 mb-2">
+                                    <h3 className="font-black text-navy-blue text-sm">{uniStat.university}</h3>
+                                    <span className="bg-navy-blue text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                        {uniStat.total}回
+                                    </span>
+                                </div>
+                                <div className="space-y-2.5">
+                                    {uniStat.faculties.map(facStat => (
+                                        <div key={facStat.faculty} className="bg-white rounded border border-gray-100 p-2 shadow-sm">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <div className="text-xs font-bold text-gray-700">{facStat.faculty}</div>
+                                                <div className="text-[10px] font-bold text-gray-500 bg-gray-100 px-1.5 rounded">{facStat.total}回</div>
+                                            </div>
+                                            {facStat.exams.length > 0 && (
+                                                <ul className="space-y-1 mt-1 border-t border-gray-50 pt-1.5">
+                                                    {facStat.exams.map(exam => (
+                                                        <li key={exam.exam} className="flex justify-between items-center text-[10px]">
+                                                            <span className="text-gray-500 truncate mr-2" title={exam.exam}>・{exam.exam}</span>
+                                                            <span className="text-gray-400 font-mono flex-shrink-0">{exam.count}</span>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="bg-white/50 backdrop-blur-sm rounded-md p-4 shadow-inner border-2 border-indigo-100/50">
                 {loading ? (
