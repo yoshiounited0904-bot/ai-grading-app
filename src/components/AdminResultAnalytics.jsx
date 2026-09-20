@@ -369,6 +369,19 @@ function AdminResultAnalytics() {
                         <span>解かれている問題の集計（大学・学部別）</span>
                         <span className="text-xs normal-case bg-indigo-50 px-2 py-0.5 rounded text-indigo-700">全{summary.resultCount}回</span>
                     </div>
+
+                    <div className="mb-4">
+                        <div className="text-xs font-bold text-gray-700 mb-2">【大学別の総解答回数】</div>
+                        <div className="flex flex-wrap gap-2">
+                            {examUsageStats.map(uniStat => (
+                                <div key={uniStat.university} className="flex items-center bg-indigo-50 border border-indigo-100 rounded px-2.5 py-1">
+                                    <span className="text-sm font-black text-navy-blue mr-2">{uniStat.university}</span>
+                                    <span className="text-xs font-bold text-indigo-600">{uniStat.total}回</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {examUsageStats.map(uniStat => (
                             <div key={uniStat.university} className="border border-gray-100 rounded-lg bg-gray-50/50 p-3">
