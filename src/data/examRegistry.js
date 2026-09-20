@@ -1,5 +1,17 @@
 import { supabase } from '../services/supabaseClient';
 
+const PUBLIC_EXAM_PAGE_SIZE = 1000;
+
+const getUniversityRouteId = (universityName = '') => encodeURIComponent(String(universityName || '').trim());
+
+const safelyDecodeRouteId = (routeId = '') => {
+    try {
+        return decodeURIComponent(String(routeId || ''));
+    } catch {
+        return String(routeId || '');
+    }
+};
+
 const normalizeFacultyKey = (value = '') => {
     return String(value)
         .trim()
@@ -18,47 +30,77 @@ const shouldPreferFacultyName = (currentName = '', nextName = '') => {
     return nextName.length < currentName.length;
 };
 
+const getFacultyDisplayId = (exam = {}) => {
+    const facultyKey = normalizeFacultyKey(exam.faculty);
+    return `${exam.faculty_id || 'faculty'}-${facultyKey || encodeURIComponent(exam.faculty || '')}`;
+};
+
+const fetchPublishedExamRows = async (selectColumns = '*', applyFilters = (query) => query) => {
+    const rows = [];
+    let from = 0;
+
+    while (true) {
+        let query = supabase
+            .from('exams')
+            .select(selectColumns)
+            .eq('is_published', true)
+            .order('university', { ascending: true })
+            .order('faculty', { ascending: true })
+            .order('year', { ascending: false })
+            .range(from, from + PUBLIC_EXAM_PAGE_SIZE - 1);
+
+        query = applyFilters(query);
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+
+        const page = Array.isArray(data) ? data : [];
+        rows.push(...page);
+
+        if (page.length < PUBLIC_EXAM_PAGE_SIZE) break;
+        from += PUBLIC_EXAM_PAGE_SIZE;
+    }
+
+    return rows;
+};
+
 /**
  * Fetches a summary list of unique universities (lightweight).
  */
 export const getUniversityList = async () => {
     try {
-        // Select only identifying and summary fields
-        const { data: exams, error } = await supabase
-            .from('exams')
-            .select('university, university_id, type, faculty, faculty_id')
-            .eq('is_published', true);
-
-        if (error) {
-            console.error('Error fetching university list:', error);
-            return [];
-        }
+        const exams = await fetchPublishedExamRows('university, university_id, type, faculty, faculty_id');
 
         const mergedUniversities = [];
 
         exams.forEach(exam => {
-            let university = mergedUniversities.find(u => u.id === exam.university_id || u.name === exam.university);
+            let university = mergedUniversities.find(u => u.name === exam.university);
 
             if (!university) {
                 university = {
-                    id: exam.university_id,
+                    id: getUniversityRouteId(exam.university),
                     name: exam.university,
                     type: exam.type || "私立",
-                    faculties: []
+                    faculties: [],
+                    universityDbIds: []
                 };
                 mergedUniversities.push(university);
             }
 
+            if (exam.university_id && !university.universityDbIds.includes(exam.university_id)) {
+                university.universityDbIds.push(exam.university_id);
+            }
+
             const facultyKey = normalizeFacultyKey(exam.faculty);
             const existingFaculty = university.faculties.find(f =>
-                f.id === exam.faculty_id ||
                 f.name === exam.faculty ||
                 normalizeFacultyKey(f.name) === facultyKey
             );
 
             if (!existingFaculty) {
                 university.faculties.push({
-                    id: exam.faculty_id,
+                    id: getFacultyDisplayId(exam),
                     name: exam.faculty
                 });
             } else if (shouldPreferFacultyName(existingFaculty.name, exam.faculty)) {
@@ -79,33 +121,19 @@ export const getUniversityList = async () => {
  */
 export const getExamsForUniversity = async (universityId) => {
     try {
-        // Handle split IDs by getting the university name first
-        const { data: uniData } = await supabase
-            .from('exams')
-            .select('university')
-            .eq('university_id', universityId)
-            .limit(1);
-            
-        const uniName = uniData && uniData.length > 0 ? uniData[0].university : null;
+        const decodedUniversityId = safelyDecodeRouteId(universityId);
+        const numericUniversityId = Number.parseInt(universityId, 10);
+        const hasNumericUniversityId = Number.isFinite(numericUniversityId) && String(numericUniversityId) === String(universityId);
 
-        let query = supabase.from('exams').select('*').eq('is_published', true);
-        if (uniName) {
-            query = query.eq('university', uniName);
-        } else {
-            query = query.eq('university_id', universityId);
-        }
-
-        const { data: exams, error } = await query;
-
-        if (error) {
-            console.error(`Error fetching exams for university ${universityId}:`, error);
-            return null;
-        }
+        const exams = await fetchPublishedExamRows('*', (query) => {
+            if (hasNumericUniversityId) return query.eq('university_id', numericUniversityId);
+            return query.eq('university', decodedUniversityId);
+        });
 
         if (!exams || exams.length === 0) return null;
 
         const university = {
-            id: exams[0].university_id,
+            id: getUniversityRouteId(exams[0].university),
             name: exams[0].university,
             type: exams[0].type || "私立",
             faculties: []
@@ -114,14 +142,13 @@ export const getExamsForUniversity = async (universityId) => {
         exams.forEach(exam => {
             const facultyKey = normalizeFacultyKey(exam.faculty);
             let faculty = university.faculties.find(f =>
-                f.id === exam.faculty_id ||
                 f.name === exam.faculty ||
                 normalizeFacultyKey(f.name) === facultyKey
             );
 
             if (!faculty) {
                 faculty = {
-                    id: exam.faculty_id || exam.faculty.toLowerCase(),
+                    id: getFacultyDisplayId(exam),
                     name: exam.faculty,
                     exams: []
                 };
@@ -169,35 +196,31 @@ export const getExamsForUniversity = async (universityId) => {
  */
 export const getUniversities = async () => {
     try {
-        const { data: exams, error } = await supabase
-            .from('exams')
-            .select('*')
-            .eq('is_published', true);
-
-        if (error) {
-            console.error('Error fetching exams from Supabase:', error);
-            return [];
-        }
+        const exams = await fetchPublishedExamRows('*');
 
         const mergedUniversities = [];
 
         exams.forEach(exam => {
-            let university = mergedUniversities.find(u => u.id === exam.university_id || u.name === exam.university);
+            let university = mergedUniversities.find(u => u.name === exam.university);
 
             if (!university) {
                 // Create new university if it doesn't exist
                 university = {
-                    id: exam.university_id || Date.now(),
+                    id: getUniversityRouteId(exam.university),
                     name: exam.university,
                     type: exam.type || "私立",
-                    faculties: []
+                    faculties: [],
+                    universityDbIds: []
                 };
                 mergedUniversities.push(university);
             }
 
+            if (exam.university_id && !university.universityDbIds.includes(exam.university_id)) {
+                university.universityDbIds.push(exam.university_id);
+            }
+
             const facultyKey = normalizeFacultyKey(exam.faculty);
             let faculty = university.faculties.find(f =>
-                f.id === exam.faculty_id ||
                 f.name === exam.faculty ||
                 normalizeFacultyKey(f.name) === facultyKey
             );
@@ -205,7 +228,7 @@ export const getUniversities = async () => {
             if (!faculty) {
                 // Create new faculty if it doesn't exist
                 faculty = {
-                    id: exam.faculty_id || exam.faculty.toLowerCase(),
+                    id: getFacultyDisplayId(exam),
                     name: exam.faculty,
                     exams: []
                 };
