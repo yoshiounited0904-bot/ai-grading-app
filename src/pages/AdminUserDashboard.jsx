@@ -157,6 +157,49 @@ function AdminUserDashboard() {
         });
     }, [promoFilter, searchQuery, statusFilter, users]);
 
+    const exportToExcel = () => {
+        const escapeCSV = (val) => {
+            const s = String(val ?? '');
+            if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                return `"${s.replace(/"/g, '""')}"`;
+            }
+            return s;
+        };
+
+        const headers = [
+            'ユーザー名', 'ユーザーID', '第一志望大学', '学年',
+            '認知経路', 'プロモコード', 'プロモコード入力日',
+            '権限', 'プラン', 'サブスク状態', 'プレミアム期限',
+            'Stripe顧客ID', 'Stripeサブスク ID', '登録日'
+        ];
+
+        const rows = filteredUsers.map(u => [
+            u.username || '',
+            u.id || '',
+            u.first_choice_university || '',
+            u.grade || '',
+            u.referral_source || '未回答',
+            u.promo_code_verified ? (u.promo_code_value || '入力済') : '未入力',
+            u.promo_code_verified_at ? new Date(u.promo_code_verified_at).toLocaleString('ja-JP') : '',
+            u.role === 'admin' ? '管理者' : '一般',
+            u.plan === 'premium' ? 'プレミアム' : '無料',
+            getSubscriptionStatusLabel(getSubscriptionStatus(u)),
+            u.premium_until ? new Date(u.premium_until).toLocaleDateString('ja-JP') : '',
+            u.stripe_customer_id || '',
+            u.stripe_subscription_id || '',
+            u.created_at ? new Date(u.created_at).toLocaleDateString('ja-JP') : ''
+        ]);
+
+        const csv = '\uFEFF' + [headers, ...rows].map(row => row.map(escapeCSV).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `スマサイ_ユーザーデータ_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div className="min-h-screen bg-indigo-50/30 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-7xl mx-auto">
@@ -241,7 +284,7 @@ function AdminUserDashboard() {
                 </div>
 
                 <div className="bg-white rounded-md border-2 border-indigo-100/60 shadow-sm p-4 mb-5">
-                    <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_180px_auto] gap-3 items-end">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_160px_160px_auto_auto] gap-3 items-end">
                         <label className="flex flex-col gap-1">
                             <span className="text-[10px] font-black text-navy-blue/50 uppercase tracking-[0.18em]">検索</span>
                             <input
@@ -286,6 +329,13 @@ function AdminUserDashboard() {
                             className="rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-black text-navy-blue hover:bg-gray-50"
                         >
                             リセット
+                        </button>
+                        <button
+                            type="button"
+                            onClick={exportToExcel}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700 hover:bg-emerald-100 flex items-center gap-1.5"
+                        >
+                            📥 Excelエクスポート
                         </button>
                     </div>
                     <div className="mt-3 text-xs font-bold text-gray-400">

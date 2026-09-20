@@ -20,12 +20,15 @@ const FeedbackForm = () => {
         setStatus('submitting');
         
         try {
+            const trimmedName = formData.name.trim();
+            const trimmedEmail = formData.email.trim();
+            const trimmedMessage = formData.message.trim();
             const payload = {
                 user_id: user?.id || null,
-                name: formData.name,
-                email: formData.email,
+                name: trimmedName || null,
+                email: trimmedEmail || null,
                 type: formData.type,
-                message: formData.message
+                message: trimmedMessage
             };
 
             const { data, error } = await supabase.from('user_feedbacks').insert([payload]).select().single();

@@ -232,6 +232,50 @@ E．論述問題（長）
 ・表現力・日本語のうまさを採点基準に含めること
 `;
 
+const JAPANESE_RULES = `
+あなたは、大学入試の国語（現代文・古文・漢文）の問題構造と配点を設計する専門担当者である。
+
+【最重要前提】
+・国語は本文読解・文脈把握・選択肢処理・抜き出し・現代語訳・記述説明を混在して扱う。
+・問題本文、設問文、解答画像、既存の正解データを最優先し、推測で設問数や正解を補わない。
+・配点は、最終的に指定満点へ一致するよう調整する。
+
+【問題タイプの分類】
+1. selection
+   ・選択肢から1つ選ぶ問題。
+   ・選択肢番号、記号、語句の対応を誤って correctAnswer にしない。
+
+2. selection_multi
+   ・複数選択、組み合わせ、すべて選べ、正しいものを2つ選べ等の問題。
+
+3. descriptive
+   ・漢字、語句、文法、古語、句法、現代語訳、抜き出し、短い記述、本文中の語句を答える問題。
+   ・「番号だけ答える」設問は、括弧内の語句ではなく番号を正解にする。
+
+4. essay
+   ・理由説明、内容説明、要約、本文根拠を用いた記述、複数要素を含む論述問題。
+   ・採点基準が必要な問題として扱い、可能なら scoringElements を要素化する。
+
+【配点の基本方針】
+・選択問題は低〜中配点、複数選択は単一選択より重め。
+・漢字、語句、文法、古語、句法などの短答は低〜中配点。
+・抜き出し、現代語訳、説明記述は中〜高配点。
+・要約、理由説明、内容説明、論述は最も得点差が出やすい問題として高めに配点する。
+・大問ごとの指定配点がある場合は、各小問 points の合計を必ずその指定配点に一致させる。
+
+【現代文の注意】
+・本文根拠、指示語、接続語、対比、因果、筆者の主張、選択肢のズレを重視する。
+・本文にない一般論や受験アドバイスを解答根拠にしない。
+
+【古文の注意】
+・主語補足、敬語、助動詞、古語、係り結び、和歌、文脈を重視する。
+・現代語訳問題は、逐語訳だけでなく文脈上の意味を確認する。
+
+【漢文の注意】
+・句法、返り点、書き下し、重要語、文脈上の意味を重視する。
+・句法名だけで終わらせず、設問の正解にどうつながるかを扱う。
+`;
+
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -291,6 +335,231 @@ const cleanExplanationOpening = (text: string): string => {
   cleaned = cleaned.replace(/^(?:①|1[.)．、])\s*(?:解答|正解)\s*\n+/u, "");
 
   return cleaned.trim();
+};
+
+const cleanSectionAnalysisOutput = (text: string, preserveAdminFormat = false): string => {
+  if (!preserveAdminFormat) {
+    return cleanExplanationOpening(text);
+  }
+
+  return String(text || "")
+    .replace(/^```(?:markdown)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .replace(/\*/g, "")
+    .trim();
+};
+
+const JAPANESE_READING_ANALYSIS_COMMON_PROMPT = `
+【国語長文詳細解説・本番共通プロンプト】
+目的は、答えだけでなく、受験生が同じ手順で再現できる読解・設問処理の過程を言語化することである。
+
+【最重要方針】
+・本文を読む前に、設問を確認し、何を探すべきか、どの表現に注意すべきか、どの情報が根拠になりそうかを予測する。
+・本文読解中は、設問由来の観点を保持しながら、根拠になり得る箇所を追跡する。
+・正解を後付けで説明するのではなく、設問確認、本文読解、根拠発見、選択肢検討、解答決定の順に思考過程を再現する。
+・本文中の語句・文・段落を引用し、その引用がなぜ根拠になるのかを一対一で説明する。
+・抽象と具体、対比、因果、条件、言い換え、列挙、指示語、接続語、段落の役割を必ず確認する。
+・背景知識、作者知識、作品知識、一般論で本文根拠を補強しない。
+
+【出力順】
+以下の順番を守る。
+1. 解答一覧
+2. 設問準備フェーズ
+3. 読みながら解くプロセス
+4. 設問ごとの解答プロセス
+5. 本文の論理構造
+6. 完全解説
+
+【完全解説の書き方】
+・各段落について、読む前に保持している設問上の仮説、本文の引用、直後の理解、指示語・対比・因果・言い換えによる更新、解けるようになった設問、まだ保留すべき設問を順に説明する。
+・選択肢問題では、本文から先に解答の核を作り、その後に選択肢と照合する。ただし、文章全体の内容一致では、選択肢を先に見て確認観点を用意してよい。
+・誤答選択肢は、単に「本文と違う」とせず、本文のどの箇所・論理とズレるのかを明示する。
+`;
+
+const JAPANESE_READING_ANALYSIS_TYPE_PROMPTS: Record<string, string> = {
+  lineExplanation: `
+【設問タイプ別プロンプト: 傍線部説明】
+・傍線部の直前直後だけでなく、傍線部を成立させている指示語、比喩、言い換え、対比、因果を確認する。
+・傍線部中の抽象語を本文中の具体表現に戻して説明する。
+・選択肢は、傍線部の中心内容、理由、対象、評価のどこが一致・不一致かで判定する。
+`,
+  reason: `
+【設問タイプ別プロンプト: 理由説明】
+・「なぜ」と問われている対象を明確にし、理由を表す接続語、因果関係、前段落からの流れを確認する。
+・理由と結果を逆にしない。本文中で結果として述べられた内容を理由として扱わない。
+・選択肢は、原因、結果、対象、筆者の評価の取り違えを中心に判定する。
+`,
+  demonstrative: `
+【設問タイプ別プロンプト: 指示語】
+・指示語の直前だけで決めず、文法的に受けられる範囲と文脈上の意味を両方確認する。
+・指示語が受ける内容を、本文の表現に即して過不足なく言い換える。
+・選択肢は、範囲の広すぎ、狭すぎ、対象違い、因果の混入を確認する。
+`,
+  blank: `
+【設問タイプ別プロンプト: 空所補充】
+・空所前後の接続関係、文末表現、品詞、主語・述語、対比・因果・言い換えを確認する。
+・空所に入れる前に、本文の流れから必要な意味方向を予測する。
+・選択肢は、意味が合うだけでなく、文法・接続・論理の流れまで一致するかで判定する。
+`,
+  sentenceOrdering: `
+【設問タイプ別プロンプト: 文整序】
+・指示語、接続語、同義反復、時系列、抽象から具体への流れ、原因から結果への流れを確認する。
+・各文の役割を、導入、具体例、補足、逆接、結論などに分けて説明する。
+・正しい順序だけでなく、誤った順序だとどの照応・論理が崩れるかを説明する。
+`,
+  extraction: `
+【設問タイプ別プロンプト: 抜き出し】
+・設問条件、字数条件、品詞条件、文末条件を先に確認する。
+・本文中の候補箇所を複数比較し、条件に合うものだけを残す。
+・抜き出した語句・文が、設問の要求にどう対応しているかを明示する。
+`,
+  overallContent: `
+【設問タイプ別プロンプト: 文章全体の内容一致】
+・選択肢を先に確認し、本文中で検証すべき観点を作る。
+・本文全体の主張、段落ごとの役割、対立軸、筆者の評価を整理してから判定する。
+・誤答選択肢は、本文にない断定、主張の逆転、部分内容の一般化、段落限定情報の全体化を確認する。
+`,
+  structure: `
+【設問タイプ別プロンプト: 本文構成】
+・各段落の役割を、問題提起、具体例、反論、譲歩、転換、結論などに分ける。
+・段落同士の関係を、対比、因果、具体化、言い換え、補足として説明する。
+・構成問題では、内容そのものだけでなく、文章内での機能を根拠にする。
+`,
+};
+
+const JAPANESE_READING_ANALYSIS_TYPE_LABELS: Record<string, string> = {
+  lineExplanation: "傍線部説明",
+  reason: "理由説明",
+  demonstrative: "指示語",
+  blank: "空所補充",
+  sentenceOrdering: "文整序",
+  extraction: "抜き出し",
+  overallContent: "文章全体の内容一致",
+  structure: "本文構成",
+};
+
+const stringifyJapaneseQuestionField = (value: unknown): string => {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyJapaneseQuestionField).filter(Boolean).join(" ");
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch (_error) {
+      return "";
+    }
+  }
+  return "";
+};
+
+const buildJapaneseQuestionDetectionText = (question: Record<string, unknown>): string => {
+  const fields = [
+    question.label,
+    question.prompt,
+    question.questionText,
+    question.question,
+    question.instruction,
+    question.passageReference,
+    question.answerFormat,
+    question.type,
+    question.options,
+  ];
+
+  return fields.map(stringifyJapaneseQuestionField).filter(Boolean).join("\n");
+};
+
+const detectJapaneseReadingAnalysisTypes = (question: Record<string, unknown>): string[] => {
+  const text = buildJapaneseQuestionDetectionText(question);
+  const detected = new Set<string>();
+  const addIf = (key: string, pattern: RegExp) => {
+    if (pattern.test(text)) detected.add(key);
+  };
+
+  addIf("reason", /なぜ|どうして|理由|原因|のはなぜ|によるもの|どういう理由/u);
+  addIf("lineExplanation", /傍線|下線|波線|線部|どういうこと|どういう意味|説明せよ|内容を説明|「[^」]+」とは/u);
+  addIf("demonstrative", /指示語|これ|それ|あれ|この|その|あの|何を指す|何を示す|指している|示している/u);
+  addIf("blank", /空欄|空らん|空所|穴埋め|補充|入る|あてはまる|当てはまる|空所[Ａ-ＺA-Z]|空欄[Ａ-ＺA-Z]/u);
+  addIf("sentenceOrdering", /文整序|整序|並べ替え|並び替え|順序|順に|配列|並べよ|正しい順/u);
+  addIf("extraction", /抜き出|抜出|本文中から|本文から|書き抜|字で|字以内|字以内で|字数|初めと終わり|該当する語句/u);
+  addIf("overallContent", /内容一致|本文全体|全体の内容|正しいもの|正しくないもの|一致するもの|一致しないもの|本文の内容|述べたもの|述べているもの|本文に合う/u);
+  addIf("structure", /構成|段落|文章の展開|論理構造|本文の流れ|要旨|主旨|主題|筆者の主張|趣旨|段落の役割/u);
+
+  const questionType = String(question.type || "").toLowerCase();
+  const hasOptions = Array.isArray(question.options) && question.options.length > 0;
+  if (detected.size === 0 && (hasOptions || questionType.includes("select") || questionType.includes("choice"))) {
+    detected.add("overallContent");
+  }
+  if (detected.size === 0 && (questionType.includes("descriptive") || questionType.includes("writing") || questionType.includes("free"))) {
+    detected.add("lineExplanation");
+  }
+  if (detected.size === 0) {
+    detected.add("lineExplanation");
+  }
+
+  const priority = [
+    "reason",
+    "lineExplanation",
+    "demonstrative",
+    "blank",
+    "sentenceOrdering",
+    "extraction",
+    "overallContent",
+    "structure",
+  ];
+
+  return priority.filter((key) => detected.has(key));
+};
+
+const buildJapaneseQuestionTypePromptSection = (questions: Array<Record<string, unknown>>): string => {
+  if (!Array.isArray(questions) || questions.length === 0) {
+    return `【小問ごとの設問タイプ判定】
+小問データが不足しているため、下記の全タイプ別プロンプトを参照し、問題画像・解答画像から設問タイプを判定して適用する。
+
+${Object.values(JAPANESE_READING_ANALYSIS_TYPE_PROMPTS).join("\n")}`;
+  }
+
+  const questionTypeEntries = questions.map((question) => ({
+    label: stringifyJapaneseQuestionField(question.label || question.id || "小問"),
+    types: detectJapaneseReadingAnalysisTypes(question),
+  }));
+  const usedTypes = Array.from(new Set(questionTypeEntries.flatMap((entry) => entry.types)));
+  const typeSummary = questionTypeEntries
+    .map((entry) => {
+      const labels = entry.types.map((type) => JAPANESE_READING_ANALYSIS_TYPE_LABELS[type] || type).join(" / ");
+      return `・${entry.label}: ${labels}`;
+    })
+    .join("\n");
+  const promptBody = usedTypes
+    .map((type) => JAPANESE_READING_ANALYSIS_TYPE_PROMPTS[type])
+    .filter(Boolean)
+    .join("\n");
+
+  return `【小問ごとの設問タイプ判定】
+以下は小問データの問題文・指示文・選択肢・正解データから自動判定した設問タイプである。
+各小問の解説では、該当するタイプ別プロンプトを優先し、問題画像から読み取れる設問文と食い違う場合は問題画像の設問文を優先して補正する。
+${typeSummary}
+
+【今回使用する設問タイプ別プロンプト】
+${promptBody}`;
+};
+
+const buildJapaneseReadingAnalysisPrompt = (questions: Array<Record<string, unknown>> = []): string => {
+  return [
+    JAPANESE_READING_ANALYSIS_COMMON_PROMPT,
+    buildJapaneseQuestionTypePromptSection(questions),
+    `【国語長文詳細解説・禁止事項】
+・設問確認を省いて本文要約から始めない。
+・本文引用なしに説明しない。
+・後から分かった正解を、最初から分かっていたように説明しない。
+・「自然」「違和感がある」「文脈に合う」だけで済ませない。
+・誤答選択肢を「本文と違う」だけで処理しない。
+・講評、学習アドバイス、出題傾向、一般論で終わらせない。
+・箇条書きの処理ログだけで完結させない。`
+  ].join("\n");
 };
 
 const buildAdminInstructionBlock = (adminInstruction: string): string => {
@@ -375,6 +644,8 @@ ${JSON.stringify({
     label: sectionData.label,
     questionType: sectionData.questionType,
     allocatedPoints: sectionData.allocatedPoints,
+    instruction: sectionData.instruction,
+    sectionAnalysis: sectionData.sectionAnalysis,
   }, null, 2)}
 
 【守るべき最低限の安全制約】
@@ -391,6 +662,37 @@ const hasUsableExplanation = (value: unknown): boolean =>
   value.trim() !== "" &&
   !value.includes("AI生成中") &&
   !value.includes("AI生成エラー");
+
+const isJapaneseSubject = (subjectType: unknown): boolean => String(subjectType || "").trim() === "japanese";
+
+const JAPANESE_UNVERIFIABLE_EXPLANATION = "本文・設問画像から根拠箇所を確認できないため、要確認です。";
+
+const japaneseQuestionExplanationRules = (subjectType: unknown): string => {
+  if (!isJapaneseSubject(subjectType)) return "";
+
+  return `
+【国語の小問解説・絶対ルール】
+・本文、設問文、選択肢、解答画像から確認できる内容だけで解説すること。
+・解説は必ず「設問条件」「本文中の根拠」「正解になる理由」の対応で書くこと。本文根拠なしの一般論、受験アドバイス、作者・作品知識、出典説明で補わないこと。
+・本文根拠が画像から確認できない場合は、推測で作らず explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。
+・「問題が公表されている」「公表された問題」「出典は」「著作権」「大学が公開している」など、問題の公開状況やメタ情報を解説に書かないこと。
+・設問文や選択肢を長く写さないこと。引用する場合は根拠確認に必要な短い語句だけにすること。
+・段落番号や傍線番号が画像から読めない場合は、存在しない番号を作らず「本文中の該当箇所」と書くこと。
+・選択問題では、正解選択肢が本文のどの表現・論理と合うかを述べ、誤答は本文にない断定、因果の逆転、範囲のずれ、言い換え不成立などのズレとして説明すること。
+・漢字の書き取りなど自動採点不可の問題は、採点根拠を本文から捏造せず、自己採点対象であることだけを簡潔に書くこと。
+`;
+};
+
+const cleanQuestionExplanationOutput = (text: unknown, subjectType: unknown): string => {
+  const cleaned = cleanExplanationOpening(String(text || ""));
+  if (!isJapaneseSubject(subjectType)) return cleaned;
+
+  if (/(?:問題.{0,12}(?:公表|公開)|(?:公表|公開)され(?:た|ている)問題|出典|著作権|転載|配布)/u.test(cleaned)) {
+    return JAPANESE_UNVERIFIABLE_EXPLANATION;
+  }
+
+  return cleaned;
+};
 
 const isUnresolvedCorrectAnswer = (value: unknown): boolean => {
   const text = String(value ?? "").trim();
@@ -774,6 +1076,21 @@ const inferGeneratedQuestionType = (question: Record<string, unknown>, options: 
   return "descriptive";
 };
 
+const isGeneratedKanjiQuestion = (question: Record<string, unknown>): boolean => {
+  const text = [
+    question.answerIssue,
+    question.answerFormat,
+    question.label,
+    question.prompt,
+    question.questionText,
+    question.question,
+    question.instruction,
+    question.explanation,
+  ].map((value) => String(value ?? "").normalize("NFKC")).join("\n");
+  return text.includes("漢字") &&
+    /漢字(?:で|に|を|の|問題|表記|直|書|改|答|記せ|記し|記入|書き|なお|変換)|漢字に改め|漢字で答|漢字で書|漢字表記/u.test(text);
+};
+
 const coerceGeneratedQuestion = (question: Record<string, unknown>, fallbackIndex: number) => {
   const next = { ...question };
   next.id = String(next.id || fallbackIndex + 1);
@@ -800,6 +1117,10 @@ const coerceGeneratedQuestion = (question: Record<string, unknown>, fallbackInde
     next.options = options;
   } else {
     delete next.options;
+  }
+  if (isGeneratedKanjiQuestion(next)) {
+    next.answerIssue = "kanji_self_grade";
+    next.answerFormat = "kanji_self_grade";
   }
   return ensureEssayCharacterCountElement(next);
 };
@@ -1140,6 +1461,16 @@ const buildFallbackQuestionsFromRequiredItems = (
   needsReview: true,
 }, idx));
 
+const buildSequentialRequiredItems = (
+  count: number,
+): Array<Record<string, unknown>> => Array.from({ length: count }, (_item, idx) => ({
+  id: String(idx + 1),
+  label: `問${idx + 1}`,
+  answer: "要確認",
+  answerNote: "",
+  answerFormat: "",
+}));
+
 async function generateSectionQuestionsInChunks(
   genAI: GoogleGenerativeAI,
   sectionIndex: string | number,
@@ -1418,6 +1749,7 @@ async function handleGenerateMasterData(genAI: GoogleGenerativeAI, body: Record<
 
   const maxScore = (extraInfo?.maxScore as number) || 100;
   const isEnglish = subjectType === "english";
+  const isJapanese = subjectType === "japanese";
   const isSocial = ["social", "japanese_history", "world_history"].includes(subjectType);
 
   let subjectSpecificRules = "";
@@ -1429,6 +1761,12 @@ async function handleGenerateMasterData(genAI: GoogleGenerativeAI, body: Record<
 `;
   } else if (isSocial) {
     subjectSpecificRules = SOCIAL_RULES + `
+※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
+思考プロセスや配点理由などのテキストは一切出力せず、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${maxScore}点）と完全に一致するように調整してください。
+`;
+  } else if (isJapanese) {
+    subjectSpecificRules = JAPANESE_RULES + `
 ※ 重要: 本システムでは最終出力として必ず指定された JSON 形式が必要です。
 思考プロセスや配点理由などのテキストは一切出力せず、純粋なJSONのみを返してください。
 さらに、【最重要事項】として、計算されたすべての小問配点の合計が、入力として指定された満点（${maxScore}点）と完全に一致するように調整してください。
@@ -1476,6 +1814,15 @@ async function handleGenerateMasterData(genAI: GoogleGenerativeAI, body: Record<
 ${commonQuestionText ? `・参考用共通テキスト: ${commonQuestionText.substring(0, 500)}...` : ""}
 
 ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
+${isJapanese ? `
+【国語の追加抽出ルール】
+・現代文/古文/漢文では、本文そのものではなく「設問」「問」「(一)」「1」「A」などの解答欄に対応する単位を小問として抽出してください。
+・解答用紙に「解答一覧」「正解一覧」「配点表」がある場合、それは選択肢一覧ではなく正解データとして扱い、各設問へ正しく紐付けてください。
+・記号選択は type: "selection"、複数選択は "selection_multi"、抜き出し・空欄補充・語句説明は "descriptive"、本文内容を自分の言葉で説明する設問は "essay" にしてください。
+・漢字の書き取り・漢字表記・漢字に直す問題は、自動採点不能です。type は "descriptive"、answerIssue と answerFormat は必ず "kanji_self_grade" にしてください。
+・解答欄が「1) 3」「問一 4」「設問A ②」のように番号だけの場合でも、省略せず必ず小問として作成してください。
+・大問本文の段落や選択肢本文を、小問として数えないでください。
+` : ""}
 
 【抽出条件と厳格ルール】
 1. この大問（第${sectionIndex}問）の中に含まれる小問を全て抽出すること。
@@ -1501,6 +1848,8 @@ ${sectionInstruction ? `【個別指示】\n${sectionInstruction}\n` : ""}
       "type": "selection",
       "options": ["a", "b", "c", "d"],
       "correctAnswer": "正解",
+      "answerIssue": "",
+      "answerFormat": "",
       "points": 0,
       "explanation": ""
     }
@@ -1575,6 +1924,7 @@ ${JSON.stringify(extractedSections, null, 2)}
 
 async function handleRegenerateExplanation(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
   const questionData = body.questionData;
+  const subjectType = body.subjectType ?? (questionData as Record<string, unknown> | undefined)?.subjectType;
   const questionFilesData = (body.questionFilesData as Array<{ data: string; mimeType: string }>) || [];
   const answerFilesData = (body.answerFilesData as Array<{ data: string; mimeType: string }>) || [];
 
@@ -1591,6 +1941,7 @@ ${JSON.stringify(questionData, null, 2)}
 2. 「なぜ正解か」の根拠を本文の具体的な箇所（第◯段落など）を挙げて簡潔に説明すること。
 3. 主要な誤答選択肢がなぜ間違いかを1文で触れること。
 4. アスタリスク（*）などの記号による装飾は一切使用しないこと。
+${japaneseQuestionExplanationRules(subjectType)}
 
 出力は解説本文のみ（プレーンテキスト）を返してください。
 `;
@@ -1600,7 +1951,7 @@ ${JSON.stringify(questionData, null, 2)}
     generationConfig: { maxOutputTokens: 32768 },
   });
 
-  return result.response.text().replace(/```markdown\n?|```\n?|```/g, "").replace(/\*/g, "").trim();
+  return cleanQuestionExplanationOutput(result.response.text(), subjectType);
 }
 
 async function handleRegenerateAnalysis(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
@@ -1647,6 +1998,7 @@ async function handleRegeneratePoints(genAI: GoogleGenerativeAI, body: Record<st
   const sectionPointsBySection = (body.sectionPointsBySection as Record<string, number | null>) || {};
 
   const isEnglish = subjectType === "english";
+  const isJapanese = subjectType === "japanese";
   const isSocial = ["social", "japanese_history", "world_history"].includes(subjectType);
   const maxScore = parseInt(String(examData.max_score)) || 100;
 
@@ -1659,6 +2011,12 @@ async function handleRegeneratePoints(genAI: GoogleGenerativeAI, body: Record<st
 `;
   } else if (isSocial) {
     subjectSpecificRules = SOCIAL_RULES + `
+※ 重要: 本システムでは最終出力として必ず JSON フォーマットが必要です。
+この厳密なルールに基づいて配点（points）を再計算し、JSONの各設問の配点データに反映してください。文章等での回答は不要であり、純粋なJSONのみを返してください。
+さらに、【最重要事項】として、再計算後のすべての小問の \`points\` の合計が、必ず指定された満点（${maxScore}点）と完全に一致するように調整してください。
+`;
+  } else if (isJapanese) {
+    subjectSpecificRules = JAPANESE_RULES + `
 ※ 重要: 本システムでは最終出力として必ず JSON フォーマットが必要です。
 この厳密なルールに基づいて配点（points）を再計算し、JSONの各設問の配点データに反映してください。文章等での回答は不要であり、純粋なJSONのみを返してください。
 さらに、【最重要事項】として、再計算後のすべての小問の \`points\` の合計が、必ず指定された満点（${maxScore}点）と完全に一致するように調整してください。
@@ -1800,6 +2158,7 @@ async function handleGenerateSectionAnalysis(genAI: GoogleGenerativeAI, body: Re
   const specialInstruction = (body.specialInstruction as string) || "";
   const adminInstruction = specialInstruction.replace(/SECTION_ANALYSIS_COMPACT_BLOCK/g, "").trim();
   const subjectName = (body.subjectName as string) || "";
+  const allQuestions = (sectionData.questions as Array<Record<string, unknown>>) || [];
 
   const imageParts = [...toImageParts(questionFilesData), ...toImageParts(answerFilesData)];
 
@@ -1852,7 +2211,7 @@ ${adminInstruction ? "・管理者の個別指示にない前置き、タイト�
       generationConfig: { maxOutputTokens: 4096 },
     }, 2, 1500, ["gemini-2.5-flash", "gemini-2.0-flash"]);
 
-    return compactResult.response.text().replace(/```markdown\n?|```\n?|```/g, "").replace(/\*/g, "").trim();
+    return cleanSectionAnalysisOutput(compactResult.response.text(), Boolean(adminInstruction));
   }
 
   if (imageParts.length === 0) {
@@ -2082,6 +2441,46 @@ ${adminInstruction ? "" : "・最初の1行目から、設問の内容や正解�
 ・地域や王朝を混同したまま説明すること
 ・因果関係を広げすぎること
 ・「覚えていれば解ける」で済ませること`;
+  } else if (subjectType === "japanese") {
+    basePrompt = `あなたは難関大学入試の国語（現代文・古文・漢文）を解説する専門講師である。
+対象：第${sectionData.id}問（${sectionData.label}）
+
+目的は、受験生が同じ手順で本文・設問・選択肢を処理できるように、正解根拠を本文に即して説明することである。
+
+${buildJapaneseReadingAnalysisPrompt(allQuestions)}
+
+【国語共通の最重要ルール】
+・講評や学習アドバイスだけで終わらせず、各小問の正解に至る根拠を説明する。
+・問題本文、設問文、選択肢、正解データを最優先する。
+・本文から読めない一般論、作品知識、作者知識、雑学で正解を補強しない。
+・正解データを勝手に変更しない。
+・番号問題では、正解番号と括弧内の語句を混同しない。
+
+【現代文の解説方針】
+・指示語、接続語、対比、因果、言い換え、筆者の主張、段落関係を根拠にする。
+・選択肢問題では、正解選択肢の根拠だけでなく、必要に応じて誤選択肢のズレを説明する。
+・抜き出し問題では、設問条件と本文中の該当箇所がどう対応するかを説明する。
+
+【古文の解説方針】
+・主語補足、敬語、助動詞、古語、係り結び、和歌、文脈を必要な範囲で説明する。
+・現代語訳は、単語対応だけでなく、文脈上の自然な意味を示す。
+・登場人物や敬意の方向を混同しない。
+
+【漢文の解説方針】
+・句法、返り点、書き下し、重要語、文脈上の意味を根拠にする。
+・句法名だけを羅列せず、それが正解にどうつながるかを説明する。
+
+【出力形式】
+${adminInstruction ? "・管理者の個別指示に見出しや構成指定がある場合は、その指定を優先する。" : "・上記の「出力順」を優先し、国語長文用の詳細解説として構成する。"}
+・必要に応じて段落を分け、読む文章として自然につなげる。
+
+【禁止事項】
+・本文根拠のない一般論
+・作品・作者・文学史への不要な脱線
+・設問に無関係な知識展開
+・講評だけで終わること
+・「なんとなく自然」「感覚的に」などの曖昧表現
+・アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと`;
   } else if (subjectType === "english") {
     if (questionType === "grammar") {
       basePrompt = `大学受験レベル（MARCH〜早慶）の英文法問題の解説を作成せよ。
@@ -2147,7 +2546,6 @@ ${adminInstruction ? "" : "・最初の1行目から、設問の内容や正解�
 アスタリスク（*）記号は一切使用禁止。** や * を見出し・強調に用いないこと。`;
   }
 
-  const allQuestions = (sectionData.questions as Array<Record<string, unknown>>) || [];
   const answersNote = allQuestions.length > 0
     ? `\n【最重要】正解データについて（絶対遵守）\n以下の正解は管理者が確認済みの確定データです。解説中で各小問の正解を示す際は、必ず下記の値をそのまま使用すること。PDFの画像を独自に読み取って別の回答を導き出すことは絶対に禁止です。\n${allQuestions.map((q) => `・${q.label}（${q.id}）: 正解 = "${q.correctAnswer}"`).join("\n")}\n`
     : "";
@@ -2199,7 +2597,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
 `;
 
   const cleanAnalysisText = (text: string) =>
-    cleanExplanationOpening(text);
+    cleanSectionAnalysisOutput(text, Boolean(adminInstruction));
 
   try {
     const result = await generateContentWithFallback(genAI, {
@@ -2227,6 +2625,7 @@ const compactPrompt = adminInstruction
 以下の大問データと添付画像をもとに、各設問の正解根拠が分かる詳細解説本文を日本語で作成してください。
 
 ${instructionPriorityBlock}
+${instructionModeBlock}
 ${adminInstruction ? "\n【重要】これはフォールバック生成ですが、管理者の個別指示を省略・簡略化・別テンプレート化してはいけません。自作プロンプトの構成を維持してください。\n" : ""}
 
 【対象】
@@ -2293,6 +2692,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
 以下の小問データだけをもとに、この範囲の各設問について正解根拠が分かる解説本文を日本語で作成してください。
 
 ${instructionPriorityBlock}
+${instructionModeBlock}
 ${adminInstruction ? "\n【重要】これは分割フォールバック生成です。管理者の個別指示を省略・簡略化・別テンプレート化せず、この範囲に適用してください。\n" : ""}
 
 【対象】
@@ -2363,6 +2763,7 @@ ${partialAnalyses.map((text, idx) => `【部分${idx + 1}】\n${text}`).join("\n
 以下の部分解説を統合し、各設問の正解根拠が自然につながる詳細解説本文にまとめてください。
 
 ${instructionPriorityBlock}
+${instructionModeBlock}
 ${adminInstruction ? "\n【重要】統合時も管理者の個別指示の構成を最優先し、部分解説を勝手な講評テンプレートへ変換しないでください。\n" : ""}
 
 【対象】
@@ -2409,9 +2810,11 @@ async function handleGenerateSingleSection(genAI: GoogleGenerativeAI, body: Reco
     : null;
 
   const isEnglish = subjectType === "english";
+  const isJapanese = subjectType === "japanese";
   const isSocial = ["social", "japanese_history", "world_history"].includes(subjectType);
   let subjectSpecificRules = "";
   if (isEnglish) subjectSpecificRules = ENGLISH_RULES;
+  else if (isJapanese) subjectSpecificRules = JAPANESE_RULES;
   else if (isSocial) subjectSpecificRules = SOCIAL_RULES;
 
   const aInlineData = toImageParts(answerFilesData);
@@ -2462,6 +2865,10 @@ ${expectedQuestionCount ? `この大問には少なくとも ${expectedQuestionC
 ・「(A) ガリア」「(B) シトー」「(ア) 商鞅」のように、記号ラベルと語句が並ぶ行も解答一覧の一部です。A/B/C/ア/イ等のラベルを id とし、右側の語句を answer として items に入れてください。
 ・「設問(1) ゴッホ」「問1 2」「(1) 50」のような番号付き行も同様に、id と answer の対応として items に入れてください。
 ・「大問内に3つの設問群がある」場合でも、設問群ではなく個々の小問番号を抽出してください。
+${isJapanese ? `・国語では、「問一」「問二」「一」「二」「（一）」「(二)」「A」「B」「空欄A」「傍線部(一)」なども小問IDとして扱ってください。
+・国語の解答画像に、本文・設問文ではなく「正解」「解答」「配点」だけが表形式で並んでいる場合も、その表を正解一覧として読み取り、各行を items に入れてください。
+・国語の選択問題で正解が「1」「2」「3」「4」「5」などの番号だけの場合、answer は番号だけにしてください。選択肢本文や根拠文を answer に混ぜないでください。
+・国語の記述問題で模範解答が長文の場合は、読める範囲の模範解答を answer に入れてください。読めない場合でも小問IDは省略せず answer を空文字にしてください。` : ""}
 ・正解が読めない小問があっても、その小問番号自体は省略せず、answer は空文字にしてください。
 ・広告、ロゴ、ページ装飾は無視してください。
 
@@ -2580,6 +2987,7 @@ ${requiredQuestionRule}
 10. 語句・文・選択肢を正しい順番に並べ替える問題は、必ず \`type\` を "ordering" にしてください。この場合、\`correctAnswer\` は正しい順番をカンマ区切りで出力してください（例: "c,a,d,b"）。順序が採点対象ではない複数選択だけ "selection_multi" を使ってください。
 11. 問題タイプは厳密に分類してください。選択肢があり正解が1つなら "selection"、選択肢があり順不同の複数正解なら "selection_multi"、選択肢を正しい順に並べるなら "ordering"、選択肢がない短答・語句記述なら "descriptive"、採点基準が必要な自由記述・論述・英作文なら "essay" にしてください。
 12. カタカナ選択肢はOCRで漢字に誤変換しないでください。特に選択肢記号の「カ」は漢字の「力」ではなく必ず「カ」、「オ」は漢字の「才」ではなく必ず「オ」として出力してください。
+${isJapanese ? `13. 漢字の書き取り・漢字表記・漢字に直す問題は、自動採点不能です。type は "descriptive" のまま、answerIssue と answerFormat に必ず "kanji_self_grade" を入れてください。` : ""}
 
 【出力構造】
 {
@@ -2594,6 +3002,8 @@ ${requiredQuestionRule}
       "type": "selection",
       "options": ["a", "b", "c", "d"],
       "correctAnswer": "正解",
+      "answerIssue": "",
+      "answerFormat": "",
       "points": 5,
       "explanation": ""
     }
@@ -2666,9 +3076,38 @@ ${requiredQuestionRule}
     }
 
     if (!parsedSection) {
+      if (isJapanese && !includeExplanations && expectedQuestionCount !== null && expectedQuestionCount > 0) {
+        const fallbackQuestions = rebalanceQuestionPoints(
+          buildFallbackQuestionsFromRequiredItems(buildSequentialRequiredItems(expectedQuestionCount)),
+          targetPoints || null,
+        );
+        const fallbackSection = {
+          id: String(sectionIndex),
+          label: `第${sectionIndex}問`,
+          allocatedPoints: targetPoints && targetPoints > 0
+            ? targetPoints
+            : fallbackQuestions.reduce((sum, question) => sum + (Number(question.points) || 0), 0),
+          sectionAnalysis: "",
+          questions: fallbackQuestions,
+          generationWarnings: [
+            `国語の問題画像・解答画像から小問構造を確定できなかったため、期待小問数 ${expectedQuestionCount} 件にもとづく要確認の小問枠を作成しました。正解・形式・選択肢を確認して保存してください。`,
+            lastStructureError instanceof Error ? `AI解析エラー: ${lastStructureError.message}` : "AI解析エラー: 詳細不明",
+          ],
+        };
+        validateSectionData(
+          fallbackSection,
+          `第${sectionIndex}問の国語フォールバック生成`,
+          true,
+          targetPoints || null,
+          expectedQuestionCount,
+          allowZeroQuestionPoints,
+        );
+        parsedSection = fallbackSection;
+      } else {
       throw lastStructureError instanceof Error
         ? lastStructureError
         : new Error(`第${sectionIndex}問の構造生成に失敗しました。`);
+      }
     }
   }
 
@@ -2697,6 +3136,7 @@ ${requiredQuestionRule}
 4. 各小問の explanation を【2〜3文以内、約50〜100文字】で埋めてください。
 5. 日本語で記述。アスタリスク（*）禁止。
 6. 出力は解説を埋めた後の同じJSON構造（オブジェクト1つ）のみ。
+${japaneseQuestionExplanationRules(subjectType)}
 
 【設問構造】
 ${JSON.stringify({ questions: slimChunk })}
@@ -2724,7 +3164,7 @@ ${JSON.stringify({ questions: slimChunk })}
           targetQuestions[idx] = {
             ...targetQuestions[idx],
             ...resolvedCorrectAnswerPatch(targetQuestions[idx], q),
-            explanation: String(q.explanation).trim(),
+            explanation: cleanQuestionExplanationOutput(q.explanation, subjectType),
           };
         }
       });
@@ -2758,6 +3198,7 @@ ${JSON.stringify({ questions: slimChunk })}
 }
 
 async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
+  const subjectType = body.subjectType;
   const sectionData = body.sectionData as Record<string, unknown>;
   const questionFilesData = (body.questionFilesData as Array<{ data: string; mimeType: string }>) || [];
   const answerFilesData = (body.answerFilesData as Array<{ data: string; mimeType: string }>) || [];
@@ -2799,6 +3240,7 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
 6. 日本語で記述すること。
 7. アスタリスク（*）記号は一切使用禁止。
 8. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
+${japaneseQuestionExplanationRules(subjectType)}
 
 【対象の設問構造（現在のデータ）】
 小問数: ${unresolvedChunk.length}
@@ -2833,7 +3275,7 @@ ${JSON.stringify(tempSectionData)}
           updatedQuestions[targetIndex] = {
             ...updatedQuestions[targetIndex],
             ...resolvedCorrectAnswerPatch(updatedQuestions[targetIndex], q),
-            explanation: String(q.explanation).trim(),
+            explanation: cleanQuestionExplanationOutput(q.explanation, subjectType),
           };
         }
       });
@@ -3131,6 +3573,131 @@ JSONのみを返してください。説明文、Markdown、コードブロッ�
   };
 }
 
+async function handleGenerateEssayModelAnswer(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
+  const mode = String(body.mode || "with_original"); // "with_original" (ボタンA) or "rubric_only" (ボタンB)
+  const examMeta = (body.examMeta as Record<string, unknown>) || {};
+  const questionData = (body.questionData as Record<string, unknown>) || {};
+  const sectionContext = (questionData.sectionContext as Record<string, unknown>) || (body.sectionContext as Record<string, unknown>) || {};
+  const questionFilesData = (body.questionFilesData as Array<{ data: string; mimeType: string }>) || [];
+  const answerFilesData = (body.answerFilesData as Array<{ data: string; mimeType: string }>) || [];
+  const imageParts = [...toImageParts(questionFilesData), ...toImageParts(answerFilesData)];
+
+  const scoringElements = Array.isArray(questionData.scoringElements) ? questionData.scoringElements : [];
+  const gradingInstruction = String(questionData.gradingInstruction || "").trim();
+  const originalAnswer = String(questionData.correctAnswer || "").trim();
+  const questionPoints = Number(questionData.points) || 0;
+
+  if (scoringElements.length === 0 && !gradingInstruction) {
+    throw new Error("採点基準（scoringElements または 採点指示）が設定されていません。先に採点基準を設定してください。");
+  }
+
+  if (mode === "with_original" && !originalAnswer) {
+    throw new Error("元の模範解答が入力されていません。ボタンB（採点基準＋本文のみ）をご利用ください。");
+  }
+
+  // 文字数条件の抽出
+  const charElement = scoringElements.find(
+    (el: Record<string, unknown>) => el?.type === "character_count" || (el?.minChars != null || el?.maxChars != null)
+  ) as Record<string, unknown> | undefined;
+  const minChars = charElement?.minChars != null ? Number(charElement.minChars) : null;
+  const maxChars = charElement?.maxChars != null ? Number(charElement.maxChars) : null;
+
+  let charLimitNote = "";
+  if (minChars != null && maxChars != null) {
+    charLimitNote = `【文字数制限】必ず ${minChars}字以上 ${maxChars}字以内 で記述してください（厳守）。`;
+  } else if (maxChars != null) {
+    charLimitNote = `【文字数制限】必ず ${maxChars}字以内 で記述してください（厳守）。`;
+  } else if (minChars != null) {
+    charLimitNote = `【文字数制限】必ず ${minChars}字以上 で記述してください（厳守）。`;
+  }
+
+  const prompt = `
+あなたは大学入試の模範解答作成の最高権威・予備校主任講師です。
+大学入試の自由記述・記述問題において、受験生の手本となる【完全オリジナルな高品質模範解答】を作成してください。
+
+${mode === "with_original" ? `
+【作成モード: A（独自採点基準 ＋ 元の模範解答 ＋ 本文/問題文）】
+提供されている元々の模範解答は外部・ネットからの転載資料であるため、著作権保護の観点から、
+【元の模範解答の表現・文章構造・言い回し・語順をそのまま流用・コピーすることは絶対に禁止】します。
+元の解答の「事実関係」「論点」「解答の着眼点」を正確に理解した上で、自社の独自採点基準（scoringElements）を満点獲得できるように、
+【完全に新しい独自表現・洗練された構成】でゼロから書き直した、オリジナルの模範解答を作成してください。
+` : `
+【作成モード: B（独自採点基準 ＋ 本文/問題文 のみからゼロベース新規作成）】
+元の模範解答には一切依存せず、問題文・本文・資料と独自採点基準（scoringElements）のみを元に、
+満点答案となる模範解答をゼロベースで新規作成してください。
+`}
+
+【対象の設問情報】
+大学名: ${examMeta.university || "未入力"}
+学部名: ${examMeta.faculty || "未入力"}
+科目名: ${examMeta.subject || "未入力"}
+年度: ${examMeta.year || "未入力"}
+設問ID: ${questionData.id || "未入力"}
+配点: ${questionPoints || "未入力"}点
+問題文: ${questionData.label || "未入力"}
+
+【同じ大問の文脈】
+大問ID: ${sectionContext.sectionId || "未入力"}
+大問名: ${sectionContext.sectionLabel || "未入力"}
+大問指示文: ${sectionContext.instruction || "未入力"}
+大問解説: ${sectionContext.sectionAnalysis || "未入力"}
+
+【添付資料】
+利用可能な場合、対象大問の問題PDF画像と解答PDF画像が添付されています。
+問題本文・資料・図表・設問文の詳細な文脈は、必ず添付画像の内容を最優先で参照してください。
+
+【独自採点基準（scoringElements）】※これをすべて満点クリアする解答を作成すること
+${JSON.stringify(scoringElements, null, 2)}
+採点指示: ${gradingInstruction || "なし"}
+
+${charLimitNote ? `\n${charLimitNote}\n` : ""}
+
+${mode === "with_original" ? `
+【参考: 元々の模範解答（※文章の丸写し・類似表現は禁止！着眼点のみ参考にすること）】
+${originalAnswer}
+` : ""}
+
+【模範解答作成の厳守ルール】
+1. 独自採点基準（scoringElements）に含まれるすべての加点要素（content, logic）を漏れなく自然な文章に盛り込むこと。
+2. 減点条件（deduction）や強制0点条件（force_zero）に一切抵触しないこと。
+3. 文字数指定・語数指定がある場合は、文字数を正確にカウントし、必ずその制限内に厳密に収めること。
+4. 設問の解答言語（日本語での記述なら自然で簡潔・論理的な日本語、英語での自由英作文なら文法・構文的に正確で洗練された英語）に厳密に従うこと。
+5. 入試の模範解答としてふさわしく、無駄な冗長さを排し、加点ポイントが明瞭に伝わる格調高い文体にすること。
+${mode === "with_original" ? "6. 元々の模範解答と一文一文を比較しても、著作権上の同一性・類似性がない、独自の語彙・構文で表現されていること。" : ""}
+
+【出力形式】
+JSONのみを返してください。説明文、Markdown、コードブロックは禁止。
+{
+  "modelAnswer": "作成された完全オリジナルの模範解答本文（指定文字数・言語を厳守）",
+  "charCount": 85,
+  "satisfiedElements": [
+    { "id": "e1", "summary": "この採点要素をどう満たしているかの簡潔な説明" }
+  ],
+  "reasoning": "なぜこの解答が独自採点基準を満たしているか、および工夫した点の簡潔な解説（100字程度）"
+}
+`;
+
+  const result = await generateContentWithFallback(genAI, {
+    contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
+    generationConfig: { responseMimeType: "application/json", maxOutputTokens: 4096 },
+  }, 3, 2000, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]);
+
+  const parsed = JSON.parse(sanitizeJson(result.response.text()));
+  const modelAnswer = String(parsed.modelAnswer || "").trim();
+
+  if (!modelAnswer) {
+    throw new Error("模範解答を生成できませんでした。もう一度お試しください。");
+  }
+
+  return {
+    modelAnswer,
+    charCount: typeof parsed.charCount === "number" ? parsed.charCount : Array.from(modelAnswer).length,
+    satisfiedElements: Array.isArray(parsed.satisfiedElements) ? parsed.satisfiedElements : [],
+    reasoning: String(parsed.reasoning || "").trim(),
+    mode,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main serve handler
 // ---------------------------------------------------------------------------
@@ -3228,6 +3795,9 @@ serve(async (req) => {
         break;
       case "transformRubricToScoringElements":
         result = await handleTransformRubricToScoringElements(genAI, body);
+        break;
+      case "generateEssayModelAnswer":
+        result = await handleGenerateEssayModelAnswer(genAI, body);
         break;
       default:
         return new Response(JSON.stringify({ error: `Unknown operation: ${operation}` }), {

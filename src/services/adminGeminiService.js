@@ -74,24 +74,57 @@ export const sanitizeJson = (jsonString) => {
 // Helper function to convert either a File object or a URL string to base64.
 // Must stay client-side because it uses FileReader, canvas, and Image APIs.
 // ---------------------------------------------------------------------------
-const anySourceToBase64 = async (source) => {
+const DEFAULT_PDF_IMAGE_OPTIONS = Object.freeze({
+  maxPages: 6,
+  scale: 0.7,
+  quality: 0.5
+});
+
+const SECTION_ANALYSIS_PDF_IMAGE_OPTIONS = Object.freeze({
+  maxPages: 3,
+  scale: 0.55,
+  quality: 0.42
+});
+
+const getPdfImageOptions = (conversionOptions = {}) => ({
+  ...DEFAULT_PDF_IMAGE_OPTIONS,
+  ...(conversionOptions.pdf || {})
+});
+
+const resolveSupabaseStorageFetchUrl = async (source) => {
+  const rawUrl = String(source || '').trim();
+  if (!rawUrl) return rawUrl;
+
+  try {
+    const url = new URL(rawUrl);
+    const match = url.pathname.match(/\/storage\/v1\/object\/(?:public|sign|authenticated)\/exam-pdfs\/(.+)$/);
+    if (!match) return rawUrl;
+
+    const objectPath = decodeURIComponent(match[1]);
+    const { data, error } = await supabase.storage
+      .from('exam-pdfs')
+      .createSignedUrl(objectPath, 7200);
+
+    if (error || !data?.signedUrl) {
+      console.warn('Failed to create signed URL for exam PDF:', error);
+      return rawUrl;
+    }
+
+    return data.signedUrl;
+  } catch {
+    return rawUrl;
+  }
+};
+
+const anySourceToBase64 = async (source, conversionOptions = {}) => {
   if (!source) return null;
 
   // Case 1: source is already a File/Blob object
   if (source instanceof File || source instanceof Blob) {
     if (source.type === 'application/pdf') {
-      const objectUrl = URL.createObjectURL(source);
-      try {
-        const { convertPdfToImages } = await import('../utils/pdfUtils');
-        const images = await convertPdfToImages(objectUrl, () => {}, null, {
-          maxPages: 6,
-          scale: 0.7,
-          quality: 0.5
-        });
-        return images.map(img => img.inlineData).filter(Boolean);
-      } finally {
-        URL.revokeObjectURL(objectUrl);
-      }
+      const { convertPdfToImages } = await import('../utils/pdfUtils');
+      const images = await convertPdfToImages(source, () => {}, null, getPdfImageOptions(conversionOptions));
+      return images.map(img => img.inlineData).filter(Boolean);
     }
 
     return new Promise((resolve, reject) => {
@@ -151,22 +184,19 @@ const anySourceToBase64 = async (source) => {
   // Case 2: source is a URL string
   if (typeof source === 'string') {
     try {
-      const response = await fetch(source);
+      const fetchUrl = await resolveSupabaseStorageFetchUrl(source);
+      const response = await fetch(fetchUrl);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const blob = await response.blob();
 
       if (blob.type === 'application/pdf') {
         const { convertPdfToImages } = await import('../utils/pdfUtils');
-        const images = await convertPdfToImages(source, () => {}, null, {
-          maxPages: 6,
-          scale: 0.7,
-          quality: 0.5
-        });
+        const images = await convertPdfToImages(blob, () => {}, null, getPdfImageOptions(conversionOptions));
         return images.map(img => img.inlineData).filter(Boolean);
       }
 
       // If it's an image, use the recursive logic above to compress it
-      return anySourceToBase64(blob);
+      return anySourceToBase64(blob, conversionOptions);
     } catch (err) {
       console.error(`Failed to fetch source from URL: ${source}`, err);
       throw new Error(`ファイルを取得できませんでした: ${source}`);
@@ -176,10 +206,10 @@ const anySourceToBase64 = async (source) => {
   return null;
 };
 
-const sourcesToBase64 = async (sources = []) => {
+const sourcesToBase64 = async (sources = [], conversionOptions = {}) => {
   const converted = [];
   for (const source of sources || []) {
-    const item = await anySourceToBase64(source);
+    const item = await anySourceToBase64(source, conversionOptions);
     if (Array.isArray(item)) {
       converted.push(...item);
     } else if (item) {
@@ -188,6 +218,28 @@ const sourcesToBase64 = async (sources = []) => {
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   return converted;
+};
+
+const isRetriableAdminGenerationError = (error) => {
+  const message = String(error?.message || error || '');
+  return /compute resources|temporar|timeout|timed out|failed to fetch|network|Edge Function HTTP 5\d\d/i.test(message);
+};
+
+const invokeGeminiAdminWithRetry = async (body, { retries = 1, delayMs = 1400 } = {}) => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await invokeGeminiAdmin(body);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isRetriableAdminGenerationError(error)) {
+        throw error;
+      }
+      console.warn('[AdminGeminiService] Retrying admin generation after transient failure:', error);
+      await new Promise(resolve => setTimeout(resolve, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastError;
 };
 
 const withAdminGenerationLock = async (task) => {
@@ -419,13 +471,14 @@ export const generateExamMasterData = async (subjectType, questionFiles, questio
   }
 };
 
-export const regenerateQuestionExplanation = async (questionData, questionFiles = [], answerFiles = []) => {
+export const regenerateQuestionExplanation = async (questionData, questionFiles = [], answerFiles = [], subjectType = '') => {
   try {
     const questionFilesData = await sourcesToBase64(questionFiles);
     const answerFilesData = await sourcesToBase64(answerFiles);
 
     return await invokeGeminiAdmin({
       operation: 'regenerateExplanation',
+      subjectType,
       questionData,
       questionFilesData,
       answerFilesData,
@@ -521,23 +574,39 @@ export const generateSectionDetailedAnalysis = async (subjectType, sectionData, 
         label: sectionData?.label,
         allocatedPoints: sectionData?.allocatedPoints,
         questionType: sectionData?.questionType,
+        instruction: sectionData?.instruction,
+        sectionAnalysis: sectionData?.sectionAnalysis,
         questions: targetQuestions.map((q) => ({
           id: q?.id,
           label: q?.label,
+          prompt: q?.prompt,
+          questionText: q?.questionText,
+          question: q?.question,
+          instruction: q?.instruction,
+          passageReference: q?.passageReference,
+          answerFormat: q?.answerFormat,
           type: q?.type,
           options: q?.options,
           correctAnswer: q?.correctAnswer,
           points: q?.points,
+          explanation: q?.explanation,
+          gradingInstruction: q?.gradingInstruction,
+          scoringElements: q?.scoringElements,
+          wordLimit: q?.wordLimit,
+          forceZeroRules: q?.forceZeroRules,
           answerIssue: q?.answerIssue,
           needsReview: q?.needsReview
         }))
       });
 
       const slimSectionData = makeSlimSectionData(questions);
-      const questionFilesData = await sourcesToBase64(questionFiles);
-      const answerFilesData = await sourcesToBase64(answerFiles);
+      const sectionAnalysisConversionOptions = {
+        pdf: SECTION_ANALYSIS_PDF_IMAGE_OPTIONS
+      };
+      const questionFilesData = await sourcesToBase64(questionFiles, sectionAnalysisConversionOptions);
+      const answerFilesData = await sourcesToBase64(answerFiles, sectionAnalysisConversionOptions);
 
-      return await invokeGeminiAdmin({
+      return await invokeGeminiAdminWithRetry({
         operation: 'generateSectionAnalysis',
         subjectType,
         sectionData: slimSectionData,
@@ -635,6 +704,7 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
           for (const question of unresolvedQuestions) {
             const explanation = await invokeGeminiAdmin({
               operation: 'regenerateExplanation',
+              subjectType,
               questionData: question,
               questionFilesData,
               answerFilesData,
@@ -735,3 +805,31 @@ export const transformRubricToScoringElements = async (examMeta, questionData, s
     throw error;
   }
 };
+
+export const generateEssayModelAnswer = async ({
+  mode = 'with_original',
+  examMeta = {},
+  questionData = {},
+  sectionContext = {},
+  questionFiles = [],
+  answerFiles = []
+}) => {
+  try {
+    const questionFilesData = await sourcesToBase64(questionFiles);
+    const answerFilesData = await sourcesToBase64(answerFiles);
+
+    return await invokeGeminiAdmin({
+      operation: 'generateEssayModelAnswer',
+      mode,
+      examMeta,
+      questionData,
+      sectionContext,
+      questionFilesData,
+      answerFilesData,
+    });
+  } catch (error) {
+    console.error(`[AdminGeminiService] Failed to generate essay model answer:`, error);
+    throw error;
+  }
+};
+

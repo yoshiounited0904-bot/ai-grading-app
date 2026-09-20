@@ -12,12 +12,16 @@ function parseMarkdown(content) {
     const infoLines = infoSection[1].split('\n');
     infoLines.forEach(line => {
       if (line.includes(':')) {
-        const [key, value] = line.replace(/^- /, '').split(':').map(s => s.trim());
-        if (key === '大学名') data.university = value;
-        if (key === '学部名') data.faculty = value;
-        if (key === '科目名') data.subject = value;
-        if (key === '満点') data.maxScore = parseInt(value);
-        if (key === '制限時間') data.duration = parseInt(value);
+        const [key, ...rest] = line.replace(/^- /, '').split(':');
+        const trimmedKey = key.trim();
+        const value = rest.join(':').trim();
+        if (trimmedKey === '大学名') data.university = value;
+        if (trimmedKey === '年度') data.year = parseInt(value) || 2026;
+        if (trimmedKey === '学部名') data.faculty = value;
+        if (trimmedKey === '科目名') data.subject = value;
+        if (trimmedKey === '内部科目ID') data.subject_en = value;
+        if (trimmedKey === '満点') data.maxScore = parseInt(value);
+        if (trimmedKey === '制限時間') data.duration = parseInt(value);
       }
     });
   }
@@ -30,9 +34,28 @@ function parseMarkdown(content) {
       if (line.includes(':')) {
         const [key, value] = line.replace(/^- /, '').split(':').map(s => s.trim());
         const level = key.replace('判定', '');
-        data.passingLines[level] = parseInt(value);
+        const num = parseInt(value);
+        if (!isNaN(num)) {
+          data.passingLines[level] = num;
+        }
       }
     });
+  }
+
+  const sourcesSection = content.match(/## 根拠ソース([\s\S]*?)##/);
+  if (sourcesSection) {
+    data.sources = sourcesSection[1]
+      .split('\n')
+      .filter(l => l.includes('http'))
+      .map(l => l.replace(/^- (?:URL: )?/, '').trim());
+  }
+
+  const notesSection = content.match(/## 備考([\s\S]*?)$/);
+  if (notesSection) {
+    data.notes = notesSection[1]
+      .split('\n')
+      .filter(l => l.startsWith('- ') && l.trim() !== '- ')
+      .map(l => l.replace(/^- /, '').trim());
   }
 
   return data;
@@ -43,18 +66,39 @@ if (!fs.existsSync(obsidianPath)) {
   process.exit(1);
 }
 
-const files = fs.readdirSync(obsidianPath).filter(f => f.endsWith('.md') && !f.startsWith('_') && f !== '運用ルール.md');
-const results = files.map(file => {
+const files = fs.readdirSync(obsidianPath).filter(f => f.endsWith('.md') && !f.startsWith('_') && f !== '運用ルール.md' && !f.includes('テンプレート'));
+
+// Load existing data to perform a safe merge
+let existingEntries = [];
+if (fs.existsSync(outputPath)) {
+  try {
+    existingEntries = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+  } catch (e) {
+    console.warn("Could not parse existing output path, initializing empty:", e.message);
+  }
+}
+
+const entryMap = new Map(existingEntries.map(item => [item.id || item.fileName?.replace('.md', ''), item]));
+
+files.forEach(file => {
   const content = fs.readFileSync(path.join(obsidianPath, file), 'utf-8');
-  return {
-    id: file.replace('.md', ''),
+  const parsed = parseMarkdown(content);
+  const id = file.replace('.md', '');
+  const existing = entryMap.get(id) || {};
+  
+  entryMap.set(id, {
+    id,
     fileName: file,
-    ...parseMarkdown(content)
-  };
+    ...existing,
+    ...parsed,
+    passingLines: { ...(existing.passingLines || {}), ...(parsed.passingLines || {}) }
+  });
 });
+
+const results = Array.from(entryMap.values());
 
 const dir = path.dirname(outputPath);
 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
 fs.writeFileSync(outputPath, JSON.stringify(results, null, 2));
-console.log(`Successfully generated manifest with ${results.length} entries at ${outputPath}`);
+console.log(`Successfully synced Obsidian vault into ${outputPath} (Total: ${results.length} entries, Vault files: ${files.length})`);

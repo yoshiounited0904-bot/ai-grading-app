@@ -6,10 +6,33 @@ import * as pdfjsLib from 'pdfjs-dist';
 const version = pdfjsLib.version || '4.8.69';
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
 
+const createPdfLoadingSource = async (pdfSource) => {
+    if (pdfSource instanceof Blob) {
+        return { data: new Uint8Array(await pdfSource.arrayBuffer()) };
+    }
+
+    if (pdfSource instanceof ArrayBuffer) {
+        return { data: new Uint8Array(pdfSource) };
+    }
+
+    if (ArrayBuffer.isView(pdfSource)) {
+        return { data: pdfSource };
+    }
+
+    return pdfSource;
+};
+
+const describePdfSource = (pdfSource) => {
+    if (pdfSource instanceof Blob) return `${pdfSource.type || 'application/pdf'} blob (${pdfSource.size} bytes)`;
+    if (pdfSource instanceof ArrayBuffer) return `ArrayBuffer (${pdfSource.byteLength} bytes)`;
+    if (ArrayBuffer.isView(pdfSource)) return `${pdfSource.constructor.name} (${pdfSource.byteLength} bytes)`;
+    return pdfSource;
+};
+
 export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress = null, options = {}) => {
-    onLog(`Starting PDF conversion for: ${pdfUrl}`);
+    onLog(`Starting PDF conversion for: ${describePdfSource(pdfUrl)}`);
     try {
-        const loadingTask = pdfjsLib.getDocument(pdfUrl);
+        const loadingTask = pdfjsLib.getDocument(await createPdfLoadingSource(pdfUrl));
         onLog("Loading PDF document...");
         const pdf = await loadingTask.promise;
         onLog(`PDF loaded. Pages: ${pdf.numPages}`);

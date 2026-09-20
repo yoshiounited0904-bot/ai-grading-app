@@ -1,5 +1,5 @@
 const OPTION_TYPES = new Set(['selection', 'selection_multi', 'ordering']);
-const AUTO_NORMALIZABLE_TYPES = new Set(['', 'selection', 'selection_multi', 'ordering', 'descriptive', 'essay', 'writing']);
+const EXPLICIT_QUESTION_TYPES = new Set(['selection', 'selection_multi', 'ordering', 'descriptive', 'essay']);
 const ORDERING_KEYWORDS = ['並び替え', '並べ替え', '並べかえ', '整序', '語順', '正しい順', '順番', '並べ'];
 const ESSAY_KEYWORDS = ['自由記述', '論述', '小論文', '作文', '英作文', '要約', 'あなたの考え', '自分の考え'];
 const CHOICE_LABEL_FIXES = {
@@ -278,12 +278,11 @@ export const inferQuestionType = (question = {}) => {
 export const normalizeQuestionType = (question = {}) => {
     const normalizedOptions = normalizeQuestionOptions(question.options);
     const currentType = String(question.type || '').toLowerCase();
-    const shouldNormalizeType = AUTO_NORMALIZABLE_TYPES.has(currentType);
-    const inferredType = currentType === 'descriptive'
-        ? 'descriptive'
-        : shouldNormalizeType
-            ? inferQuestionType({ ...question, options: normalizedOptions })
-            : question.type;
+    const inferredType = currentType === 'writing'
+        ? 'essay'
+        : EXPLICIT_QUESTION_TYPES.has(currentType)
+            ? currentType
+            : inferQuestionType({ ...question, options: normalizedOptions });
     const next = {
         ...question,
         type: inferredType

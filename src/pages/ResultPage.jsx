@@ -1165,7 +1165,7 @@ const ResultPage = () => {
     };
 
     const handleXShare = () => {
-        const text = `自動採点アプリで ${universityName || ''} ${facultyName || ''}の過去問を解きました！\n得点: ${floorDisplayScore(resultData?.score)} / ${floorDisplayScore(resultData?.maxScore)} 点\n合格可能性: ${resultData?.passProbability || '不明'}\n\n#大学受験 #過去問採点 #スマサイ\nhttps://smart-scoring.com`;
+        const text = `自動採点アプリで ${universityName || ''} ${facultyName || ''}の過去問を解きました！\n得点: ${floorDisplayScore(resultData?.score)} / ${floorDisplayScore(resultData?.maxScore)} 点\n合格可能性: ${resultData?.passProbability || '不明'}\n\n#大学受験 #過去問採点 #スマサイ\nhttps://smart-saiten.com`;
         const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
         window.open(url, '_blank');
     };

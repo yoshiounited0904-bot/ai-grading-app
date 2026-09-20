@@ -15,6 +15,11 @@ import {
     isValidFreeAccessPromoCode,
     markUserPromoVerified
 } from '../services/promoCodeService';
+import {
+    KANJI_SELF_GRADE_CORRECT,
+    KANJI_SELF_GRADE_WRONG,
+    isKanjiSelfGradingQuestion
+} from '../utils/kanjiSelfGrading';
 
 const PreGradingPremiumHint = ({ usage, planFeatures, onPremiumClick }) => {
     if (!usage || planFeatures.unlimitedGrading || usage.plan !== 'free') return null;
@@ -90,6 +95,8 @@ const ExamPage = () => {
     const [gradingProgressValue, setGradingProgressValue] = useState(0); 
     const [logs, setLogs] = useState([]);
     const [examData, setExamData] = useState(null);
+    const gradingAbortControllerRef = useRef(null);
+    const examActiveRef = useRef(true);
 
     useEffect(() => {
         if (!exam) return;
@@ -169,28 +176,39 @@ const ExamPage = () => {
         audience: !user ? 'guest' : currentPlan
     };
 
-    // Persistence: Load state from sessionStorage
+    const clearExamSessionState = React.useCallback((examId) => {
+        if (!examId) return;
+        sessionStorage.removeItem(`exam_answers_${examId}`);
+        sessionStorage.removeItem(`exam_timer_started_${examId}`);
+        sessionStorage.removeItem(`exam_time_remaining_${examId}`);
+        sessionStorage.removeItem(`exam_pdf_images_${examId}`);
+    }, []);
+
+    const abortCurrentGrading = React.useCallback(() => {
+        if (gradingAbortControllerRef.current && !gradingAbortControllerRef.current.signal.aborted) {
+            gradingAbortControllerRef.current.abort();
+        }
+        gradingAbortControllerRef.current = null;
+    }, []);
+
+    // Clear legacy persisted exam state. Answers/timer are intentionally in-memory only.
     useEffect(() => {
         if (!exam?.id) return;
-        
-        const savedAnswers = sessionStorage.getItem(`exam_answers_${exam.id}`);
-        if (savedAnswers) {
-            try {
-                setAnswers(JSON.parse(savedAnswers));
-            } catch (e) {
-                console.error("Failed to parse saved answers", e);
-            }
-        }
+        clearExamSessionState(exam.id);
+        setAnswers({});
+        setTimerStarted(false);
+        setTimeRemaining(examDuration);
+        setTimerExpired(false);
+    }, [clearExamSessionState, exam?.id, examDuration]);
 
-        const savedTimerStarted = sessionStorage.getItem(`exam_timer_started_${exam.id}`);
-        if (savedTimerStarted === 'true') {
-            setTimerStarted(true);
-            const savedTime = sessionStorage.getItem(`exam_time_remaining_${exam.id}`);
-            if (savedTime) {
-                setTimeRemaining(parseInt(savedTime, 10));
-            }
-        }
-    }, [exam?.id]);
+    useEffect(() => {
+        examActiveRef.current = true;
+        return () => {
+            examActiveRef.current = false;
+            abortCurrentGrading();
+            if (exam?.id) clearExamSessionState(exam.id);
+        };
+    }, [abortCurrentGrading, clearExamSessionState, exam?.id]);
 
     useEffect(() => {
         if (authLoading) return;
@@ -242,18 +260,6 @@ const ExamPage = () => {
         };
     }, [authLoading, user?.id]);
 
-    // Persistence: Save state to sessionStorage
-    useEffect(() => {
-        if (!exam?.id) return;
-        sessionStorage.setItem(`exam_answers_${exam.id}`, JSON.stringify(answers));
-    }, [answers, exam?.id]);
-
-    useEffect(() => {
-        if (!exam?.id) return;
-        sessionStorage.setItem(`exam_timer_started_${exam.id}`, timerStarted);
-        sessionStorage.setItem(`exam_time_remaining_${exam.id}`, timeRemaining);
-    }, [timerStarted, timeRemaining, exam?.id]);
-
     useEffect(() => {
         if (timerStarted && timeRemaining <= 0 && !timerExpired) {
             setTimeRemaining(0);
@@ -270,6 +276,11 @@ const ExamPage = () => {
     // Exit Confirmation
     useEffect(() => {
         const handleBeforeUnload = (e) => {
+            if (grading) {
+                abortCurrentGrading();
+                if (exam?.id) clearExamSessionState(exam.id);
+                return;
+            }
             const hasAnswers = Object.values(answers).some(val => 
                 Array.isArray(val) ? val.length > 0 : (val && String(val).trim() !== '')
             );
@@ -280,18 +291,32 @@ const ExamPage = () => {
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [answers, timerStarted]);
+    }, [abortCurrentGrading, answers, clearExamSessionState, exam?.id, grading, timerStarted]);
 
     const handleExit = (targetPath) => {
+        if (grading) {
+            if (window.confirm("採点中です。終了すると採点を中止します。本当に終了しますか？")) {
+                abortCurrentGrading();
+                if (exam?.id) clearExamSessionState(exam.id);
+                setGrading(false);
+                setGradingProgress('');
+                setGradingProgressValue(0);
+                navigate(targetPath);
+            }
+            return;
+        }
+
         const hasAnswers = Object.values(answers).some(val => 
             Array.isArray(val) ? val.length > 0 : (val && String(val).trim() !== '')
         );
         
         if (hasAnswers || timerStarted) {
             if (window.confirm("回答途中のデータは全て失われます。本当に終了しますか？")) {
+                if (exam?.id) clearExamSessionState(exam.id);
                 navigate(targetPath);
             }
         } else {
+            if (exam?.id) clearExamSessionState(exam.id);
             navigate(targetPath);
         }
     };
@@ -512,6 +537,8 @@ const ExamPage = () => {
         }, 300);
 
         try {
+            const gradingController = new AbortController();
+            gradingAbortControllerRef.current = gradingController;
             setGrading(true);
             setGradingProgressValue(0);
             setLogs(['採点を開始します...']);
@@ -535,6 +562,7 @@ const ExamPage = () => {
              let result;
              try {
                  result = await gradeExamWithGemini(examData, formattedAnswers, signedPdfUrl || exam.pdfPath, fullMaxScore, (val) => {
+                    if (gradingController.signal.aborted || !examActiveRef.current) return;
                     // Real progress from backend: update the target ceiling
                     const realValue = 10 + Math.round(val * 0.85);
                     targetRef.current = Math.max(targetRef.current, realValue);
@@ -542,7 +570,14 @@ const ExamPage = () => {
                         setGradingProgress('全体の総評を生成中...');
                         addLog("採点完了。全体の総評を生成しています...");
                     }
-                });
+                }, { signal: gradingController.signal });
+                if (gradingController.signal.aborted || !examActiveRef.current) {
+                    setGrading(false);
+                    setGradingProgress('');
+                    setGradingProgressValue(0);
+                    gradingAbortControllerRef.current = null;
+                    return;
+                }
                 // Done: jump to 100%
                 targetRef.current = 100;
                 displayRef.current = 100;
@@ -554,6 +589,13 @@ const ExamPage = () => {
                 clearInterval(fakeInterval);
             }
 
+            if (gradingController.signal.aborted || !examActiveRef.current) {
+                setGrading(false);
+                setGradingProgress('');
+                setGradingProgressValue(0);
+                gradingAbortControllerRef.current = null;
+                return;
+            }
             if (!result) {
                 throw new Error("採点結果が空でした。");
             }
@@ -572,6 +614,7 @@ const ExamPage = () => {
 
             const finalUsageStatus = usageResult.data;
             setGrading(false);
+            gradingAbortControllerRef.current = null;
             navigate('/result', {
                 state: {
                     result,
@@ -592,7 +635,15 @@ const ExamPage = () => {
         } catch (error) {
             clearInterval(fakeInterval);
             console.error("Submit Error:", error);
+            if (error?.name === 'AbortError' || gradingAbortControllerRef.current?.signal?.aborted || !examActiveRef.current) {
+                setGrading(false);
+                setGradingProgress('');
+                setGradingProgressValue(0);
+                gradingAbortControllerRef.current = null;
+                return;
+            }
             setGrading(false);
+            gradingAbortControllerRef.current = null;
             addLog(`エラー発生: ${error.message}`);
             alert(`エラーが発生しました: ${error.message}`);
         }
@@ -1081,6 +1132,7 @@ const ExamPage = () => {
                                             const uniqueKey = `${section.id}_${i}_${questionId}`;
                                             const qType = q.type || section.type || 'text';
                                             const qOptions = q.options || section.options || [];
+                                            const isKanjiSelfGrade = isKanjiSelfGradingQuestion(examData, section, q);
 
                                             // Multiple selection should be explicit. Some defective questions
                                             // have multiple acceptable answers while the UI remains single-choice.
@@ -1096,7 +1148,40 @@ const ExamPage = () => {
                                                     <span className="answer-question-label" style={{ minWidth: '30px', fontWeight: '600', fontSize: '0.9rem', paddingTop: '0.2rem' }}>
                                                         {q.label || `(${i + 1})`}
                                                     </span>
-                                                    {isOrdering ? (
+                                                    {isKanjiSelfGrade ? (
+                                                        <div className="answer-option-list" style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', width: '100%' }}>
+                                                            {[
+                                                                { value: KANJI_SELF_GRADE_CORRECT, label: '正解にする' },
+                                                                { value: KANJI_SELF_GRADE_WRONG, label: '不正解にする' }
+                                                            ].map(option => (
+                                                                <label key={option.value} style={{
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '0.5rem',
+                                                                    cursor: answerDisabled ? 'not-allowed' : 'pointer',
+                                                                    opacity: answerDisabled ? 0.6 : 1,
+                                                                    padding: '0.55rem 0.75rem',
+                                                                    border: '1px solid #e2e8f0',
+                                                                    borderRadius: '2px',
+                                                                    background: answers[uniqueKey] === option.value ? '#fef2f2' : '#fff',
+                                                                    fontWeight: 700
+                                                                }}>
+                                                                    <input
+                                                                        type="radio"
+                                                                        name={uniqueKey}
+                                                                        value={option.value}
+                                                                        checked={answers[uniqueKey] === option.value}
+                                                                        onChange={(e) => handleAnswerChange(uniqueKey, e.target.value, false)}
+                                                                        disabled={answerDisabled}
+                                                                    />
+                                                                    <span>{option.label}</span>
+                                                                </label>
+                                                            ))}
+                                                            <div style={{ flexBasis: '100%', fontSize: '0.78rem', color: '#64748b', lineHeight: 1.6 }}>
+                                                                漢字の表記は自動判定が難しいため、解答後に自己採点してください。
+                                                            </div>
+                                                        </div>
+                                                    ) : isOrdering ? (
                                                         <div className="answer-ordering-control" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                                             <div className="answer-option-list" style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                                                                 {qOptions.map(option => {

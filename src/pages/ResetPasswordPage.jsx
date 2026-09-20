@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { recoverPasswordSessionFromUrl, requestPasswordReset, updatePassword, onAuthStateChange } from '../services/authService';
+import { toUserFacingErrorMessage } from '../utils/errorMessages';
 
 const ResetPasswordPage = () => {
     const navigate = useNavigate();
@@ -24,7 +25,7 @@ const ResetPasswordPage = () => {
 
             if (recoverError) {
                 setSessionReady(false);
-                setError(recoverError.message || '再設定リンクの確認に失敗しました。メール内の最新リンクから開き直してください。');
+                setError(toUserFacingErrorMessage(recoverError, '再設定リンクの確認に失敗しました。メール内の最新リンクから開き直してください。'));
             } else {
                 setSessionReady(true);
                 setError('');
@@ -63,7 +64,7 @@ const ResetPasswordPage = () => {
         setResending(true);
         const { error: resetError } = await requestPasswordReset(email.trim());
         if (resetError) {
-            setError(resetError.message || '再設定メールの送信に失敗しました。');
+            setError(toUserFacingErrorMessage(resetError, '再設定メールの送信に失敗しました。'));
         } else {
             setMessage('再設定メールを送信しました。届いた最新メールのリンクから開いてください。');
         }
@@ -94,13 +95,13 @@ const ResetPasswordPage = () => {
         try {
             const { error: updateError } = await updatePassword(password);
             if (updateError) {
-                setError(updateError.message || 'パスワードの更新に失敗しました。再設定メールから開き直してください。');
+                setError(toUserFacingErrorMessage(updateError, 'パスワードの更新に失敗しました。再設定メールから開き直してください。'));
                 return;
             }
             setMessage('パスワードを更新しました。新しいパスワードでログインできます。');
             setTimeout(() => navigate('/', { replace: true }), 1200);
         } catch (err) {
-            setError('予期せぬエラーが発生しました。再設定メールから開き直してください。');
+            setError(toUserFacingErrorMessage(err, '予期せぬエラーが発生しました。再設定メールから開き直してください。'));
         } finally {
             setLoading(false);
         }

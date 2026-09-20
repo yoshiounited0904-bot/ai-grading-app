@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { signUp, signIn, requestPasswordReset } from '../services/authService'
+import { toAuthErrorMessage, toUserFacingErrorMessage } from '../utils/errorMessages'
 
 const REFERRAL_OPTIONS = [
     'X（Twitter）',
@@ -46,12 +47,12 @@ const AuthModal = ({ isOpen, onClose }) => {
             try {
                 const { error: resetError } = await requestPasswordReset(email)
                 if (resetError) {
-                    setError(resetError.message)
+                    setError(toUserFacingErrorMessage(resetError, '再設定メールの送信に失敗しました。時間をおいて再度お試しください。'))
                 } else {
                     setMessage('パスワード再設定用のメールを送信しました。メール内のリンクから新しいパスワードを設定してください。')
                 }
             } catch (err) {
-                setError('予期せぬエラーが発生しました。')
+                setError(toUserFacingErrorMessage(err, '予期せぬエラーが発生しました。時間をおいて再度お試しください。'))
             } finally {
                 setLoading(false)
             }
@@ -82,9 +83,7 @@ const AuthModal = ({ isOpen, onClose }) => {
                 : await signIn(email, password)
 
             if (authError) {
-                setError(authError.message === 'Invalid login credentials'
-                    ? 'メールアドレスまたはパスワードが正しくありません'
-                    : authError.message)
+                setError(toAuthErrorMessage(authError))
             } else {
                 localStorage.removeItem('smashai_guest_graded');
                 if (isSignUp && data?.session) {
@@ -96,7 +95,7 @@ const AuthModal = ({ isOpen, onClose }) => {
                 }
             }
         } catch (err) {
-            setError('予期せぬエラーが発生しました。')
+            setError(toAuthErrorMessage(err))
         } finally {
             setLoading(false)
         }

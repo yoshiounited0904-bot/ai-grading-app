@@ -1276,6 +1276,12 @@ function AdminDashboard() {
                             </div>
                         )}
                         <Link
+                            to="/admin/rubric-lab"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
+                        >
+                            <span className="text-lg">🧪</span> 採点基準ラボ
+                        </Link>
+                        <Link
                             to="/admin/exam-lab"
                             className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-lg shadow transition-colors flex items-center gap-2"
                         >

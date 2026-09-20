@@ -8,6 +8,7 @@ import { signOut } from '../services/authService';
 import RecruitmentBanner from '../components/RecruitmentBanner';
 import AdBanner from '../components/AdBanner';
 import { MARKETING_CONFIG } from '../config/marketingConfig';
+import { toUserFacingErrorMessage } from '../utils/errorMessages';
 
 const Home = () => {
     const { user, profile, loading } = useAuth();
@@ -36,7 +37,7 @@ const Home = () => {
                 console.error('Failed to load university list:', err);
                 if (!isMounted) return;
                 setUniversities([]);
-                setUniversityLoadError(err.message || '大学一覧の取得に失敗しました。');
+                setUniversityLoadError(toUserFacingErrorMessage(err, '大学一覧の取得に失敗しました。'));
             } finally {
                 if (isMounted) {
                     setLoadingUniversities(false);
@@ -114,7 +115,7 @@ const Home = () => {
                         marginBottom: '1rem',
                         letterSpacing: '0.1em'
                     }}>
-                        私大の英語・社会の採点に特化
+                        私大の英語・国語・社会の採点に対応
                     </div>
                     <br />
                     <h1 className="hero-title" style={{

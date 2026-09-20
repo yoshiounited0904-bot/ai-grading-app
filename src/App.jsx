@@ -12,6 +12,8 @@ import AdminRoute from './components/AdminRoute';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminExamEditor from './pages/AdminExamEditor';
 import AdminExamLab from './pages/AdminExamLab';
+import AdminRubricLab from './pages/AdminRubricLab';
+import ErrorBoundary from './components/ErrorBoundary';
 import AdminBannerDashboard from './pages/AdminBannerDashboard';
 import AdminBannerEditor from './pages/AdminBannerEditor';
 import AdminUserDashboard from './pages/AdminUserDashboard';
@@ -82,65 +84,68 @@ function App() {
   }
 
   return (
-    <Router>
-      <AuthRedirectHandler />
-      <RealtimeGradingToast />
-      <div className="min-h-screen flex flex-col">
-        <Navbar />
-        <>
-          <div className="flex-1">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/pending" element={<Navigate to="/" replace />} />
-              <Route path="/terms" element={<TermsPage />} />
-              <Route path="/privacy" element={<PrivacyPage />} />
-              <Route path="/reset-password" element={<ResetPasswordPage />} />
-              <Route path="/premium" element={<PremiumPage />} />
-              <Route
-                path="/consultation"
-                element={MARKETING_CONFIG.enableConsultation ? <ConsultationPage /> : <Navigate to="/premium" replace />}
-              />
-              <Route path="/university/:universityId" element={<UniversityPage />} />
-              <Route path="/university/:universityId/faculty/:facultyId" element={<FacultyPage />} />
-              <Route path="/exam/:id" element={<ExamPage />} />
-              <Route path="/result" element={<ResultPage />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/weakness" element={<Navigate to="/dashboard" replace />} />
+    <ErrorBoundary>
+      <Router>
+        <AuthRedirectHandler />
+        <RealtimeGradingToast />
+        <div className="min-h-screen flex flex-col">
+          <Navbar />
+          <>
+            <div className="flex-1">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/pending" element={<Navigate to="/" replace />} />
+                <Route path="/terms" element={<TermsPage />} />
+                <Route path="/privacy" element={<PrivacyPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
+                <Route path="/premium" element={<PremiumPage />} />
+                <Route
+                  path="/consultation"
+                  element={MARKETING_CONFIG.enableConsultation ? <ConsultationPage /> : <Navigate to="/premium" replace />}
+                />
+                <Route path="/university/:universityId" element={<UniversityPage />} />
+                <Route path="/university/:universityId/faculty/:facultyId" element={<FacultyPage />} />
+                <Route path="/exam/:id" element={<ExamPage />} />
+                <Route path="/result" element={<ResultPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/weakness" element={<Navigate to="/dashboard" replace />} />
 
-              <Route element={<AdminRoute />}>
-                <Route path="/admin" element={<AdminDashboard />} />
-                <Route path="/admin/exam-lab" element={<AdminExamLab />} />
-                <Route path="/admin/users" element={<AdminUserDashboard />} />
-                <Route
-                  path="/admin/consultations"
-                  element={MARKETING_CONFIG.enableConsultation ? <AdminConsultationsPage /> : <Navigate to="/admin" replace />}
-                />
-                <Route path="/admin/answer-image-snippet" element={<AnswerImageSnippetGenerator />} />
-                <Route path="/admin/university-data-checklist" element={<UniversityDataChecklistPage />} />
-                <Route path="/admin/university-data-coverage" element={<UniversityDataCoveragePage />} />
-                <Route path="/admin/exam/new" element={<AdminExamEditor />} />
-                <Route path="/admin/exam/:id" element={<AdminExamEditor />} />
-                <Route path="/admin/exam/:id/verify" element={<AnswerVerifyPage />} />
-                <Route
-                  path="/admin/banners"
-                  element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerDashboard /> : <Navigate to="/admin" replace />}
-                />
-                <Route
-                  path="/admin/banners/new"
-                  element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerEditor /> : <Navigate to="/admin" replace />}
-                />
-                <Route
-                  path="/admin/banners/:id"
-                  element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerEditor /> : <Navigate to="/admin" replace />}
-                />
-              </Route>
-            </Routes>
-          </div>
-          <Footer />
-        </>
-        <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
-      </div>
-    </Router>
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin" element={<AdminDashboard />} />
+                  <Route path="/admin/rubric-lab" element={<AdminRubricLab />} />
+                  <Route path="/admin/exam-lab" element={<AdminExamLab />} />
+                  <Route path="/admin/users" element={<AdminUserDashboard />} />
+                  <Route
+                    path="/admin/consultations"
+                    element={MARKETING_CONFIG.enableConsultation ? <AdminConsultationsPage /> : <Navigate to="/admin" replace />}
+                  />
+                  <Route path="/admin/answer-image-snippet" element={<AnswerImageSnippetGenerator />} />
+                  <Route path="/admin/university-data-checklist" element={<UniversityDataChecklistPage />} />
+                  <Route path="/admin/university-data-coverage" element={<UniversityDataCoveragePage />} />
+                  <Route path="/admin/exam/new" element={<AdminExamEditor />} />
+                  <Route path="/admin/exam/:id" element={<AdminExamEditor />} />
+                  <Route path="/admin/exam/:id/verify" element={<AnswerVerifyPage />} />
+                  <Route
+                    path="/admin/banners"
+                    element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerDashboard /> : <Navigate to="/admin" replace />}
+                  />
+                  <Route
+                    path="/admin/banners/new"
+                    element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerEditor /> : <Navigate to="/admin" replace />}
+                  />
+                  <Route
+                    path="/admin/banners/:id"
+                    element={MARKETING_CONFIG.enableAdBanners ? <AdminBannerEditor /> : <Navigate to="/admin" replace />}
+                  />
+                </Route>
+              </Routes>
+            </div>
+            <Footer />
+          </>
+          <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
+        </div>
+      </Router>
+    </ErrorBoundary>
   );
 }
 

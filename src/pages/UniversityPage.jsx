@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getExamsForUniversity } from '../data/examRegistry';
+import { SUBJECT_DISPLAY_ORDER } from '../config/subjectConfig';
 
 const isProductionExam = (exam) => exam?.master_status === 'production' || exam?.originalExam?.master_status === 'production';
 
@@ -169,10 +170,9 @@ const UniversityPage = () => {
 
     // Extract unique years and subjects for the matrix
     const years = [...new Set(allExams.map(e => e.year))].sort((a, b) => b - a);
-    const SUBJECT_ORDER = ['英語', '数学', '国語', '日本史', '世界史', '地理', '物理', '化学', '生物', '社会'];
     const subjects = [...new Set(allExams.map(e => e.subject))].sort((a, b) => {
-        const ai = SUBJECT_ORDER.indexOf(a);
-        const bi = SUBJECT_ORDER.indexOf(b);
+        const ai = SUBJECT_DISPLAY_ORDER.indexOf(a);
+        const bi = SUBJECT_DISPLAY_ORDER.indexOf(b);
         if (ai === -1 && bi === -1) return a.localeCompare(b, 'ja');
         if (ai === -1) return 1;
         if (bi === -1) return -1;

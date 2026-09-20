@@ -5,8 +5,11 @@ import { supabase } from "./supabaseClient";
 // Edge Function invocation helpers
 // ---------------------------------------------------------------------------
 
-async function invokeGrade(payload) {
-    const { data, error } = await supabase.functions.invoke("gemini-grade", { body: payload });
+async function invokeGrade(payload, options = {}) {
+    const { data, error } = await supabase.functions.invoke("gemini-grade", {
+        body: payload,
+        signal: options.signal
+    });
     if (error) throw new Error(await getFunctionErrorMessage(error, "採点サーバーでエラーが発生しました。"));
     if (data?.error) throw new Error(data.error);
     return data;
@@ -39,6 +42,13 @@ async function getFunctionErrorMessage(error, fallbackMessage) {
     }
     return error?.message || fallbackMessage;
 }
+
+const throwIfAborted = (signal) => {
+    if (!signal?.aborted) return;
+    const error = new Error("採点を中止しました。");
+    error.name = "AbortError";
+    throw error;
+};
 
 // ---------------------------------------------------------------------------
 // Scoring helpers (client-side, no API)
@@ -143,8 +153,9 @@ const appendScoreCompressionNotice = (weaknessAnalysis, compression) => {
 // apiKey パラメータを廃止。採点 AI 呼び出しは Edge Function 経由。
 // ---------------------------------------------------------------------------
 
-export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMaxScore = 0, onProgress = null) => {
+export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMaxScore = 0, onProgress = null, options = {}) => {
     try {
+        throwIfAborted(options.signal);
         // Step 1: 客観式を手元でプログラム採点
         const { score: objScore, maxScore: objMaxScore, questionFeedback: initialFeedback, pendingAiGrading } = gradeObjectively(examData, userAnswers);
         const allocatedMaxScore = objMaxScore || calculateAllocatedMaxScore(examData) || examData.max_score || examData.maxScore || 100;
@@ -161,6 +172,7 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
             });
             let weaknessAnalysis = generateSimpleWeakness(display.score, display.maxScore, initialFeedback);
             try {
+                throwIfAborted(options.signal);
                 const { weaknessAnalysis: aiWeaknessAnalysis } = await invokeGrade({
                     pendingAiGrading: [],
                     objectiveFeedback: initialFeedback,
@@ -173,13 +185,15 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
                         detailedAnalysis: examData.detailedAnalysis,
                     },
                     pdfPath: pdfPath || null,
-                });
+                }, { signal: options.signal });
                 if (aiWeaknessAnalysis) {
                     weaknessAnalysis = aiWeaknessAnalysis.replace(/\*/g, "");
                 }
             } catch (err) {
+                throwIfAborted(options.signal);
                 console.warn("AI weakness analysis fallback:", err);
             }
+            throwIfAborted(options.signal);
             if (onProgress) onProgress(100);
             const feedbackWithCompression = display.compression
                 ? initialFeedback.map((item, index) => index === 0 ? {
@@ -222,6 +236,7 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
         };
 
         if (onProgress) onProgress(30);
+        throwIfAborted(options.signal);
 
         const pendingAiGradingPayload = pendingAiGrading.map((item) => ({
             ...item,
@@ -234,8 +249,9 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
             objectiveFeedback: initialFeedback.filter(f => !f.isSubjective),
             examMeta,
             pdfPath: pdfPath || null,
-        });
+        }, { signal: options.signal });
 
+        throwIfAborted(options.signal);
         if (onProgress) onProgress(90);
 
         // Step 3: 結果をマージ
@@ -302,6 +318,11 @@ export const gradeExamWithGemini = async (examData, userAnswers, pdfPath, fullMa
             detailedAnalysis: examData.detailedAnalysis || "",
         };
     } catch (error) {
+        if (error?.name === "AbortError" || options.signal?.aborted) {
+            const abortError = new Error("採点を中止しました。");
+            abortError.name = "AbortError";
+            throw abortError;
+        }
         throw new Error("採点中に重大なエラーが発生しました: " + error.message);
     }
 };

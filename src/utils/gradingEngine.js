@@ -1,3 +1,9 @@
+import {
+    getKanjiSelfGradeLabel,
+    isKanjiSelfGradeCorrect,
+    isKanjiSelfGradingQuestion
+} from './kanjiSelfGrading';
+
 /**
  * Hybrid Grading Engine
  * Programmatically grades objective questions (Selection, Terminology)
@@ -18,9 +24,12 @@ export const gradeObjectively = (examData, userAnswers) => {
             const correctAnswer = q.correctAnswer;
             maxScore += q.points || 0;
             const completeGroupOrderMode = q.completeGroupOrderMode || 'ordered';
+            const isKanjiSelfGrade = isKanjiSelfGradingQuestion(examData, section, q);
 
             // Only process objective types here
-            const isCorrect = checkCorrectness(userAnswer, correctAnswer, q.type, q.alternativeAnswers, q.answerIssue);
+            const isCorrect = isKanjiSelfGrade
+                ? isKanjiSelfGradeCorrect(userAnswer)
+                : checkCorrectness(userAnswer, correctAnswer, q.type, q.alternativeAnswers, q.answerIssue);
             
             // Only essay/writing require AI grading. Everything else is exact-match (instant).
             const aiRequiredTypes = ['essay', 'writing'];
@@ -36,10 +45,16 @@ export const gradeObjectively = (examData, userAnswers) => {
                     id: q.id,
                     questionKey: uniqueKey,
                     sectionId: section.id,
-                    userAnswer: Array.isArray(userAnswer) ? userAnswer.join(', ') : userAnswer,
-                    correctAnswer: q.answerIssue === 'all_choices_correct' ? '全選択肢' : correctAnswer,
+                    userAnswer: isKanjiSelfGrade
+                        ? getKanjiSelfGradeLabel(userAnswer)
+                        : Array.isArray(userAnswer) ? userAnswer.join(', ') : userAnswer,
+                    correctAnswer: isKanjiSelfGrade
+                        ? '漢字問題のため自己採点'
+                        : q.answerIssue === 'all_choices_correct' ? '全選択肢' : correctAnswer,
                     correct: isCorrect,
-                    explanation: defectExplanation || q.explanation || (isCorrect ? "正解です。" : "不正解です。正解を確認しましょう。"),
+                    explanation: isKanjiSelfGrade
+                        ? '漢字の表記は自動判定が難しいため、自己申告に基づいて採点しました。'
+                        : defectExplanation || q.explanation || (isCorrect ? "正解です。" : "不正解です。正解を確認しましょう。"),
                     isSubjective: false,
                     points: q.points || 0 // Store points for possible group sum
                 };

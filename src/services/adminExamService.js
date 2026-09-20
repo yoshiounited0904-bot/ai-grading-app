@@ -49,12 +49,15 @@ export const importAogakuData = async () => {
     for (const item of universityBaseData) {
         const uniName = item.university || '青山学院大学';
         
-        // Resolve university_id (2260 for Aoyama, 2680 for Chuo, 3050 for Hosei, 2270 for Meiji, fallback to passnavi url extraction)
+        // Resolve university_id (2260 for Aoyama, 2680 for Chuo, 3050 for Hosei, 2270 for Meiji, 2250 for Waseda, 2280 for Rikkyo, 2390 for Keio, fallback to passnavi url extraction)
         let uniId = 2260;
         if (uniName === '中央大学') uniId = 2680;
         else if (uniName === '法政大学') uniId = 3050;
         else if (uniName === '明治大学') uniId = 2270;
         else if (uniName === '青山学院大学') uniId = 2260;
+        else if (uniName === '早稲田大学') uniId = 2250;
+        else if (uniName === '立教大学') uniId = 2280;
+        else if (uniName === '慶應義塾大学') uniId = 2390;
         else {
             const passnaviMatch = (item.sources || []).find(s => s.includes('passnavi.obunsha.co.jp/univ/'));
             if (passnaviMatch) {
@@ -68,7 +71,13 @@ export const importAogakuData = async () => {
         if (uniName === '中央大学') uniPrefix = 'chuo-';
         else if (uniName === '法政大学') uniPrefix = 'hosei-';
         else if (uniName === '明治大学') uniPrefix = 'meiji-';
-        const examId = `${uniPrefix}${safeFac}-2025-${item.subject_en || 'english'}`.toLowerCase();
+        else if (uniName === '早稲田大学') uniPrefix = 'waseda-';
+        else if (uniName === '立教大学') uniPrefix = 'rikkyo-';
+        else if (uniName === '慶應義塾大学') uniPrefix = 'keio-';
+
+        const examYear = item.year || 2025;
+        const examSubject = item.subject_en || 'english';
+        const examId = `${uniPrefix}${safeFac}-${examYear}-${examSubject}`.toLowerCase();
         
         // Generate a stable faculty ID based on the safe faculty name to prevent random regenerations
         const stableFacId = `fac-${safeFac.substring(0, 10)}`;
@@ -79,9 +88,9 @@ export const importAogakuData = async () => {
             university_id: uniId,
             faculty: item.faculty,
             faculty_id: stableFacId,
-            year: 2025,
+            year: examYear,
             subject: item.subject,
-            subject_en: item.subject_en || 'english',
+            subject_en: examSubject,
             type: 'pdf',
             max_score: item.maxScore || 100,
             duration_minutes: item.duration || item.durationMinutes || 60,
@@ -190,6 +199,40 @@ export const getAdminExams = async () => {
                 .limit(1500)
         ),
         '試験一覧の取得'
+    );
+};
+
+export const getAdminExamsWithStructure = async () => {
+    return runSupabaseQuery(
+        () => (
+            supabase
+                .from('exams')
+                .select(`
+                    id, 
+                    university, 
+                    university_id, 
+                    faculty, 
+                    faculty_id, 
+                    year, 
+                    subject, 
+                    subject_en, 
+                    type, 
+                    pdf_path, 
+                    max_score, 
+                    duration_minutes,
+                    structure,
+                    master_status, 
+                    unimplemented_items, 
+                    admin_comment,
+                    is_completed,
+                    is_published,
+                    created_at,
+                    updated_at
+                `)
+                .order('created_at', { ascending: false })
+                .limit(1500)
+        ),
+        '試験詳細一覧（structure含む）の取得'
     );
 };
 
