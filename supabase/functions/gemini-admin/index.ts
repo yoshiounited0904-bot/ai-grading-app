@@ -768,10 +768,9 @@ const hasExtractedQuestionEvidence = (questionData: unknown): boolean => {
 const questionExplanationQualityRules = (subjectType: unknown): string => `
 【小問解説の品質ルール（全科目共通）】
 ・「この問題は〜力を試します」「文法的または意味的に最も適切」「選択肢を注意深く検討」のような一般論は禁止。
-・必ず、正解欄の値・選択肢・設問本文・解答画像のうち少なくとも1つの具体語句を使い、「なぜその正解になるか」を説明すること。
-・根拠語句が確認できない場合は、推測で作らず evidenceQuote を空欄にし、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
-・画像だけを見て根拠を推測しないこと。設問構造データ内で確認できる語句を evidenceQuote に入れられない場合は、解説を確定させないこと。
-・正解番号だけ、または選択肢番号だけを根拠に解説を作らないこと。問題文・選択肢文・模範解答の具体語句と照合できない場合は要確認にすること。
+・正解欄の値・選択肢・設問本文・模範解答のうち、確認できる具体語句をできるだけ使い、「なぜその正解になるか」を説明すること。
+・evidenceQuote は国語以外では任意。入れる場合は、確認できる短い根拠語句だけにすること。
+・正解番号だけ、または選択肢番号だけを根拠にした空疎な解説は避けること。
 ・選択問題では、正解番号だけでなく、その選択肢が本文・設問条件・文法条件のどれに合うのかを具体的に書くこと。
 ・歴史など知識問題では、人物名・出来事名・年代・制度名など、正解に直結する固有語を使って説明すること。
 ・英語では、実際の英文・空所・選択肢に含まれる語句を根拠にし、単なる「文脈に合う」「自然である」だけで終わらせないこと。
@@ -782,17 +781,12 @@ const japaneseQuestionExplanationRules = (subjectType: unknown): string => {
 
   return `
 【国語の小問解説・絶対ルール】
-・本文、設問文、選択肢、解答画像から確認できる内容だけで解説すること。
-・設問構造データ内に本文・設問文・選択肢文・模範解答などの照合可能な文字情報がない場合は、画像からそれらしい解説を作らず、explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。
-・各小問の出力には必ず evidenceQuote を含めること。evidenceQuote には、本文・設問文・選択肢・解答画像から実際に読める短い根拠語句をそのまま入れること。
-・evidenceQuote は「本文中の該当箇所」「第○段落」「傍線部付近」などの場所説明だけでは不可。画像内で読める具体的な語句・一文の短い引用にすること。
-・解説は必ず「設問条件」「本文中の根拠」「正解になる理由」の対応で書くこと。本文根拠なしの一般論、受験アドバイス、作者・作品知識、出典説明で補わないこと。
-・本文根拠が画像から確認できない場合は、推測で作らず evidenceQuote を空欄にし、explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。
+・本文、設問文、選択肢、解答画像から確認できる論理や文脈に基づいて解説を作成すること。
+・各小問の出力には可能な限り evidenceQuote を含めること。evidenceQuote には、本文・設問文・選択肢・解答画像から実際に読める短い根拠語句を引用すること。
+・解説は必ず「設問条件」「本文中の根拠」「正解になる理由」の対応を論理的に説明すること。本文根拠なしの作者・作品トリビアや無関係な一般論で文字数を埋めないこと。
 ・「問題が公表されている」「公表された問題」「出典は」「著作権」「大学が公開している」など、問題の公開状況やメタ情報を解説に書かないこと。
-・設問文や選択肢を長く写さないこと。引用する場合は根拠確認に必要な短い語句だけにすること。
-・段落番号や傍線番号が画像から読めない場合は、存在しない番号を作らず「本文中の該当箇所」と書くこと。
-・選択問題では、正解選択肢が本文のどの表現・論理と合うかを述べ、誤答は本文にない断定、因果の逆転、範囲のずれ、言い換え不成立などのズレとして説明すること。
-・漢字の書き取りなど自動採点不可の問題は、採点根拠を本文から捏造せず、自己採点対象であることだけを簡潔に書くこと。
+・選択問題では、正解選択肢が本文のどの表現・論理と合致するかを述べ、主要な誤答選択肢について本文とのズレ（因果の逆転、範囲の過不足など）を簡潔に触れること。
+・漢字の書き取りや語句の意味など知識問題では、正解語句の意味や用例を簡潔に説明すること。
 `;
 };
 
@@ -830,16 +824,12 @@ const applyQuestionExplanationGuard = (
   const explanation = cleanQuestionExplanationOutput(generated.explanation, subjectType);
   if (!isJapaneseSubject(subjectType)) {
     const evidenceQuote = String(generated.evidenceQuote || generated.evidence || "").trim();
-    if (
-      explanation === QUESTION_EXPLANATION_UNVERIFIABLE ||
-      !hasMeaningfulQuestionEvidenceSource(sourceQuestion) ||
-      !evidenceQuoteAppearsInQuestionSource(evidenceQuote, sourceQuestion)
-    ) {
+    if (explanation === QUESTION_EXPLANATION_UNVERIFIABLE || !hasUsableExplanation(explanation)) {
       return {
         explanation: QUESTION_EXPLANATION_UNVERIFIABLE,
         evidenceQuote: "",
         needsReview: true,
-        explanationIssue: "generic_or_missing_evidence",
+        explanationIssue: "generic_or_missing_explanation",
       };
     }
     return {
@@ -851,15 +841,21 @@ const applyQuestionExplanationGuard = (
   }
 
   const evidenceQuote = String(generated.evidenceQuote || generated.evidence || "").trim();
-  if (
-    explanation === JAPANESE_UNVERIFIABLE_EXPLANATION ||
-    !hasMeaningfulQuestionEvidenceSource(sourceQuestion) ||
-    !hasConcreteJapaneseEvidenceQuote(evidenceQuote) ||
-    !evidenceQuoteAppearsInQuestionSource(evidenceQuote, sourceQuestion)
-  ) {
+  const rawExplanation = String(generated.explanation || "").trim();
+  const usableExplanation = hasUsableExplanation(explanation) && explanation !== JAPANESE_UNVERIFIABLE_EXPLANATION
+    ? explanation
+    : (hasUsableExplanation(rawExplanation) ? rawExplanation : "");
+
+  const isEvidenceVerified =
+    explanation !== JAPANESE_UNVERIFIABLE_EXPLANATION &&
+    hasMeaningfulQuestionEvidenceSource(sourceQuestion) &&
+    hasConcreteJapaneseEvidenceQuote(evidenceQuote) &&
+    evidenceQuoteAppearsInQuestionSource(evidenceQuote, sourceQuestion);
+
+  if (!isEvidenceVerified) {
     return {
-      explanation: JAPANESE_UNVERIFIABLE_EXPLANATION,
-      evidenceQuote: "",
+      explanation: usableExplanation || JAPANESE_UNVERIFIABLE_EXPLANATION,
+      evidenceQuote,
       needsReview: true,
       explanationIssue: "missing_japanese_evidence",
     };
@@ -2157,10 +2153,12 @@ async function handleRegenerateExplanation(genAI: GoogleGenerativeAI, body: Reco
     : QUESTION_EXPLANATION_UNVERIFIABLE;
   const outputRule = `出力はJSONオブジェクト1つのみを返してください。
 {
-  "evidenceQuote": "本文・設問文・選択肢・解答画像から実際に読める短い根拠語句。確認できない場合は空欄",
+  "evidenceQuote": "${isJapaneseSubject(subjectType) ? "本文・設問文・選択肢・解答画像から実際に読める短い根拠語句。確認できない場合は空欄" : "任意。確認できる短い根拠語句がある場合だけ入れる。なければ空欄"}",
   "explanation": "2〜3文以内の小問解説"
 }
-根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${unverifiedExplanation}」にしてください。`;
+${isJapaneseSubject(subjectType)
+  ? "本文・設問・解答画像から読み取れる根拠に基づいて簡潔で論理的な解説を作成してください。"
+  : "国語以外では evidenceQuote が空欄でもよい。ただし解説本文は、正解・選択肢・設問条件・模範解答の具体内容に基づいて書いてください。"}`;
 
   const prompt = `あなたは大学入試の専門講師です。
 以下の設問について、【必ず2〜3文以内】の簡潔な解説を作成してください。
@@ -2170,10 +2168,12 @@ ${JSON.stringify(questionData, null, 2)}
 
 【絶対厳守のルール】
 1. 文章は【2〜3文以内】に収めること。これを超えることは絶対に禁止です。
-2. 「なぜ正解か」の根拠を本文の具体的な箇所（第◯段落など）を挙げて簡潔に説明すること。
+2. ${isJapaneseSubject(subjectType)
+  ? "「なぜ正解か」の根拠を本文の具体的な箇所や短い引用に基づいて簡潔に説明すること。"
+  : "「なぜ正解か」の根拠を、設問条件・選択肢・模範解答・正解に直結する具体語に基づいて簡潔に説明すること。"}
 3. 主要な誤答選択肢がなぜ間違いかを1文で触れること。
 4. アスタリスク（*）などの記号による装飾は一切使用しないこと。
-5. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体語句を確認できない場合は要確認にすること。
+5. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体内容を使って説明すること。
 6. 複数小問が写った画像では、対象小問の番号と根拠箇所を特定できる場合だけ解説すること。
 ${questionExplanationQualityRules(subjectType)}
 ${japaneseQuestionExplanationRules(subjectType)}
@@ -3473,8 +3473,10 @@ ${isJapanese ? `13. 漢字の書き取り・漢字表記・漢字に直す問題
 4. 各小問の explanation を【2〜3文以内、約50〜100文字】で埋めてください。
 5. 日本語で記述。アスタリスク（*）禁止。
 6. 出力は解説を埋めた後の同じJSON構造（オブジェクト1つ）のみ。
-7. 全科目で各小問に evidenceQuote を必ず入れること。根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
-8. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体語句を確認できない場合は要確認にすること。
+7. ${isJapaneseSubject(subjectType)
+  ? `国語では各小問に evidenceQuote を必ず入れること。根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。`
+  : "evidenceQuote は任意。確認できる根拠語句がある場合だけ入れ、空欄でも解説を生成してよい。"}
+8. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体内容を使って説明すること。
 9. 複数小問が写った画像では、対象小問の番号と根拠箇所を特定できる場合だけ解説すること。
 10. 国語では、JSON内の questionText / choiceTexts / sourceExcerpt / evidenceQuote を主材料にすること。これらが不足している小問は、画像から推測して解説せず要確認にすること。
 ${questionExplanationQualityRules(subjectType)}
@@ -3555,25 +3557,8 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
   const chunkSize = 1;
   const updatedQuestions = [...questions];
 
-  if (isJapaneseSubject(subjectType)) {
-    emptyQuestions.forEach((question) => {
-      if (hasExtractedQuestionEvidence(question)) return;
-      const targetIndex = findQuestionIndex(updatedQuestions, question);
-      if (targetIndex === -1) return;
-      updatedQuestions[targetIndex] = {
-        ...updatedQuestions[targetIndex],
-        explanation: JAPANESE_UNVERIFIABLE_EXPLANATION,
-        evidenceQuote: "",
-        needsReview: true,
-        explanationIssue: "missing_question_evidence",
-      };
-    });
-  }
-
   for (let i = 0; i < emptyQuestions.length; i += chunkSize) {
-    const chunk = emptyQuestions
-      .slice(i, i + chunkSize)
-      .filter((question) => !isJapaneseSubject(subjectType) || hasExtractedQuestionEvidence(question));
+    const chunk = emptyQuestions.slice(i, i + chunkSize);
     if (chunk.length === 0) continue;
     let unresolvedChunk = [...chunk];
 
@@ -3610,10 +3595,12 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
 6. 日本語で記述すること。
 7. アスタリスク（*）記号は一切使用禁止。
 8. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
-9. 全科目で各小問に evidenceQuote を必ず入れること。根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
-10. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体語句を確認できない場合は要確認にすること。
+9. ${isJapaneseSubject(subjectType)
+  ? "国語では各小問の根拠となる短い語句を可能な限り evidenceQuote に入れること。"
+  : "evidenceQuote は任意。確認できる根拠語句がある場合だけ入れ、空欄でも解説を生成してよい。"}
+10. 正解番号だけから解説を作らないこと。該当小問の本文・設問文・選択肢文・模範解答の具体内容を使って説明すること。
 11. 複数小問が写った画像では、対象小問の番号と根拠箇所を特定できる場合だけ解説すること。
-12. 国語では、JSON内の questionText / choiceTexts / sourceExcerpt / evidenceQuote を主材料にすること。これらが不足している小問は、画像から推測して解説せず要確認にすること。
+12. 国語では、JSON内の questionText / choiceTexts / sourceExcerpt / evidenceQuote や提供された画像を最大限活用して、本文の論理・根拠に基づいた小問解説を作成すること。
 ${questionExplanationQualityRules(subjectType)}
 ${japaneseQuestionExplanationRules(subjectType)}
 

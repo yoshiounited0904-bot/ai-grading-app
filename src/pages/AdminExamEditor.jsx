@@ -4927,19 +4927,30 @@ function AdminExamEditor() {
                                                             <div className="flex justify-between">
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest">解説</span>
-                                                                    {explanationMissing && (
+                                                                    {explanationMissing ? (
                                                                         <span className="bg-amber-100 text-amber-700 border border-amber-200 text-[8px] px-2 py-0.5 rounded-full font-black whitespace-nowrap">
                                                                             未生成
                                                                         </span>
-                                                                    )}
+                                                                    ) : q.needsReview ? (
+                                                                        <span
+                                                                            className="bg-orange-100 text-orange-800 border border-orange-200 text-[8px] px-2 py-0.5 rounded-full font-black whitespace-nowrap cursor-pointer hover:bg-orange-200 transition-colors"
+                                                                            title="本文根拠の自動照合が不十分です（AIの下書き解説）。内容を確認してクリックで確認済みにできます。"
+                                                                            onClick={() => handleStructureChange(sIdx, qIdx, 'needsReview', false)}
+                                                                        >
+                                                                            ⚠️ 根拠要確認 (下書き)
+                                                                        </span>
+                                                                    ) : null}
                                                                 </div>
                                                                 <button onClick={() => handleRegenerateExplanation(sIdx, qIdx, q)} className="text-[9px] font-black text-indigo-400 hover:text-indigo-600 transition-colors">AIで再生成</button>
                                                             </div>
                                                             <textarea
                                                                 value={q.explanation || ''}
-                                                                onChange={e => handleStructureChange(sIdx, qIdx, 'explanation', e.target.value)}
+                                                                onChange={e => {
+                                                                    handleStructureChange(sIdx, qIdx, 'explanation', e.target.value);
+                                                                    if (q.needsReview) handleStructureChange(sIdx, qIdx, 'needsReview', false);
+                                                                }}
                                                                 placeholder={explanationMissing ? '小問解説が未生成です。上部の「空の小問解説を一括生成」または「AIで再生成」を実行してください。' : ''}
-                                                                className={`w-full p-4 rounded-xl border text-[11px] leading-relaxed min-h-[60px] focus:bg-gray-50/30 outline-none transition-all ${explanationMissing ? 'border-amber-300 bg-amber-50/80 text-amber-900 placeholder:text-amber-500' : 'border-gray-100'}`}
+                                                                className={`w-full p-4 rounded-xl border text-[11px] leading-relaxed min-h-[60px] focus:bg-gray-50/30 outline-none transition-all ${explanationMissing ? 'border-amber-300 bg-amber-50/80 text-amber-900 placeholder:text-amber-500' : q.needsReview ? 'border-orange-200 bg-orange-50/30' : 'border-gray-100'}`}
                                                             />
                                                         </div>
                                                         <div className="space-y-2">
