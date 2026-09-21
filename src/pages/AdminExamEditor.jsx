@@ -2025,6 +2025,117 @@ function AdminExamEditor() {
         }
     };
 
+    const handleExportCsv = () => {
+        const structure = examData?.structure || [];
+        if (!structure || structure.length === 0) {
+            alert('エクスポート可能な大問・問題データがありません。');
+            return;
+        }
+
+        const headers = [
+            '大学名',
+            '学部名',
+            '年度',
+            '科目',
+            '大問',
+            '大問配点',
+            '問題番号',
+            '問題形式',
+            '配点',
+            '回答',
+            '小問解説',
+            '大問詳細解説',
+            '採点基準・指示'
+        ];
+
+        const rows = [];
+
+        structure.forEach((section, sIdx) => {
+            const sectionLabel = section.label || `第${sIdx + 1}問`;
+            const sectionPoints = section.allocatedPoints ?? section.totalPoints ?? '';
+            const sectionAnalysis = section.sectionAnalysis || '';
+            const questions = section.questions || [];
+
+            if (questions.length === 0) {
+                rows.push([
+                    university || '',
+                    faculty || '',
+                    year ? `${year}年度` : '',
+                    subject || '',
+                    sectionLabel,
+                    sectionPoints,
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    sectionAnalysis,
+                    ''
+                ]);
+                return;
+            }
+
+            questions.forEach((q, qIdx) => {
+                const qLabel = q.label || q.id || `問${qIdx + 1}`;
+                let qTypeLabel = q.type || '';
+                if (q.type === 'selection') qTypeLabel = '選択式';
+                else if (q.type === 'selection_multi') qTypeLabel = '複数選択';
+                else if (q.type === 'descriptive') qTypeLabel = '記述式';
+                else if (q.type === 'essay') qTypeLabel = '論述式';
+
+                const answer = q.correctAnswer ?? q.answer ?? '';
+                const explanation = q.explanation || '';
+                const gradingInstruction = q.gradingInstruction || '';
+                const points = q.points ?? '';
+
+                rows.push([
+                    university || '',
+                    faculty || '',
+                    year ? `${year}年度` : '',
+                    subject || '',
+                    sectionLabel,
+                    sectionPoints,
+                    qLabel,
+                    qTypeLabel,
+                    points,
+                    answer,
+                    explanation,
+                    sectionAnalysis,
+                    gradingInstruction
+                ]);
+            });
+        });
+
+        if (rows.length === 0) {
+            alert('エクスポート対象のデータがありません。');
+            return;
+        }
+
+        const escapeCell = (val) => {
+            if (val === null || val === undefined) return '""';
+            const str = String(val);
+            return `"${str.replace(/"/g, '""')}"`;
+        };
+
+        const csvContent = [
+            headers.map(escapeCell).join(','),
+            ...rows.map(row => row.map(escapeCell).join(','))
+        ].join('\r\n');
+
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const filename = `${university || '大学'}_${faculty || '学部'}_${year ? year + '年度_' : ''}${subject || '問題データ'}_問題一覧.csv`
+            .replace(/[\\/:*?"<>|]/g, '_');
+
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const handleSaveAndPreview = async () => {
         if (!examData || !examId) {
             alert('保存するデータがありません。');
@@ -3766,6 +3877,14 @@ function AdminExamEditor() {
                                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-emerald-200 transition-all active:scale-95 text-sm flex items-center gap-2"
                                 >
                                     🔍 解答照合 (正解・配点)
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={handleExportCsv}
+                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold py-3 px-6 rounded-xl border border-emerald-300 transition-all active:scale-95 text-sm flex items-center gap-2 cursor-pointer shadow-sm"
+                                    title="大問、問題番号、回答、小問解説、詳細解説などの問題データをCSV形式でダウンロードします"
+                                >
+                                    📥 CSVエクスポート
                                 </button>
                                 <button onClick={handleSaveAndPreview} disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50 text-sm flex items-center gap-2">
                                     {saving ? '保存中...' : '保存してプレビュー'}
