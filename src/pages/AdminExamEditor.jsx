@@ -3679,9 +3679,9 @@ function AdminExamEditor() {
             alert('先にAIでデータを生成してください。');
             return;
         }
-        const rows = [['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'alternative_answers', 'grading_instruction', 'points', 'explanation']];
+        const rows = [['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'alternative_answers', 'grading_instruction', 'points', 'explanation', 'section_analysis']];
         examData.structure.forEach(sec => {
-            sec.questions.forEach(q => {
+            sec.questions.forEach((q, qIdx) => {
                 rows.push([
                     sec.id,
                     sec.label,
@@ -3692,7 +3692,8 @@ function AdminExamEditor() {
                     (q.alternativeAnswers || []).join('|'), // Joined by pipe
                     (q.gradingInstruction || '').replace(/"/g, '""'), // escape quotes
                     q.points || 0,
-                    (q.explanation || '').replace(/"/g, '""') // escape quotes
+                    (q.explanation || '').replace(/"/g, '""'), // escape quotes
+                    qIdx === 0 ? (sec.sectionAnalysis || '').replace(/"/g, '""') : '' // Output detailed section analysis on first question of each section
                 ]);
             });
         });
@@ -3772,6 +3773,7 @@ function AdminExamEditor() {
                 const secIdIdx = findColIdx(['sectionid', '大問id', '大問番号', '大問']);
                 const qIdIdx = findColIdx(['questionid', '問題id', '小問id', '問題番号', '設問番号']);
                 const expIdx = findColIdx(['explanation', '小問解説', '解説']);
+                const secAnalysisIdx = findColIdx(['sectionanalysis', '詳細解説', '大問詳細解説', '大問解説', '大問総評']);
                 const gradingIdx = findColIdx(['gradinginstruction', '採点基準', '指示']);
                 const pointsIdx = findColIdx(['points', '配点', '点数']);
                 const answerIdx = findColIdx(['correctanswer', 'answer', '正解', '回答', '解答']);
@@ -3781,6 +3783,8 @@ function AdminExamEditor() {
                 }
 
                 const updates = {};
+                const sectionAnalysisUpdates = {};
+
                 for (let r = 1; r < rows.length; r++) {
                     const row = rows[r];
                     const secId = (row[secIdIdx] || '').trim();
@@ -3798,11 +3802,21 @@ function AdminExamEditor() {
                         ...(Number.isFinite(points) && points > 0 ? { points } : {}),
                         ...(correctAnswer ? { correctAnswer } : {})
                     };
+
+                    if (secAnalysisIdx !== -1) {
+                        const secAnalysis = (row[secAnalysisIdx] || '').trim();
+                        if (secAnalysis) {
+                            sectionAnalysisUpdates[secId] = secAnalysis;
+                        }
+                    }
                 }
 
                 const currentExamData = examDataRef.current || examData || {};
                 const newStructure = (currentExamData.structure || []).map(sec => ({
                     ...sec,
+                    sectionAnalysis: sectionAnalysisUpdates[sec.id] !== undefined
+                        ? sectionAnalysisUpdates[sec.id]
+                        : sec.sectionAnalysis,
                     questions: (sec.questions || []).map(q => {
                         const key = `${sec.id}__${q.id}`;
                         const altKey = `${sec.id}__${q.label}`;
@@ -3823,7 +3837,8 @@ function AdminExamEditor() {
                 const nextExamData = { ...currentExamData, structure: newStructure };
                 examDataRef.current = nextExamData;
                 setExamData(nextExamData);
-                alert(`CSVのインポートが完了しました！\n解説が更新された問題: ${Object.keys(updates).length}問\n\n忘れずに画面右上の「保存」ボタンを押してください！`);
+                const updatedSecCount = Object.keys(sectionAnalysisUpdates).length;
+                alert(`CSVのインポートが完了しました！\n・小問解説が更新された問題: ${Object.keys(updates).length}問${updatedSecCount > 0 ? `\n・詳細解説が更新された大問: ${updatedSecCount}個` : ''}\n\n忘れずに画面右上の「保存」ボタンを押してください！`);
             } catch (err) {
                 alert('CSVの読み込みに失敗しました。形式を確認してください。\n' + err.message);
             } finally {
@@ -4006,7 +4021,27 @@ function AdminExamEditor() {
                                         <button
                                             onClick={(e) => {
                                                 e.preventDefault();
-                                                const promptText = `添付した2つのファイルを使ってください。\n・PDFファイル：大学入試の問題と解答\n・CSVファイル：各小問の構造データ\n\nCSVの「explanation」列を、以下の条件で埋めてください：\n1. 2〜3文で簡潔に書くこと\n2. 本文の根拠を1文で明示すること\n3. 選択問題は誤答の理由も1文明示すること\n4. 日本語で書き、装飾記号は使わないこと\n\nCSVファイルを修正せず、そのままの形式で返してください。`;
+                                                const promptText = `添付した2つのファイル（問題・解答PDF と 設問構造CSV）を使ってください。
+
+以下の指示に従って、CSVの【explanation】列と【section_analysis】列を埋めて完成させてください。
+
+■ 1. 小問解説（explanation列）
+各小問について、受験生にわかりやすい解説を作成してください。
+・2〜3文で論理的かつ簡潔に書くこと
+・本文の該当箇所・根拠を明確に示すこと
+・選択問題は正解の理由に加え、「誤答選択肢がなぜ間違いか（本文の記述とどうズレているか）」も簡潔に説明すること
+・記号装飾（*など）は使用しないこと
+
+■ 2. 大問全体の詳細解説（section_analysis列）
+各大問の【最初の行（問1の行）】の section_analysis 列に、その大問全体の読解ポイントと総評を記入してください（2問目以降は空欄で構いません）。
+以下の構成で記述してください：
+【大問のテーマ・要約】：本文全体の論理展開や筆者の主張の要約
+【読解のポイント】：この大問を解く上で差がつく着眼点（指示語、対比構造、論理展開など）
+【設問全体の傾向と対策】：受験生が復習すべきポイント
+
+■ 厳守ルール
+・CSVの他の列（id, label, type, correct_answer, points等）は絶対に書き換えないこと。
+・CSVファイルをそのままの形式（カンマ区切り、ダブルクォーテーション囲み）で返してください。`;
                                                 navigator.clipboard.writeText(promptText);
                                                 alert('プロンプトをコピーしました！');
                                             }}
@@ -4014,9 +4049,16 @@ function AdminExamEditor() {
                                         >
                                             📋 プロンプトをコピー
                                         </button>
-                                        <p className="font-black text-navy-blue/40 text-[10px] uppercase tracking-widest mb-3">AIコピペ用プロンプト</p>
-                                        <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80">
-                                            添付した2つのファイルを使ってください。... (PDFとCSVを読み込ませて解説を生成させる指示)
+                                        <p className="font-black text-navy-blue/40 text-[10px] uppercase tracking-widest mb-3">AIコピペ用プロンプト（小問解説＋大問詳細解説）</p>
+                                        <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-48 overflow-y-auto">
+{`添付した2つのファイル（PDF と CSV）を使ってください。
+
+CSVの【explanation】列（小問解説）と【section_analysis】列（大問詳細解説）を埋めてください：
+
+1. explanation列：各小問の根拠と正解・誤答の理由（2〜3文）
+2. section_analysis列：各大問の先頭行に、大問全体のテーマ・要約・読解ポイント・対策を記入
+
+※他の列は変更せず、そのままCSV形式で返してください。`}
                                         </pre>
                                     </div>
                                 </div>
