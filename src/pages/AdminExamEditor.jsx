@@ -634,7 +634,30 @@ function AdminExamEditor() {
 
     const persistSectionMerge = async (sectionNum, sectionData, { syncLocal = true } = {}) => {
         if (!examId || isNew) {
-            await handleSave(false);
+            // For new exams, we must build the merged structure ourselves and pass it
+            // to handleSave via structureOverride, because the React state update from
+            // setExamData hasn't committed yet and examDataRef still has stale data.
+            const currentStructure = [...(examDataRef.current?.structure || [])];
+            const sIdx = sectionNum - 1;
+            while (currentStructure.length <= sIdx) {
+                currentStructure.push({
+                    id: String(currentStructure.length + 1),
+                    label: `第${currentStructure.length + 1}問`,
+                    allocatedPoints: 0,
+                    sectionAnalysis: '',
+                    questionType: 'default',
+                    questions: []
+                });
+            }
+            currentStructure[sIdx] = {
+                ...currentStructure[sIdx],
+                ...sectionData,
+                id: String(sectionData?.id || currentStructure[sIdx]?.id || sectionNum),
+                label: sectionData?.label || currentStructure[sIdx]?.label || `第${sectionNum}問`
+            };
+            const { structure: choiceNormalized } = normalizeExamStructureChoiceLabels(currentStructure);
+            const mergedStructure = normalizeEditorStructure(choiceNormalized);
+            await handleSave(false, mergedStructure, Math.max(sectionCount, mergedStructure.length));
             return;
         }
 
@@ -3061,6 +3084,40 @@ function AdminExamEditor() {
 
     const flatAnswerFiles = Object.values(answerFilesBySection).flat();
 
+    const applyGeneratedExplanationResult = (sIdx, qIdx, result) => {
+        const explanation = typeof result === 'string' ? result : result?.explanation;
+        if (!explanation || typeof explanation !== 'string') {
+            throw new Error('AIから有効な解説が返りませんでした。');
+        }
+
+        handleStructureChange(sIdx, qIdx, 'explanation', explanation);
+
+        if (result && typeof result === 'object') {
+            if ('evidenceQuote' in result) {
+                handleStructureChange(sIdx, qIdx, 'evidenceQuote', result.evidenceQuote || '');
+            }
+            if ('evidenceConfidence' in result) {
+                handleStructureChange(sIdx, qIdx, 'evidenceConfidence', result.evidenceConfidence || '');
+            }
+            if ('needsReview' in result) {
+                handleStructureChange(sIdx, qIdx, 'needsReview', Boolean(result.needsReview));
+            }
+            if ('explanationIssue' in result) {
+                handleStructureChange(sIdx, qIdx, 'explanationIssue', result.explanationIssue || '');
+            }
+            if (result.questionText) {
+                handleStructureChange(sIdx, qIdx, 'questionText', result.questionText);
+            }
+            if (result.choiceTexts) {
+                handleStructureChange(sIdx, qIdx, 'choiceTexts', result.choiceTexts);
+            }
+            if (result.sourceExcerpt) {
+                handleStructureChange(sIdx, qIdx, 'sourceExcerpt', result.sourceExcerpt);
+                handleStructureChange(sIdx, qIdx, 'evidenceHint', result.sourceExcerpt);
+            }
+        }
+    };
+
     const handleRegenerateExplanation = async (sIdx, qIdx, q) => {
         const currentQuestion = examDataRef.current?.structure?.[sIdx]?.questions?.[qIdx] || q;
         if (!currentQuestion) {
@@ -3087,13 +3144,13 @@ function AdminExamEditor() {
                 examPdfPath: examData?.pdf_path
             });
 
-            const newExplanation = await geminiQueue.add(() => regenerateQuestionExplanation(
+            const explanationResult = await geminiQueue.add(() => regenerateQuestionExplanation(
                 currentQuestion,
                 finalQFiles,
                 finalAFiles,
                 subjectEn
             ));
-            handleStructureChange(sIdx, qIdx, 'explanation', newExplanation);
+            applyGeneratedExplanationResult(sIdx, qIdx, explanationResult);
         } catch (error) {
             alert('解説の再生成に失敗しました:\n' + error.message);
             handleStructureChange(sIdx, qIdx, 'explanation', oldExplanation || '');
@@ -3144,13 +3201,13 @@ function AdminExamEditor() {
                         examPdfPath: examData?.pdf_path
                     });
 
-                    const newExplanation = await geminiQueue.add(() => regenerateQuestionExplanation(
+                    const explanationResult = await geminiQueue.add(() => regenerateQuestionExplanation(
                         q,
                         finalQFiles,
                         finalAFiles,
                         subjectEn
                     ));
-                    handleStructureChange(sIdx, qIdx, 'explanation', newExplanation);
+                    applyGeneratedExplanationResult(sIdx, qIdx, explanationResult);
                 } catch (err) {
                     console.error("Error generating explanation for question", q.id, err);
                     handleStructureChange(sIdx, qIdx, 'explanation', '⚠️ AI生成エラー');
