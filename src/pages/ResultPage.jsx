@@ -881,6 +881,35 @@ const ResultPage = () => {
         };
     }, [user?.id]);
 
+    // Ensure all details (such as detailed section analyses) are fully opened when printing
+    useEffect(() => {
+        let closedDetailsElements = [];
+        const handleBeforePrint = () => {
+            const allDetails = document.querySelectorAll('details');
+            closedDetailsElements = [];
+            allDetails.forEach(d => {
+                if (!d.open) {
+                    closedDetailsElements.push(d);
+                    d.open = true;
+                }
+            });
+        };
+
+        const handleAfterPrint = () => {
+            closedDetailsElements.forEach(d => {
+                d.open = false;
+            });
+            closedDetailsElements = [];
+        };
+
+        window.addEventListener('beforeprint', handleBeforePrint);
+        window.addEventListener('afterprint', handleAfterPrint);
+        return () => {
+            window.removeEventListener('beforeprint', handleBeforePrint);
+            window.removeEventListener('afterprint', handleAfterPrint);
+        };
+    }, []);
+
     const rawDisplayUniversity = String(universityName || resultData?.universityName || resultData?.university_name || '').trim();
     const rawDisplayFaculty = String(facultyName || resultData?.facultyName || resultData?.faculty_name || '').trim();
     const displayUniversity = rawDisplayFaculty && rawDisplayUniversity.endsWith(rawDisplayFaculty)
