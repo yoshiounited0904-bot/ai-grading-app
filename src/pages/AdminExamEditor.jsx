@@ -3707,6 +3707,49 @@ function AdminExamEditor() {
     };
 
     // --- CSV Import: read CSV and map explanations back into questions ---
+    const parseCsvText = (text) => {
+        const rows = [];
+        let curRow = [];
+        let curCell = '';
+        let inQuote = false;
+
+        const cleanText = text.replace(/^\uFEFF/, '');
+
+        for (let i = 0; i < cleanText.length; i++) {
+            const ch = cleanText[i];
+            const next = cleanText[i + 1];
+
+            if (ch === '"') {
+                if (inQuote && next === '"') {
+                    curCell += '"';
+                    i++;
+                } else {
+                    inQuote = !inQuote;
+                }
+            } else if (ch === ',' && !inQuote) {
+                curRow.push(curCell);
+                curCell = '';
+            } else if ((ch === '\r' || ch === '\n') && !inQuote) {
+                if (ch === '\r' && next === '\n') i++;
+                curRow.push(curCell);
+                if (curRow.some(c => c.trim() !== '')) {
+                    rows.push(curRow);
+                }
+                curRow = [];
+                curCell = '';
+            } else {
+                curCell += ch;
+            }
+        }
+        if (curCell !== '' || curRow.length > 0) {
+            curRow.push(curCell);
+            if (curRow.some(c => c.trim() !== '')) {
+                rows.push(curRow);
+            }
+        }
+        return rows;
+    };
+
     const handleCsvImport = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -3714,71 +3757,80 @@ function AdminExamEditor() {
         reader.onload = (ev) => {
             try {
                 const text = ev.target.result;
-                const lines = text.split('\n').filter(l => l.trim());
-                // Skip header row
-                const dataLines = lines.slice(1);
-                const updates = {}; // key: `${section_id}__${question_id}` -> explanation
-                dataLines.forEach(line => {
-                    // Simple CSV parse (handles quoted fields)
-                    const cols = [];
-                    let cur = '';
-                    let inQuote = false;
-                    for (let i = 0; i < line.length; i++) {
-                        const ch = line[i];
-                        if (ch === '"') {
-                            if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-                            else { inQuote = !inQuote; }
-                        } else if (ch === ',' && !inQuote) {
-                            cols.push(cur); cur = '';
-                        } else {
-                            cur += ch;
-                        }
-                    }
-                    cols.push(cur);
+                const rows = parseCsvText(text);
+                if (rows.length < 2) {
+                    alert('CSVデータが空か、有効な行がありません。');
+                    return;
+                }
 
-                    // Headers: ['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'grading_instruction', 'points', 'explanation']
-                    if (cols.length >= 9) {
-                        const [sec_id, , q_id, , , , grading_instruction, , explanation] = cols;
-                        if (sec_id && q_id) {
-                            updates[`${sec_id.trim()}__${q_id.trim()}`] = {
-                                explanation: (explanation || '').trim(),
-                                gradingInstruction: (grading_instruction || '').trim()
-                            };
-                        }
-                    } else if (cols.length === 8) {
-                        // Support old format just in case
-                        const [sec_id, , q_id, , , , , explanation] = cols;
-                        if (sec_id && q_id) {
-                            updates[`${sec_id.trim()}__${q_id.trim()}`] = {
-                                explanation: (explanation || '').trim()
-                            };
-                        }
-                    }
-                });
+                // Dynamic column index resolution based on header names
+                const headerRow = rows[0].map(h => h.trim().toLowerCase().replace(/[\s_]/g, ''));
+                const findColIdx = (candidates) => {
+                    return headerRow.findIndex(h => candidates.some(c => h === c || h.includes(c)));
+                };
 
-                const newStructure = examData.structure.map(sec => ({
+                const secIdIdx = findColIdx(['sectionid', '大問id', '大問番号', '大問']);
+                const qIdIdx = findColIdx(['questionid', '問題id', '小問id', '問題番号', '設問番号']);
+                const expIdx = findColIdx(['explanation', '小問解説', '解説']);
+                const gradingIdx = findColIdx(['gradinginstruction', '採点基準', '指示']);
+                const pointsIdx = findColIdx(['points', '配点', '点数']);
+                const answerIdx = findColIdx(['correctanswer', 'answer', '正解', '回答', '解答']);
+
+                if (secIdIdx === -1 || qIdIdx === -1 || expIdx === -1) {
+                    throw new Error('CSVに必要なカラム（section_id, question_id, explanation）が見つかりません。ヘッダー名をご確認ください。');
+                }
+
+                const updates = {};
+                for (let r = 1; r < rows.length; r++) {
+                    const row = rows[r];
+                    const secId = (row[secIdIdx] || '').trim();
+                    const qId = (row[qIdIdx] || '').trim();
+                    if (!secId || !qId) continue;
+
+                    const explanation = (row[expIdx] || '').trim();
+                    const gradingInstruction = gradingIdx !== -1 ? (row[gradingIdx] || '').trim() : undefined;
+                    const points = pointsIdx !== -1 ? Number(row[pointsIdx]) : undefined;
+                    const correctAnswer = answerIdx !== -1 ? (row[answerIdx] || '').trim() : undefined;
+
+                    updates[`${secId}__${qId}`] = {
+                        explanation,
+                        ...(gradingInstruction !== undefined ? { gradingInstruction } : {}),
+                        ...(Number.isFinite(points) && points > 0 ? { points } : {}),
+                        ...(correctAnswer ? { correctAnswer } : {})
+                    };
+                }
+
+                const currentExamData = examDataRef.current || examData || {};
+                const newStructure = (currentExamData.structure || []).map(sec => ({
                     ...sec,
-                    questions: sec.questions.map(q => {
+                    questions: (sec.questions || []).map(q => {
                         const key = `${sec.id}__${q.id}`;
-                        if (updates[key] !== undefined) {
+                        const altKey = `${sec.id}__${q.label}`;
+                        const matched = updates[key] || updates[altKey];
+                        if (matched !== undefined) {
                             return {
                                 ...q,
-                                explanation: updates[key].explanation,
-                                // Only update gradingInstruction if it was present in the CSV
-                                ...(updates[key].gradingInstruction !== undefined ? { gradingInstruction: updates[key].gradingInstruction } : {})
+                                explanation: matched.explanation !== undefined ? matched.explanation : q.explanation,
+                                ...(matched.gradingInstruction !== undefined ? { gradingInstruction: matched.gradingInstruction } : {}),
+                                ...(matched.points !== undefined ? { points: matched.points } : {}),
+                                ...(matched.correctAnswer !== undefined ? { correctAnswer: matched.correctAnswer } : {})
                             };
                         }
                         return q;
                     })
                 }));
-                setExamData({ ...examData, structure: newStructure });
-                alert(`CSVのインポートが完了しました。\n解説が更新された問題: ${Object.keys(updates).length}問\n\n忘れずに「保存」ボタンを押してください！`);
+
+                const nextExamData = { ...currentExamData, structure: newStructure };
+                examDataRef.current = nextExamData;
+                setExamData(nextExamData);
+                alert(`CSVのインポートが完了しました！\n解説が更新された問題: ${Object.keys(updates).length}問\n\n忘れずに画面右上の「保存」ボタンを押してください！`);
             } catch (err) {
                 alert('CSVの読み込みに失敗しました。形式を確認してください。\n' + err.message);
+            } finally {
+                e.target.value = '';
             }
         };
         reader.readAsText(file, 'UTF-8');
-        e.target.value = ''; // reset input
     };
 
     const totalAllocatedPoints = examData?.structure?.reduce((acc, section) => {
