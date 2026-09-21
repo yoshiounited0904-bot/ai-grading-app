@@ -18,6 +18,7 @@ import {
 import universityBaseData from '../data/universityBaseData.json';
 import { MARKETING_CONFIG } from '../config/marketingConfig';
 import { SUBJECT_OPTIONS, inferSubjectIdFromLabel } from '../config/subjectConfig';
+import { EXTERNAL_AI_PROMPTS } from '../config/externalAiPrompts';
 
 const normalizeAdBlockContent = (content) => {
     if (content && typeof content === 'object' && !Array.isArray(content)) {
@@ -425,6 +426,7 @@ function AdminExamEditor() {
     const [alternativeAnswerDrafts, setAlternativeAnswerDrafts] = useState({});
     const [essayModelAnswerLoading, setEssayModelAnswerLoading] = useState({});
     const [essayModelAnswerPreview, setEssayModelAnswerPreview] = useState(null);
+    const [customPromptType, setCustomPromptType] = useState('auto');
 
     // Form states
     const [examId, setExamId] = useState('');
@@ -4017,50 +4019,70 @@ function AdminExamEditor() {
                                             </label>
                                         </div>
                                     </div>
-                                    <div className="bg-navy-blue/5 p-5 rounded-2xl border border-navy-blue/10 relative group/prompt">
-                                        <button
-                                            onClick={(e) => {
-                                                e.preventDefault();
-                                                const promptText = `添付した2つのファイル（問題・解答PDF と 設問構造CSV）を使ってください。
+                                    {(() => {
+                                        const isJapaneseExam = (examData?.subject && (
+                                            examData.subject.includes('国語') ||
+                                            examData.subject.includes('現代文') ||
+                                            examData.subject.includes('古文') ||
+                                            examData.subject.includes('漢文')
+                                        )) || subjectEn === 'japanese';
+                                        const effectiveKey = customPromptType === 'auto'
+                                            ? (isJapaneseExam ? 'japanese' : 'standard')
+                                            : customPromptType;
+                                        const currentConfig = EXTERNAL_AI_PROMPTS[effectiveKey] || EXTERNAL_AI_PROMPTS.standard;
 
-以下の指示に従って、CSVの【explanation】列と【section_analysis】列を埋めて完成させてください。
+                                        return (
+                                            <div className="bg-navy-blue/5 p-5 rounded-2xl border border-navy-blue/10 space-y-3 relative group/prompt">
+                                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                    <div className="flex items-center gap-1.5 p-1 bg-navy-blue/10 rounded-xl">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setCustomPromptType('japanese')}
+                                                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                                                                effectiveKey === 'japanese'
+                                                                    ? 'bg-white text-navy-blue shadow-sm'
+                                                                    : 'text-navy-blue/60 hover:text-navy-blue'
+                                                            }`}
+                                                        >
+                                                            📖 国語（完全解説・詳細版）
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setCustomPromptType('standard')}
+                                                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                                                                effectiveKey === 'standard'
+                                                                    ? 'bg-white text-navy-blue shadow-sm'
+                                                                    : 'text-navy-blue/60 hover:text-navy-blue'
+                                                            }`}
+                                                        >
+                                                            🌐 標準 / 英語長文用
+                                                        </button>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            navigator.clipboard.writeText(currentConfig.prompt);
+                                                            alert(`【${currentConfig.name}】のプロンプトをコピーしました！`);
+                                                        }}
+                                                        className="px-3.5 py-1.5 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1.5"
+                                                    >
+                                                        📋 プロンプトをコピー
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
+                                                    <span className="truncate">{currentConfig.badge}：{currentConfig.shortDescription}</span>
+                                                    <span className="font-mono flex-shrink-0 ml-2">{currentConfig.prompt.length.toLocaleString()}文字</span>
+                                                </div>
+                                                <div className="relative">
+                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-52 overflow-y-auto p-3 bg-white/70 rounded-xl border border-navy-blue/10 select-all">
+                                                        {currentConfig.prompt}
+                                                    </pre>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
 
-■ 1. 小問解説（explanation列）
-各小問について、受験生にわかりやすい解説を作成してください。
-・2〜3文で論理的かつ簡潔に書くこと
-・本文の該当箇所・根拠を明確に示すこと
-・選択問題は正解の理由に加え、「誤答選択肢がなぜ間違いか（本文の記述とどうズレているか）」も簡潔に説明すること
-・記号装飾（*など）は使用しないこと
-
-■ 2. 大問全体の詳細解説（section_analysis列）
-各大問の【最初の行（問1の行）】の section_analysis 列に、その大問全体の読解ポイントと総評を記入してください（2問目以降は空欄で構いません）。
-以下の構成で記述してください：
-【大問のテーマ・要約】：本文全体の論理展開や筆者の主張の要約
-【読解のポイント】：この大問を解く上で差がつく着眼点（指示語、対比構造、論理展開など）
-【設問全体の傾向と対策】：受験生が復習すべきポイント
-
-■ 厳守ルール
-・CSVの他の列（id, label, type, correct_answer, points等）は絶対に書き換えないこと。
-・CSVファイルをそのままの形式（カンマ区切り、ダブルクォーテーション囲み）で返してください。`;
-                                                navigator.clipboard.writeText(promptText);
-                                                alert('プロンプトをコピーしました！');
-                                            }}
-                                            className="absolute top-4 right-4 px-3 py-1.5 bg-white text-navy-blue rounded-lg text-[10px] font-black shadow-sm opacity-0 group-hover/prompt:opacity-100 transition-all hover:bg-navy-blue hover:text-white"
-                                        >
-                                            📋 プロンプトをコピー
-                                        </button>
-                                        <p className="font-black text-navy-blue/40 text-[10px] uppercase tracking-widest mb-3">AIコピペ用プロンプト（小問解説＋大問詳細解説）</p>
-                                        <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-48 overflow-y-auto">
-{`添付した2つのファイル（PDF と CSV）を使ってください。
-
-CSVの【explanation】列（小問解説）と【section_analysis】列（大問詳細解説）を埋めてください：
-
-1. explanation列：各小問の根拠と正解・誤答の理由（2〜3文）
-2. section_analysis列：各大問の先頭行に、大問全体のテーマ・要約・読解ポイント・対策を記入
-
-※他の列は変更せず、そのままCSV形式で返してください。`}
-                                        </pre>
-                                    </div>
                                 </div>
                             </div>
                         </details>
