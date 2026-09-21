@@ -978,9 +978,20 @@ function AdminExamEditor() {
     };
 
     const fetchExam = async () => {
+        setLoading(true);
         const { data, error } = await getAdminExamById(id);
         if (error) {
-            alert('データの取得に失敗しました');
+            console.error('[AdminExamEditor] Failed to fetch exam:', id, error);
+            const isNotFound = error?.code === 'PGRST116' || String(error?.message || '').includes('0 rows') || String(error?.details || '').includes('0 rows');
+            if (isNotFound) {
+                const proceedNew = window.confirm(`試験データ（ID: "${id}"）がデータベースに見つかりませんでした。\n\nまだ登録されていないか、削除された可能性があります。\n新規作成画面（/admin/exam/new）を開きますか？`);
+                if (proceedNew) {
+                    navigate('/admin/exam/new');
+                    return;
+                }
+            } else {
+                alert(`データの取得に失敗しました。\n対象ID: ${id}\n原因: ${error.message || '不明なエラー'}`);
+            }
             navigate('/admin');
         } else if (data) {
             const draft = loadGenerationDraft(data.id);
