@@ -2094,13 +2094,13 @@ function AdminExamEditor() {
                     year ? `${year}年度` : '',
                     subject || '',
                     sectionLabel,
-                    sectionPoints,
+                    qIdx === 0 ? sectionPoints : '',
                     qLabel,
                     qTypeLabel,
                     points,
                     answer,
                     explanation,
-                    sectionAnalysis,
+                    qIdx === 0 ? sectionAnalysis : '',
                     gradingInstruction
                 ]);
             });
