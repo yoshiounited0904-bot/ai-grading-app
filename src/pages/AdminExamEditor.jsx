@@ -461,6 +461,8 @@ function AdminExamEditor() {
     const skipUnsavedCheckRef = useRef(true);
     const dirtyCheckTimerRef = useRef(null);
 
+    const [availableDrafts, setAvailableDrafts] = useState([]);
+
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
         max_score: 100,
@@ -641,14 +643,39 @@ function AdminExamEditor() {
             return direct;
         }
         try {
+            const targetLower = String(targetExamId).toLowerCase();
+            const targetFacMatch = targetLower.match(/fac\d+/);
+            const targetYearMatch = targetLower.match(/202\d/);
+            const targetIsJp = targetLower.includes('japanese') || targetLower.includes('国語');
+            const targetIsEn = targetLower.includes('english') || targetLower.includes('英語');
+
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
                 if (key && key.startsWith(GENERATION_DRAFT_PREFIX)) {
-                    const storedExamId = key.replace(`${GENERATION_DRAFT_PREFIX}:`, '');
-                    if (storedExamId === targetExamId || key.includes(targetExamId) || targetExamId.includes(storedExamId)) {
-                        const parsed = JSON.parse(localStorage.getItem(key) || 'null');
-                        if (parsed && Array.isArray(parsed.structure) && parsed.structure.length > 0) {
-                            return parsed;
+                    const storedExamId = key.replace(`${GENERATION_DRAFT_PREFIX}:`, '').toLowerCase();
+                    const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                    if (!parsed || !Array.isArray(parsed.structure) || parsed.structure.length === 0) continue;
+
+                    // 1. 完全一致・部分一致
+                    if (storedExamId === targetLower || targetLower.includes(storedExamId) || storedExamId.includes(targetLower)) {
+                        return parsed;
+                    }
+
+                    // 2. 学部ID (fac8090 等) による一致判定
+                    if (targetFacMatch && storedExamId.includes(targetFacMatch[0])) {
+                        return parsed;
+                    }
+
+                    // 3. 年度 + 科目 + キーワードによる判定
+                    if (targetYearMatch && storedExamId.includes(targetYearMatch[0])) {
+                        const storedIsJp = storedExamId.includes('japanese') || storedExamId.includes('国語');
+                        const storedIsEn = storedExamId.includes('english') || storedExamId.includes('英語');
+                        if ((targetIsJp && storedIsJp) || (targetIsEn && storedIsEn)) {
+                            if ((targetLower.includes('商') && storedExamId.includes('商')) ||
+                                (targetLower.includes('早稲田') && storedExamId.includes('早稲田')) ||
+                                (targetLower.includes('waseda') && storedExamId.includes('waseda'))) {
+                                return parsed;
+                            }
                         }
                     }
                 }
@@ -657,6 +684,74 @@ function AdminExamEditor() {
             console.warn('[AdminExamEditor] Error scanning drafts in localStorage:', e);
         }
         return null;
+    };
+
+    // 利用可能なローカルドラフトの一覧スキャン
+    useEffect(() => {
+        try {
+            const drafts = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(GENERATION_DRAFT_PREFIX)) {
+                    const storedExamId = key.replace(`${GENERATION_DRAFT_PREFIX}:`, '');
+                    const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                    if (parsed && Array.isArray(parsed.structure) && parsed.structure.length > 0) {
+                        const qCount = parsed.structure.reduce((s, sec) => s + (sec.questions?.length || 0), 0);
+                        if (qCount > 0) {
+                            drafts.push({
+                                key,
+                                examId: storedExamId,
+                                structure: parsed.structure,
+                                questionCount: qCount,
+                                sectionCount: parsed.structure.length,
+                                savedAt: parsed.savedAt || ''
+                            });
+                        }
+                    }
+                }
+            }
+            setAvailableDrafts(drafts);
+        } catch (e) {
+            console.warn('[AdminExamEditor] Error reading available drafts:', e);
+        }
+    }, [examData]);
+
+    const handleRestoreDraft = (draftItem) => {
+        if (!draftItem || !draftItem.structure) return;
+        const loadedStructure = normalizeEditorStructure(draftItem.structure);
+        const questionCount = loadedStructure.reduce((s, sec) => s + (sec.questions?.length || 0), 0);
+        const totalPoints = loadedStructure.reduce((sum, sec) => 
+            sum + (sec.questions || []).reduce((qsum, q) => qsum + (Number(q.points) || 0), 0)
+        , 0);
+
+        setExamData(prev => ({
+            ...(prev || {}),
+            max_score: totalPoints > 0 ? totalPoints : (prev?.max_score || 100),
+            structure: loadedStructure
+        }));
+        setSectionCount(Math.max(loadedStructure.length, 1));
+
+        if (isNew && draftItem.examId) {
+            setExamId(draftItem.examId);
+            if (draftItem.examId.includes('早稲田')) setUniversity('早稲田大学');
+            if (draftItem.examId.includes('商')) setFaculty('商（地歴・公民型）');
+            const yearMatch = draftItem.examId.match(/202\d/);
+            if (yearMatch) setYear(parseInt(yearMatch[0], 10));
+            if (draftItem.examId.includes('japanese') || draftItem.examId.includes('国語')) {
+                setSubject('国語');
+                setSubjectEn('japanese');
+            }
+        }
+
+        setHasUnsavedChanges(true);
+        alert(`生成済みデータ（${questionCount}問 / 計${totalPoints}点）をエディタに復元しました！\n\n右上の「💾 保存する」ボタンを押すとデータベースに反映されます。`);
+    };
+
+    const handleDismissDraft = (key) => {
+        if (window.confirm('このローカル下書きを破棄してもよろしいですか？')) {
+            localStorage.removeItem(key);
+            setAvailableDrafts(prev => prev.filter(d => d.key !== key));
+        }
     };
 
     const persistSectionMerge = async (sectionNum, sectionData, { syncLocal = true } = {}) => {
@@ -834,6 +929,22 @@ function AdminExamEditor() {
             setExamId(`${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase());
         }
     }, [universityId, facultyId, year, subjectEn, isNew]);
+
+    // 大学リストの非同期ロード完了時にIDを補正
+    useEffect(() => {
+        if (isNew && university && universitiesData.length > 0) {
+            const matchUni = universitiesData.find(u => u.name === university);
+            if (matchUni && matchUni.id !== universityId) {
+                setUniversityId(matchUni.id);
+            }
+            if (faculty && matchUni?.faculties) {
+                const matchFac = matchUni.faculties.find(f => f.name === faculty);
+                if (matchFac && matchFac.id !== facultyId) {
+                    setFacultyId(matchFac.id);
+                }
+            }
+        }
+    }, [universitiesData, university, faculty, isNew]);
 
     const handleUniversityChange = (e) => {
         const val = e.target.value;
@@ -1875,15 +1986,24 @@ function AdminExamEditor() {
         setSaving(false);
 
         if (error) {
-            alert('保存に失敗しました:\n' + error.message);
+            console.error('[AdminExamEditor] Save failed:', error);
+            const isRlsError = error?.code === '42501' || String(error?.message || '').includes('row-level security');
+            const alertMsg = isRlsError
+                ? `保存に失敗しました（RLS権限エラー 42501）:\n${error.message}\n\n※ Supabase側で管理者権限（RLSポリシーまたはRPC関数）の更新が必要です。\n生成済みデータはブラウザ（localStorage）に安全に保持されています。`
+                : `保存に失敗しました:\n${error.message}`;
+            alert(alertMsg);
         } else {
             const savedSnapshot = JSON.stringify(payload);
             const nextExamData = { ...currentExamData, pdf_path: finalPdfPath, structure: normalizedStructure };
             examDataRef.current = nextExamData;
             setExamData(nextExamData);
             clearGenerationDraft(examId);
+            setAvailableDrafts(prev => prev.filter(d => d.examId !== examId && !d.key.includes(examId)));
             markCurrentStateAsSaved(savedSnapshot);
             if (showPrompt) alert('保存しました！');
+            if (isNew && examId) {
+                navigate(`/admin/exam/${examId}`, { replace: true });
+            }
         }
     };
 
@@ -2306,6 +2426,11 @@ function AdminExamEditor() {
         if (error) {
             alert('データベースへの保存には失敗しましたが、プレビューは表示しました:\n' + error.message);
         } else {
+            clearGenerationDraft(examId);
+            setAvailableDrafts(prev => prev.filter(d => d.examId !== examId && !d.key.includes(examId)));
+            if (isNew && examId) {
+                navigate(`/admin/exam/${examId}`, { replace: true });
+            }
             alert('保存しました！');
         }
     };
@@ -4071,6 +4196,50 @@ function AdminExamEditor() {
             {/* Main Content Area */}
             {activeTab === 'master' ? (
                 <div className="grid grid-cols-1 gap-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Draft Recovery Banner */}
+                {availableDrafts.length > 0 && (!examData?.structure || examData.structure.every(s => !s.questions || s.questions.length === 0)) && (
+                    <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-3xl p-6 shadow-md shadow-amber-100/50">
+                        <div className="flex items-start justify-between gap-6 flex-wrap">
+                            <div className="space-y-2 w-full">
+                                <div className="flex items-center gap-2 font-black text-amber-900 text-base">
+                                    <span className="text-xl">⚠️</span>
+                                    <span>未保存のローカル問題データ（生成ドラフト）が見つかりました</span>
+                                </div>
+                                <p className="text-xs font-bold text-amber-800/80">
+                                    データベースに未登録ですが、ブラウザに保存されている生成済み問題データを復元できます。
+                                </p>
+                                <div className="space-y-2 pt-2">
+                                    {availableDrafts.map((d) => (
+                                        <div key={d.key} className="flex items-center justify-between gap-3 text-xs bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2.5 border border-amber-200 text-amber-900 font-bold shadow-sm">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span>📝 ID: <code className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-mono font-black">{d.examId}</code></span>
+                                                <span className="text-amber-700">（大問 {d.sectionCount}個 / 小問 {d.questionCount}問）</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRestoreDraft(d)}
+                                                    className="bg-amber-600 hover:bg-amber-700 text-white font-black px-4 py-1.5 rounded-lg shadow-sm text-xs transition-all active:scale-95 cursor-pointer"
+                                                >
+                                                    このデータを復元
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDismissDraft(d.key)}
+                                                    className="text-gray-400 hover:text-red-500 text-xs font-bold px-2 py-1 transition-colors cursor-pointer"
+                                                    title="このドラフトを破棄"
+                                                >
+                                                    ✕ 破棄
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Explanation Generation Panel */}
                 {examData && (
                     <div className="space-y-6">

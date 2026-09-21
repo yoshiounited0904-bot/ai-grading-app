@@ -262,14 +262,33 @@ export const getAdminExamById = async (id) => {
 };
 
 export const saveAdminExam = async (examData) => {
+    const payload = {
+        ...examData,
+        updated_at: new Date().toISOString()
+    };
+
     return runSupabaseQuery(
-        () => supabase
-            .from('exams')
-            .upsert([{
-                ...examData,
-                updated_at: new Date().toISOString()
-            }])
-            .select('id, updated_at'),
+        async () => {
+            // 1. セキュアな RPC 関数 (admin_save_exam) を優先試行
+            try {
+                const { data: rpcData, error: rpcError } = await supabase.rpc('admin_save_exam', { p_exam: payload });
+                if (!rpcError && rpcData) {
+                    return { data: [rpcData], error: null };
+                }
+                // RPC 関数が未作成、または引数不一致の場合は直接 upsert へフォールバック
+                if (rpcError && rpcError.code !== '42883' && !rpcError.message?.includes('function')) {
+                    console.warn('[adminExamService] admin_save_exam RPC returned error, falling back to direct upsert:', rpcError);
+                }
+            } catch (rpcEx) {
+                console.warn('[adminExamService] RPC call exception, trying direct upsert:', rpcEx);
+            }
+
+            // 2. 直接 upsert フォールバック
+            return supabase
+                .from('exams')
+                .upsert([payload])
+                .select('id, updated_at');
+        },
         '試験データの保存',
         { retries: 3, timeoutMs: 60000 }
     );
