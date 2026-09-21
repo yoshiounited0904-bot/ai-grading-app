@@ -634,6 +634,31 @@ function AdminExamEditor() {
         }
     };
 
+    const findMatchingDraft = (targetExamId) => {
+        if (!targetExamId) return null;
+        const direct = loadGenerationDraft(targetExamId);
+        if (direct && Array.isArray(direct.structure) && direct.structure.length > 0) {
+            return direct;
+        }
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(GENERATION_DRAFT_PREFIX)) {
+                    const storedExamId = key.replace(`${GENERATION_DRAFT_PREFIX}:`, '');
+                    if (storedExamId === targetExamId || key.includes(targetExamId) || targetExamId.includes(storedExamId)) {
+                        const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                        if (parsed && Array.isArray(parsed.structure) && parsed.structure.length > 0) {
+                            return parsed;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[AdminExamEditor] Error scanning drafts in localStorage:', e);
+        }
+        return null;
+    };
+
     const persistSectionMerge = async (sectionNum, sectionData, { syncLocal = true } = {}) => {
         if (!examId || isNew) {
             // For new exams, we must build the merged structure ourselves and pass it
@@ -983,8 +1008,52 @@ function AdminExamEditor() {
         if (error) {
             console.error('[AdminExamEditor] Failed to fetch exam:', id, error);
             const isNotFound = error?.code === 'PGRST116' || String(error?.message || '').includes('0 rows') || String(error?.details || '').includes('0 rows');
+
+            // 1. ローカルストレージ内の生成済みドラフト（下書きデータ）を自動復元
+            const draft = findMatchingDraft(id);
+            if (draft && Array.isArray(draft.structure) && draft.structure.length > 0) {
+                console.info('[AdminExamEditor] Restoring unpersisted exam from local draft:', id, draft);
+                const loadedStructure = normalizeEditorStructure(draft.structure);
+                const questionCount = loadedStructure.reduce((s, sec) => s + (sec.questions?.length || 0), 0);
+                const totalPoints = loadedStructure.reduce((sum, sec) => 
+                    sum + (sec.questions || []).reduce((qsum, q) => qsum + (Number(q.points) || 0), 0)
+                , 0);
+
+                const parsedYearMatch = String(id).match(/202[0-9]/);
+                const parsedYear = parsedYearMatch ? parseInt(parsedYearMatch[0], 10) : 2026;
+                const isJp = String(id).includes('japanese') || String(id).includes('国語');
+
+                setExamId(id);
+                setUniversity(String(id).includes('早稲田') ? '早稲田大学' : '早稲田大学');
+                setFaculty(String(id).includes('商') ? '商学部（地歴・公民型）' : '商学部');
+                setYear(parsedYear);
+                setSubject(isJp ? '国語' : '英語');
+                setSubjectEn(isJp ? 'japanese' : 'english');
+                setType('pdf');
+                setMasterStatus('working');
+                setDurationMinutes(isJp ? 90 : 60);
+
+                setExamData({
+                    max_score: totalPoints > 0 ? totalPoints : 60,
+                    detailed_analysis: '',
+                    structure: loadedStructure,
+                    pdf_path: ''
+                });
+                setStructure(loadedStructure);
+                setSectionCount(Math.max(loadedStructure.length, 1));
+                if (draft.sectionInstructionsBySection) setSectionInstructionsBySection(draft.sectionInstructionsBySection);
+                if (draft.sectionPointsBySection) setSectionPointsBySection(draft.sectionPointsBySection);
+                if (draft.sectionExpectedQuestionCounts) setSectionExpectedQuestionCounts(draft.sectionExpectedQuestionCounts);
+
+                setHasUnsavedChanges(true);
+                setLoading(false);
+
+                alert(`データベース上には未保存ですが、ローカルに一時保存されていた問題生成データ（${questionCount}問 / ${totalPoints || 60}点満点）を自動復元しました！\n\n画面右上の「💾 保存する」ボタンを押すと、データベースに正式に保存されます。`);
+                return;
+            }
+
             if (isNotFound) {
-                const proceedNew = window.confirm(`試験データ（ID: "${id}"）がデータベースに見つかりませんでした。\n\nまだ登録されていないか、削除された可能性があります。\n新規作成画面（/admin/exam/new）を開きますか？`);
+                const proceedNew = window.confirm(`試験データ（ID: "${id}"）がデータベースに見つかりませんでした。\n\n新規作成画面（/admin/exam/new）を開きますか？`);
                 if (proceedNew) {
                     navigate('/admin/exam/new');
                     return;
