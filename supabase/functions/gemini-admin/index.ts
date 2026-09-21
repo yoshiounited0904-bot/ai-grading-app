@@ -666,6 +666,93 @@ const hasUsableExplanation = (value: unknown): boolean =>
 const isJapaneseSubject = (subjectType: unknown): boolean => String(subjectType || "").trim() === "japanese";
 
 const JAPANESE_UNVERIFIABLE_EXPLANATION = "本文・設問画像から根拠箇所を確認できないため、要確認です。";
+const QUESTION_EXPLANATION_UNVERIFIABLE = "設問本文・選択肢・正解根拠を確認できないため、要確認です。";
+
+const genericQuestionExplanationPatterns = [
+  /この(?:設問|問題|本問)は[、,\s]*(?:与えられた|特定の|文脈|文章全体|語句|表現|正しい|最も)/u,
+  /(?:文法的|意味的)に(?:最も)?適切な(?:表現|語|選択肢)/u,
+  /(?:語句|表現)が持つニュアンス/u,
+  /文章全体の(?:論理的な)?つながり/u,
+  /選択肢(?:の)?(?:細部|内容)まで(?:注意深く)?(?:検討|確認)/u,
+  /(?:読解力|理解しているか|力を試|問うものです)/u,
+  /正解となるのは、?主語と述語の一致/u,
+];
+
+const isGenericQuestionExplanation = (value: unknown): boolean => {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  return genericQuestionExplanationPatterns.some((pattern) => pattern.test(text));
+};
+
+const normalizeEvidenceText = (value: unknown): string =>
+  String(value || "")
+    .normalize("NFKC")
+    .replace(/\s+/g, "")
+    .replace(/[「」『』【】\[\]（）()、。，．・,:;：；'"“”‘’!?！？]/g, "")
+    .toLowerCase();
+
+const collectEvidenceStrings = (value: unknown, acc: string[] = []): string[] => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) acc.push(trimmed);
+    return acc;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectEvidenceStrings(item, acc));
+    return acc;
+  }
+  if (value && typeof value === "object") {
+    Object.values(value as Record<string, unknown>).forEach((item) => collectEvidenceStrings(item, acc));
+  }
+  return acc;
+};
+
+const questionEvidenceSourceText = (questionData: unknown): string => {
+  if (!questionData || typeof questionData !== "object") return "";
+  const q = questionData as Record<string, unknown>;
+  const sourceFields = [
+    q.questionText,
+    q.prompt,
+    q.instruction,
+    q.text,
+    q.evidenceHint,
+    q.sourceExcerpt,
+    q.options,
+    q.choices,
+    q.choiceTexts,
+  ];
+  return collectEvidenceStrings(sourceFields).join("\n");
+};
+
+const hasMeaningfulQuestionEvidenceSource = (questionData: unknown): boolean => {
+  const normalized = normalizeEvidenceText(questionEvidenceSourceText(questionData));
+  if (normalized.length < 12) return false;
+  const withoutDigits = normalized.replace(/[0-9０-９]/g, "");
+  const withoutChoiceLetters = withoutDigits.replace(/^[a-zａ-ｚアイウエオ]+$/u, "");
+  return /[ぁ-んァ-ヶ一-龥A-Za-z]{3,}/u.test(withoutChoiceLetters);
+};
+
+const evidenceQuoteAppearsInQuestionSource = (evidenceQuote: unknown, questionData: unknown): boolean => {
+  const quote = normalizeEvidenceText(evidenceQuote);
+  if (quote.length < 2) return false;
+  if (/^(?:本文中の該当箇所|該当箇所|本文|設問文|選択肢|解答画像|要確認|不明)$/u.test(String(evidenceQuote || "").trim())) {
+    return false;
+  }
+  const source = normalizeEvidenceText(questionEvidenceSourceText(questionData));
+  if (!source) return false;
+  return source.includes(quote) || quote.includes(source);
+};
+
+const questionExplanationQualityRules = (subjectType: unknown): string => `
+【小問解説の品質ルール（全科目共通）】
+・「この問題は〜力を試します」「文法的または意味的に最も適切」「選択肢を注意深く検討」のような一般論は禁止。
+・必ず、正解欄の値・選択肢・設問本文・解答画像のうち少なくとも1つの具体語句を使い、「なぜその正解になるか」を説明すること。
+・根拠語句が確認できない場合は、推測で作らず evidenceQuote を空欄にし、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
+・画像だけを見て根拠を推測しないこと。設問構造データ内で確認できる語句を evidenceQuote に入れられない場合は、解説を確定させないこと。
+・選択問題では、正解番号だけでなく、その選択肢が本文・設問条件・文法条件のどれに合うのかを具体的に書くこと。
+・歴史など知識問題では、人物名・出来事名・年代・制度名など、正解に直結する固有語を使って説明すること。
+・英語では、実際の英文・空所・選択肢に含まれる語句を根拠にし、単なる「文脈に合う」「自然である」だけで終わらせないこと。
+`;
 
 const japaneseQuestionExplanationRules = (subjectType: unknown): string => {
   if (!isJapaneseSubject(subjectType)) return "";
@@ -673,8 +760,10 @@ const japaneseQuestionExplanationRules = (subjectType: unknown): string => {
   return `
 【国語の小問解説・絶対ルール】
 ・本文、設問文、選択肢、解答画像から確認できる内容だけで解説すること。
+・各小問の出力には必ず evidenceQuote を含めること。evidenceQuote には、本文・設問文・選択肢・解答画像から実際に読める短い根拠語句をそのまま入れること。
+・evidenceQuote は「本文中の該当箇所」「第○段落」「傍線部付近」などの場所説明だけでは不可。画像内で読める具体的な語句・一文の短い引用にすること。
 ・解説は必ず「設問条件」「本文中の根拠」「正解になる理由」の対応で書くこと。本文根拠なしの一般論、受験アドバイス、作者・作品知識、出典説明で補わないこと。
-・本文根拠が画像から確認できない場合は、推測で作らず explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。
+・本文根拠が画像から確認できない場合は、推測で作らず evidenceQuote を空欄にし、explanation を「${JAPANESE_UNVERIFIABLE_EXPLANATION}」にすること。
 ・「問題が公表されている」「公表された問題」「出典は」「著作権」「大学が公開している」など、問題の公開状況やメタ情報を解説に書かないこと。
 ・設問文や選択肢を長く写さないこと。引用する場合は根拠確認に必要な短い語句だけにすること。
 ・段落番号や傍線番号が画像から読めない場合は、存在しない番号を作らず「本文中の該当箇所」と書くこと。
@@ -685,6 +774,11 @@ const japaneseQuestionExplanationRules = (subjectType: unknown): string => {
 
 const cleanQuestionExplanationOutput = (text: unknown, subjectType: unknown): string => {
   const cleaned = cleanExplanationOpening(String(text || ""));
+  const unverified = isJapaneseSubject(subjectType)
+    ? JAPANESE_UNVERIFIABLE_EXPLANATION
+    : QUESTION_EXPLANATION_UNVERIFIABLE;
+
+  if (isGenericQuestionExplanation(cleaned)) return unverified;
   if (!isJapaneseSubject(subjectType)) return cleaned;
 
   if (/(?:問題.{0,12}(?:公表|公開)|(?:公表|公開)され(?:た|ている)問題|出典|著作権|転載|配布)/u.test(cleaned)) {
@@ -692,6 +786,65 @@ const cleanQuestionExplanationOutput = (text: unknown, subjectType: unknown): st
   }
 
   return cleaned;
+};
+
+const hasConcreteJapaneseEvidenceQuote = (value: unknown): boolean => {
+  const quote = String(value || "").trim();
+  if (quote.length < 2) return false;
+  if (quote.length > 180) return false;
+  if (/^(?:本文中の該当箇所|該当箇所|本文|設問文|選択肢|解答画像|第[一二三四五六七八九十\d]+段落|傍線部(?:付近)?|要確認|不明)$/u.test(quote)) {
+    return false;
+  }
+  return true;
+};
+
+const applyQuestionExplanationGuard = (
+  generated: Record<string, unknown>,
+  subjectType: unknown,
+  sourceQuestion?: unknown,
+): Record<string, unknown> => {
+  const explanation = cleanQuestionExplanationOutput(generated.explanation, subjectType);
+  if (!isJapaneseSubject(subjectType)) {
+    const evidenceQuote = String(generated.evidenceQuote || generated.evidence || "").trim();
+    if (
+      explanation === QUESTION_EXPLANATION_UNVERIFIABLE ||
+      !hasMeaningfulQuestionEvidenceSource(sourceQuestion) ||
+      !evidenceQuoteAppearsInQuestionSource(evidenceQuote, sourceQuestion)
+    ) {
+      return {
+        explanation: QUESTION_EXPLANATION_UNVERIFIABLE,
+        evidenceQuote: "",
+        needsReview: true,
+        explanationIssue: "generic_or_missing_evidence",
+      };
+    }
+    return {
+      explanation,
+      evidenceQuote,
+      needsReview: false,
+      explanationIssue: "",
+    };
+  }
+
+  const evidenceQuote = String(generated.evidenceQuote || generated.evidence || "").trim();
+  if (
+    explanation === JAPANESE_UNVERIFIABLE_EXPLANATION ||
+    !hasConcreteJapaneseEvidenceQuote(evidenceQuote)
+  ) {
+    return {
+      explanation: JAPANESE_UNVERIFIABLE_EXPLANATION,
+      evidenceQuote: "",
+      needsReview: true,
+      explanationIssue: "missing_japanese_evidence",
+    };
+  }
+
+  return {
+    explanation,
+    evidenceQuote,
+    needsReview: false,
+    explanationIssue: "",
+  };
 };
 
 const isUnresolvedCorrectAnswer = (value: unknown): boolean => {
@@ -1929,6 +2082,15 @@ async function handleRegenerateExplanation(genAI: GoogleGenerativeAI, body: Reco
   const answerFilesData = (body.answerFilesData as Array<{ data: string; mimeType: string }>) || [];
 
   const imageParts = [...toImageParts(questionFilesData), ...toImageParts(answerFilesData)];
+  const unverifiedExplanation = isJapaneseSubject(subjectType)
+    ? JAPANESE_UNVERIFIABLE_EXPLANATION
+    : QUESTION_EXPLANATION_UNVERIFIABLE;
+  const outputRule = `出力はJSONオブジェクト1つのみを返してください。
+{
+  "evidenceQuote": "本文・設問文・選択肢・解答画像から実際に読める短い根拠語句。確認できない場合は空欄",
+  "explanation": "2〜3文以内の小問解説"
+}
+根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${unverifiedExplanation}」にしてください。`;
 
   const prompt = `あなたは大学入試の専門講師です。
 以下の設問について、【必ず2〜3文以内】の簡潔な解説を作成してください。
@@ -1941,9 +2103,10 @@ ${JSON.stringify(questionData, null, 2)}
 2. 「なぜ正解か」の根拠を本文の具体的な箇所（第◯段落など）を挙げて簡潔に説明すること。
 3. 主要な誤答選択肢がなぜ間違いかを1文で触れること。
 4. アスタリスク（*）などの記号による装飾は一切使用しないこと。
+${questionExplanationQualityRules(subjectType)}
 ${japaneseQuestionExplanationRules(subjectType)}
 
-出力は解説本文のみ（プレーンテキスト）を返してください。
+${outputRule}
 `;
 
   const result = await generateContentWithFallback(genAI, {
@@ -1951,7 +2114,12 @@ ${japaneseQuestionExplanationRules(subjectType)}
     generationConfig: { maxOutputTokens: 32768 },
   });
 
-  return cleanQuestionExplanationOutput(result.response.text(), subjectType);
+  try {
+    const parsed = JSON.parse(sanitizeJson(result.response.text())) as Record<string, unknown>;
+    return applyQuestionExplanationGuard(parsed, subjectType, questionData).explanation;
+  } catch (_error) {
+    return unverifiedExplanation;
+  }
 }
 
 async function handleRegenerateAnalysis(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
@@ -3117,14 +3285,20 @@ ${isJapanese ? `13. 漢字の書き取り・漢字表記・漢字に直す問題
 
   // Stage 2: explanations in chunks
   const questions = (parsedSection.questions as Array<Record<string, unknown>>) || [];
-  const chunkSize = 5;
+  const chunkSize = 1;
   for (let i = 0; i < questions.length; i += chunkSize) {
     const chunk = questions.slice(i, i + chunkSize);
     let unresolvedChunk = [...chunk];
     for (let attempt = 1; attempt <= 2 && unresolvedChunk.length > 0; attempt += 1) {
       const slimChunk = unresolvedChunk.map((q) => ({
         id: q.id, label: q.label, type: q.type,
-        options: q.options, correctAnswer: q.correctAnswer, points: q.points, explanation: "",
+        options: q.options,
+        correctAnswer: q.correctAnswer,
+        points: q.points,
+        questionText: q.questionText || q.prompt || q.instruction || q.text || "",
+        evidenceHint: q.evidenceHint || q.sourceExcerpt || "",
+        explanation: "",
+        evidenceQuote: "",
       }));
       const expPrompt = `あなたは大学入試の専門講師です。
 以下の画像（問題・解答）を分析し、提供された設問構造の各小問に対する解説(explanation)のみを生成してください。
@@ -3136,6 +3310,8 @@ ${isJapanese ? `13. 漢字の書き取り・漢字表記・漢字に直す問題
 4. 各小問の explanation を【2〜3文以内、約50〜100文字】で埋めてください。
 5. 日本語で記述。アスタリスク（*）禁止。
 6. 出力は解説を埋めた後の同じJSON構造（オブジェクト1つ）のみ。
+7. 全科目で各小問に evidenceQuote を必ず入れること。根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
+${questionExplanationQualityRules(subjectType)}
 ${japaneseQuestionExplanationRules(subjectType)}
 
 【設問構造】
@@ -3164,7 +3340,7 @@ ${JSON.stringify({ questions: slimChunk })}
           targetQuestions[idx] = {
             ...targetQuestions[idx],
             ...resolvedCorrectAnswerPatch(targetQuestions[idx], q),
-            explanation: cleanQuestionExplanationOutput(q.explanation, subjectType),
+            ...applyQuestionExplanationGuard(q, subjectType, targetQuestions[idx]),
           };
         }
       });
@@ -3210,7 +3386,7 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
   const emptyQuestions = questions.filter((q) => !q.explanation || String(q.explanation).trim() === "");
   if (emptyQuestions.length === 0) return sectionData;
 
-  const chunkSize = 5;
+  const chunkSize = 1;
   const updatedQuestions = [...questions];
 
   for (let i = 0; i < emptyQuestions.length; i += chunkSize) {
@@ -3220,7 +3396,13 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
     for (let attempt = 1; attempt <= 2 && unresolvedChunk.length > 0; attempt += 1) {
       const slimChunk = unresolvedChunk.map((q) => ({
         id: q.id, label: q.label, type: q.type,
-        options: q.options, correctAnswer: q.correctAnswer, points: q.points, explanation: "",
+        options: q.options,
+        correctAnswer: q.correctAnswer,
+        points: q.points,
+        questionText: q.questionText || q.prompt || q.instruction || q.text || "",
+        evidenceHint: q.evidenceHint || q.sourceExcerpt || "",
+        explanation: "",
+        evidenceQuote: "",
       }));
       const tempSectionData = {
         sectionNumber: sectionData.sectionNumber,
@@ -3240,6 +3422,8 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
 6. 日本語で記述すること。
 7. アスタリスク（*）記号は一切使用禁止。
 8. 出力は、解説を埋めた後の「同じJSON構造のオブジェクト1つのみ」を返してください。
+9. 全科目で各小問に evidenceQuote を必ず入れること。根拠引用が取れない場合は evidenceQuote を空欄、explanation を「${isJapaneseSubject(subjectType) ? JAPANESE_UNVERIFIABLE_EXPLANATION : QUESTION_EXPLANATION_UNVERIFIABLE}」にすること。
+${questionExplanationQualityRules(subjectType)}
 ${japaneseQuestionExplanationRules(subjectType)}
 
 【対象の設問構造（現在のデータ）】
@@ -3275,7 +3459,7 @@ ${JSON.stringify(tempSectionData)}
           updatedQuestions[targetIndex] = {
             ...updatedQuestions[targetIndex],
             ...resolvedCorrectAnswerPatch(updatedQuestions[targetIndex], q),
-            explanation: cleanQuestionExplanationOutput(q.explanation, subjectType),
+            ...applyQuestionExplanationGuard(q, subjectType, updatedQuestions[targetIndex]),
           };
         }
       });

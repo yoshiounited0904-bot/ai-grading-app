@@ -225,44 +225,54 @@ const UniversityPage = () => {
                                                 {faculty.name}
                                             </td>
                                             {subjects.map(subject => {
-                                                const exam = allExams.find(e => e.year === year && e.subject === subject && e.facultyId === faculty.id);
-                                                const production = isProductionExam(exam);
+                                                const examsForCell = allExams.filter(e => e.year === year && e.subject === subject && e.facultyId === faculty.id);
                                                 return (
                                                     <td key={`${faculty.id}-${subject}`} style={{ padding: '0.55rem 0.75rem', textAlign: 'center', borderBottom: '1px solid #f1f5f9' }}>
-                                                        {exam ? (
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                flexDirection: 'column',
-                                                                alignItems: 'center',
-                                                                gap: '0.35rem'
-                                                            }}>
-                                                                {production && <ProductionBadge compact />}
-                                                                <button
-                                                                    className="btn btn-primary"
-                                                                    style={{
-                                                                        fontSize: '0.78rem',
-                                                                        padding: '0.38rem 0.9rem',
-                                                                        borderRadius: '2px',
-                                                                        width: '100%',
-                                                                        maxWidth: '108px',
-                                                                        boxShadow: production ? '0 0 0 3px rgba(185, 28, 28, 0.12)' : undefined,
-                                                                        border: production ? '1px solid #b91c1c' : undefined
-                                                                    }}
-                                                                    onClick={() => handleStartClick(exam)}
-                                                                >
-                                                                    解答する
-                                                                </button>
-                                                                {production && (
-                                                                    <div style={{
-                                                                        color: '#991b1b',
-                                                                        fontSize: '0.58rem',
-                                                                        fontWeight: 800,
-                                                                        lineHeight: 1.25,
-                                                                        maxWidth: '8.5rem'
-                                                                    }}>
-                                                                        採点精度が高い確認済み問題
-                                                                    </div>
-                                                                )}
+                                                        {examsForCell.length > 0 ? (
+                                                            <div style={{ display: 'grid', gap: '0.65rem', justifyItems: 'center' }}>
+                                                                {examsForCell.map((exam) => {
+                                                                    const production = isProductionExam(exam);
+                                                                    return (
+                                                                        <div
+                                                                            key={exam.uniqueId}
+                                                                            style={{
+                                                                                display: 'flex',
+                                                                                flexDirection: 'column',
+                                                                                alignItems: 'center',
+                                                                                gap: '0.35rem',
+                                                                                width: '100%'
+                                                                            }}
+                                                                        >
+                                                                            {production && <ProductionBadge compact />}
+                                                                            <button
+                                                                                className="btn btn-primary"
+                                                                                style={{
+                                                                                    fontSize: '0.78rem',
+                                                                                    padding: '0.38rem 0.9rem',
+                                                                                    borderRadius: '2px',
+                                                                                    width: '100%',
+                                                                                    maxWidth: '108px',
+                                                                                    boxShadow: production ? '0 0 0 3px rgba(185, 28, 28, 0.12)' : undefined,
+                                                                                    border: production ? '1px solid #b91c1c' : undefined
+                                                                                }}
+                                                                                onClick={() => handleStartClick(exam)}
+                                                                            >
+                                                                                解答する
+                                                                            </button>
+                                                                            {production && (
+                                                                                <div style={{
+                                                                                    color: '#991b1b',
+                                                                                    fontSize: '0.58rem',
+                                                                                    fontWeight: 800,
+                                                                                    lineHeight: 1.25,
+                                                                                    maxWidth: '8.5rem'
+                                                                                }}>
+                                                                                    採点精度が高い確認済み問題
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
                                                             </div>
                                                         ) : (
                                                             <span style={{ color: '#e2e8f0', fontSize: '1.2rem' }}>-</span>

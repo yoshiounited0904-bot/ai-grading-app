@@ -15,7 +15,43 @@ const formatDateTime = (value) => {
     });
 };
 
+const formatExportDateTime = (value) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('ja-JP', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+};
+
 const normalizeSearchText = (value) => String(value || '').toLowerCase().normalize('NFKC');
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const getUniversityForResult = (result) => {
+    const raw = String(result.university_name || '').trim();
+    const match = raw.match(/^(.+?大学)/);
+    return match ? match[1] : (raw || '大学不明');
+};
+
+const getFacultyForResult = (result) => {
+    const explicitFaculty = String(result.faculty_name || '').trim();
+    if (explicitFaculty) return explicitFaculty;
+
+    const rawUniversity = String(result.university_name || '').trim();
+    const match = rawUniversity.match(/^(.+?大学)\s*(.+)$/);
+    return match?.[2]?.trim() || '学部不明';
+};
 
 const formatScore = (result) => {
     const score = Number(result.score);
@@ -66,6 +102,67 @@ const summarizeSectionScores = (sectionScores) => {
     return '';
 };
 
+const formatRate = (value) => {
+    const rate = Number(value);
+    if (!Number.isFinite(rate)) return '-';
+    return `${Math.round(rate * 10) / 10}%`;
+};
+
+const average = (values) => {
+    const numbers = values.map(Number).filter(Number.isFinite);
+    if (!numbers.length) return null;
+    return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+};
+
+const buildExcelTable = (headers, rows) => `
+    <table>
+        <thead>
+            <tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr>
+        </thead>
+        <tbody>
+            ${rows.map(row => `
+                <tr>${headers.map(header => `<td>${escapeHtml(row[header] ?? '')}</td>`).join('')}</tr>
+            `).join('')}
+        </tbody>
+    </table>
+`;
+
+const downloadExcelWorkbook = ({ filename, title, metaRows, sections }) => {
+    const html = `<!doctype html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; color: #111827; }
+        h1 { font-size: 20px; margin: 0 0 12px; }
+        h2 { font-size: 16px; margin: 28px 0 8px; color: #b51a00; }
+        table { border-collapse: collapse; margin-bottom: 18px; width: 100%; }
+        th { background: #f3f4f6; font-weight: 700; }
+        th, td { border: 1px solid #d1d5db; padding: 6px 8px; mso-number-format: "\\@"; vertical-align: top; }
+        .meta td:first-child { font-weight: 700; background: #f9fafb; width: 180px; }
+    </style>
+</head>
+<body>
+    <h1>${escapeHtml(title)}</h1>
+    ${buildExcelTable(['項目', '内容'], metaRows)}
+    ${sections.map(section => `
+        <h2>${escapeHtml(section.title)}</h2>
+        ${buildExcelTable(section.headers, section.rows)}
+    `).join('')}
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};
+
 function AdminResultAnalytics() {
     const navigate = useNavigate();
     const [days, setDays] = useState('30');
@@ -77,6 +174,7 @@ function AdminResultAnalytics() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(null);
     const [openingResultId, setOpeningResultId] = useState(null);
+    const [exportingExcel, setExportingExcel] = useState(false);
 
     const handleOpenResult = async (result) => {
         if (openingResultId) return; // Prevent double-clicks
@@ -264,6 +362,130 @@ function AdminResultAnalytics() {
             .sort((a, b) => b.total - a.total);
     }, [filteredResults]);
 
+    const handleExportUniversityExcel = () => {
+        if (!filteredResults.length || exportingExcel) return;
+        setExportingExcel(true);
+
+        try {
+            const universityGroups = new Map();
+            const facultyGroups = new Map();
+
+            filteredResults.forEach((result) => {
+                const university = getUniversityForResult(result);
+                const faculty = getFacultyForResult(result);
+                const facultyKey = `${university}\u0000${faculty}`;
+
+                if (!universityGroups.has(university)) {
+                    universityGroups.set(university, {
+                        university,
+                        results: [],
+                        users: new Set()
+                    });
+                }
+                if (!facultyGroups.has(facultyKey)) {
+                    facultyGroups.set(facultyKey, {
+                        university,
+                        faculty,
+                        results: [],
+                        users: new Set()
+                    });
+                }
+
+                universityGroups.get(university).results.push(result);
+                facultyGroups.get(facultyKey).results.push(result);
+                if (result.user_id) {
+                    universityGroups.get(university).users.add(result.user_id);
+                    facultyGroups.get(facultyKey).users.add(result.user_id);
+                }
+            });
+
+            const buildSummaryRow = (group) => {
+                const scoreRates = group.results.map(result => result.scoreRate);
+                const scores = group.results.map(result => result.score);
+                const maxScores = group.results.map(result => result.max_score);
+                const latest = group.results
+                    .map(result => result.created_at)
+                    .filter(Boolean)
+                    .sort((a, b) => new Date(b) - new Date(a))[0];
+
+                return {
+                    '大学': group.university,
+                    '学部': group.faculty || '',
+                    '採点回数': group.results.length,
+                    '利用者数': group.users.size,
+                    '平均得点率': formatRate(average(scoreRates)),
+                    '平均得点': average(scores) === null ? '-' : Math.round(average(scores) * 10) / 10,
+                    '平均満点': average(maxScores) === null ? '-' : Math.round(average(maxScores) * 10) / 10,
+                    '最高得点率': formatRate(Math.max(...scoreRates.map(Number).filter(Number.isFinite))),
+                    '最新採点日時': formatExportDateTime(latest)
+                };
+            };
+
+            const universityRows = [...universityGroups.values()]
+                .map(buildSummaryRow)
+                .sort((a, b) => Number(b['採点回数']) - Number(a['採点回数']) || String(a['大学']).localeCompare(String(b['大学']), 'ja'));
+
+            const facultyRows = [...facultyGroups.values()]
+                .map(buildSummaryRow)
+                .sort((a, b) => String(a['大学']).localeCompare(String(b['大学']), 'ja') || Number(b['採点回数']) - Number(a['採点回数']));
+
+            const detailRows = filteredResults.map((result) => ({
+                '採点日時': formatExportDateTime(result.created_at),
+                'ユーザー名': result.userName || '-',
+                'ユーザーID': result.user_id || '-',
+                '権限': result.isAdminResult ? '管理者' : '一般',
+                '学年': result.userGrade || '-',
+                '第一志望': result.userFirstChoice || '-',
+                'プラン': result.userPlan || '-',
+                '大学': getUniversityForResult(result),
+                '学部': getFacultyForResult(result),
+                '年度': result.exam_year || '-',
+                '科目': result.exam_subject || '-',
+                '得点': Number.isFinite(Number(result.score)) ? result.score : '-',
+                '満点': Number.isFinite(Number(result.max_score)) ? result.max_score : '-',
+                '得点率': formatRate(result.scoreRate),
+                '判定': result.pass_probability || '-',
+                '大問別': summarizeSectionScores(result.section_scores) || '-',
+                '成績ID': result.id || '-'
+            }));
+
+            const exportedAt = new Date();
+            const filenameDate = exportedAt.toISOString().slice(0, 10);
+            downloadExcelWorkbook({
+                filename: `スマサイ_大学別採点状況_${filenameDate}.xls`,
+                title: 'スマサイ 大学別採点状況',
+                metaRows: [
+                    { '項目': '出力日時', '内容': formatExportDateTime(exportedAt) },
+                    { '項目': '期間', '内容': days === 'all' ? '全期間' : `過去${days}日` },
+                    { '項目': '種別', '内容': roleFilter === 'students' ? '生徒のみ' : roleFilter === 'admin' ? '管理者テスト' : '全答案' },
+                    { '項目': '大学フィルタ', '内容': universityFilter === 'all' ? '全大学' : universityFilter },
+                    { '項目': 'ユーザーフィルタ', '内容': userFilter === 'all' ? '全ユーザー' : userFilter },
+                    { '項目': '検索語', '内容': searchQuery || '-' },
+                    { '項目': '出力件数', '内容': `${filteredResults.length}件` }
+                ],
+                sections: [
+                    {
+                        title: '大学別サマリー',
+                        headers: ['大学', '採点回数', '利用者数', '平均得点率', '平均得点', '平均満点', '最高得点率', '最新採点日時'],
+                        rows: universityRows.map(({ '学部': _faculty, ...row }) => row)
+                    },
+                    {
+                        title: '大学・学部別サマリー',
+                        headers: ['大学', '学部', '採点回数', '利用者数', '平均得点率', '平均得点', '平均満点', '最高得点率', '最新採点日時'],
+                        rows: facultyRows
+                    },
+                    {
+                        title: '採点明細',
+                        headers: ['採点日時', 'ユーザー名', 'ユーザーID', '権限', '学年', '第一志望', 'プラン', '大学', '学部', '年度', '科目', '得点', '満点', '得点率', '判定', '大問別', '成績ID'],
+                        rows: detailRows
+                    }
+                ]
+            });
+        } finally {
+            setExportingExcel(false);
+        }
+    };
+
     return (
         <div className="space-y-5">
             {loadError && (
@@ -350,18 +572,28 @@ function AdminResultAnalytics() {
                             ))}
                         </select>
                     </label>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setSearchQuery('');
-                            setRoleFilter('all');
-                            setUserFilter('all');
-                            setUniversityFilter('all');
-                        }}
-                        className="rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-black text-navy-blue hover:bg-gray-50"
-                    >
-                        リセット
-                    </button>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            type="button"
+                            onClick={handleExportUniversityExcel}
+                            disabled={!filteredResults.length || exportingExcel}
+                            className="rounded-md border border-red-200 bg-red-600 px-4 py-2 text-sm font-black text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-gray-400"
+                        >
+                            {exportingExcel ? '出力中...' : 'Excel出力'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSearchQuery('');
+                                setRoleFilter('all');
+                                setUserFilter('all');
+                                setUniversityFilter('all');
+                            }}
+                            className="rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-black text-navy-blue hover:bg-gray-50"
+                        >
+                            リセット
+                        </button>
+                    </div>
                 </div>
             </div>
 
