@@ -366,14 +366,17 @@ const invokeGeminiAdmin = async (body) => {
     throw new Error('管理者ログインセッションが取得できませんでした。ページを再読み込みして、管理者アカウントでログインし直してください。');
   }
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const functionsUrl = (
+    import.meta.env.VITE_SUPABASE_FUNCTIONS_URL ||
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
+  ).replace(/\/$/, '');
   const headers = {
     'Content-Type': 'application/json',
     ...(anonKey ? { apikey: anonKey } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/gemini-admin`, {
+  const response = await fetch(`${functionsUrl}/gemini-admin`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body)
@@ -496,6 +499,14 @@ const isUsableExplanation = (value) => (
   !value.includes('AI生成エラー')
 );
 
+const isJapaneseSubjectType = (subjectType) => {
+  const normalized = String(subjectType || '').trim().toLowerCase();
+  if (['japanese', 'kokugo', 'modern_japanese', 'classical_japanese', 'kanbun'].includes(normalized)) {
+    return true;
+  }
+  return /国語|現代文|古文|漢文|小論文/u.test(String(subjectType || ''));
+};
+
 const isUnresolvedCorrectAnswer = (value) => {
   const text = String(value ?? '').trim();
   if (!text) return true;
@@ -515,6 +526,43 @@ const buildResolvedCorrectAnswerPatch = (existingQuestion, generatedQuestion) =>
   if (existingQuestion?.answerIssue === 'unresolved' || existingQuestion?.answerIssue === 'missing_answer') {
     patch.answerIssue = '';
   }
+  return patch;
+};
+
+const mergeGeneratedQuestionPatch = (existingQuestion, generatedQuestion = {}) => {
+  const explanation = typeof generatedQuestion?.explanation === 'string'
+    ? generatedQuestion.explanation.trim()
+    : '';
+  const patch = {
+    ...existingQuestion,
+    ...buildResolvedCorrectAnswerPatch(existingQuestion, generatedQuestion),
+  };
+
+  if (explanation) patch.explanation = explanation;
+  if (generatedQuestion?.questionText) patch.questionText = generatedQuestion.questionText;
+  if (generatedQuestion?.choiceTexts) patch.choiceTexts = generatedQuestion.choiceTexts;
+  if (generatedQuestion?.sourceExcerpt) {
+    patch.sourceExcerpt = generatedQuestion.sourceExcerpt;
+    patch.evidenceHint = generatedQuestion.sourceExcerpt;
+  } else if (generatedQuestion?.evidenceHint) {
+    patch.evidenceHint = generatedQuestion.evidenceHint;
+    patch.sourceExcerpt = generatedQuestion.evidenceHint;
+  }
+  if ('evidenceQuote' in generatedQuestion) {
+    patch.evidenceQuote = generatedQuestion.evidenceQuote || '';
+  } else if (existingQuestion?.evidenceQuote) {
+    patch.evidenceQuote = existingQuestion.evidenceQuote;
+  }
+  if ('evidenceConfidence' in generatedQuestion) {
+    patch.evidenceConfidence = generatedQuestion.evidenceConfidence || '';
+  }
+  if ('needsReview' in generatedQuestion) {
+    patch.needsReview = Boolean(generatedQuestion.needsReview);
+  }
+  if ('explanationIssue' in generatedQuestion) {
+    patch.explanationIssue = generatedQuestion.explanationIssue || '';
+  }
+
   return patch;
 };
 
@@ -655,13 +703,45 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
       const questionFilesData = await sourcesToBase64(questionFiles);
       const answerFilesData = await sourcesToBase64(answerFiles);
       const originalQuestions = Array.isArray(sectionData?.questions) ? sectionData.questions : [];
-      const updatedQuestions = [...originalQuestions];
+      let sourceQuestions = originalQuestions;
+      let sectionForGeneration = {
+        ...sectionData,
+        questions: sourceQuestions
+      };
+      let updatedQuestions = [...sourceQuestions];
       const chunkSize = 5;
 
       if (originalQuestions.length === 0) return sectionData;
 
-      for (let i = 0; i < originalQuestions.length; i += chunkSize) {
-        const chunk = originalQuestions.slice(i, i + chunkSize);
+      if (isJapaneseSubjectType(subjectType)) {
+        let evidenceResult;
+        try {
+          evidenceResult = await invokeGeminiAdminWithRetry({
+            operation: 'extractQuestionEvidence',
+            subjectType,
+            sectionData: {
+              ...sectionData,
+              questions: originalQuestions
+            },
+            questionFilesData,
+            answerFilesData,
+          }, { retries: 1, delayMs: 1600 });
+        } catch (error) {
+          throw new Error(`国語の小問解説生成に必要な根拠抽出に失敗しました。Edge FunctionのextractQuestionEvidenceが未反映、またはPDFから対象小問を特定できません。詳細: ${error.message}`);
+        }
+
+        sourceQuestions = Array.isArray(evidenceResult?.questions)
+          ? evidenceResult.questions
+          : originalQuestions;
+        sectionForGeneration = {
+          ...sectionData,
+          questions: sourceQuestions
+        };
+        updatedQuestions = [...sourceQuestions];
+      }
+
+      for (let i = 0; i < sourceQuestions.length; i += chunkSize) {
+        const chunk = sourceQuestions.slice(i, i + chunkSize);
 
         let unresolvedQuestions = [...chunk];
         for (let attempt = 1; attempt <= 2 && unresolvedQuestions.length > 0; attempt += 1) {
@@ -670,7 +750,7 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
               operation: 'generateSectionQA',
               subjectType,
               sectionData: {
-                ...sectionData,
+                ...sectionForGeneration,
                 questions: unresolvedQuestions.map(q => ({ ...q, explanation: '' }))
               },
               questionFilesData,
@@ -682,11 +762,7 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
               if (!isUsableExplanation(question?.explanation)) return;
               const targetIndex = findQuestionIndex(updatedQuestions, question, i + resultIndex);
               if (targetIndex !== -1) {
-                updatedQuestions[targetIndex] = {
-                  ...updatedQuestions[targetIndex],
-                  ...buildResolvedCorrectAnswerPatch(updatedQuestions[targetIndex], question),
-                  explanation: question.explanation.trim()
-                };
+                updatedQuestions[targetIndex] = mergeGeneratedQuestionPatch(updatedQuestions[targetIndex], question);
               }
             });
 
@@ -702,22 +778,24 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
 
         if (unresolvedQuestions.length > 0) {
           for (const question of unresolvedQuestions) {
-            const explanation = await invokeGeminiAdmin({
+            const explanationResult = await invokeGeminiAdmin({
               operation: 'regenerateExplanation',
               subjectType,
               questionData: question,
               questionFilesData,
               answerFilesData,
             });
+            const explanation = typeof explanationResult === 'string'
+              ? explanationResult
+              : explanationResult?.explanation;
             if (!isUsableExplanation(explanation)) {
               throw new Error(`小問 ${question?.label || question?.id || ''} の解説が生成されませんでした。`);
             }
             const targetIndex = findQuestionIndex(updatedQuestions, question);
             if (targetIndex !== -1) {
-              updatedQuestions[targetIndex] = {
-                ...updatedQuestions[targetIndex],
-                explanation: explanation.trim()
-              };
+              updatedQuestions[targetIndex] = typeof explanationResult === 'string'
+                ? { ...updatedQuestions[targetIndex], explanation: explanation.trim() }
+                : mergeGeneratedQuestionPatch(updatedQuestions[targetIndex], explanationResult);
             }
           }
         }
@@ -728,8 +806,8 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
             questions: updatedQuestions
           }, {
             start: i,
-            end: Math.min(i + chunkSize, originalQuestions.length),
-            total: originalQuestions.length
+            end: Math.min(i + chunkSize, sourceQuestions.length),
+            total: sourceQuestions.length
           });
         }
       }
@@ -832,4 +910,3 @@ export const generateEssayModelAnswer = async ({
     throw error;
   }
 };
-
