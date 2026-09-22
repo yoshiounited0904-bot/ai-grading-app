@@ -5,9 +5,16 @@ import { corsHeaders, fetchPrivatePdfAsInlineData } from "../_shared/cors.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
 
 const MODELS = {
-  PRIMARY: "gemini-2.5-flash",
-  FALLBACK: "gemini-2.5-pro",
+  PRIMARY: "gemini-3.1-pro-preview",
+  FALLBACK: "gemini-3.1-pro",
 };
+
+const CHAT_MODELS = [
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-pro",
+  "gemini-2.5-pro",
+  "gemini-3.8-flash",
+];
 
 const sanitizeUserAnswer = (answer: unknown): string => {
   if (answer === null || answer === undefined) return "";
@@ -154,32 +161,39 @@ ${imageParts.length > 0 ? "\n# 試験PDF\n上記のPDFが今回の試験問題�
 
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    let model;
-    try {
-      model = genAI.getGenerativeModel({ model: MODELS.PRIMARY });
-    } catch {
-      model = genAI.getGenerativeModel({ model: MODELS.FALLBACK });
+    const historyChat = [
+      {
+        role: "user",
+        parts: [{ text: systemPrompt }, ...imageParts],
+      },
+      {
+        role: "model",
+        parts: [{ text: "わかりました。生徒さんの質問に丁寧に答えます。" }],
+      },
+      ...(history || []).map((msg: { role: string; text: string }) => ({
+        role: msg.role === "ai" ? "model" : "user",
+        parts: [{ text: msg.text }],
+      })),
+    ];
+
+    let response = "";
+    let lastError: unknown;
+    for (const modelName of CHAT_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const chat = model.startChat({ history: historyChat });
+        const result = await chat.sendMessage(userMessage);
+        response = result.response.text();
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[gemini-chat] Model ${modelName} failed:`, err);
+      }
     }
 
-    const chat = model.startChat({
-      history: [
-        {
-          role: "user",
-          parts: [{ text: systemPrompt }, ...imageParts],
-        },
-        {
-          role: "model",
-          parts: [{ text: "わかりました。生徒さんの質問に丁寧に答えます。" }],
-        },
-        ...(history || []).map((msg: { role: string; text: string }) => ({
-          role: msg.role === "ai" ? "model" : "user",
-          parts: [{ text: msg.text }],
-        })),
-      ],
-    });
-
-    const result = await chat.sendMessage(userMessage);
-    const response = result.response.text();
+    if (!response) {
+      throw lastError || new Error("All chat models failed.");
+    }
 
     return new Response(JSON.stringify({ response }), {
       headers: { ...headers, "Content-Type": "application/json" },

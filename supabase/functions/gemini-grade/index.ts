@@ -5,9 +5,16 @@ import { corsHeaders, fetchPrivatePdfAsInlineData } from "../_shared/cors.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
 
 const MODELS = {
-  PRIMARY: "gemini-2.5-flash",
-  FALLBACK: "gemini-2.5-pro",
+  PRIMARY: "gemini-3.1-pro-preview",
+  FALLBACK: "gemini-3.1-pro",
 };
+
+const GRADING_MODELS = [
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-pro",
+  "gemini-2.5-pro",
+  "gemini-3.8-flash",
+];
 
 const sanitizeJson = (text: string): string => {
   let cleaned = text.replace(/```json\s*/g, "").replace(/```/g, "").trim();
@@ -34,18 +41,21 @@ const sanitizeUserAnswer = (answer: unknown): string => {
 };
 
 async function generateWithRetry(genAI: GoogleGenerativeAI, prompt: string, imageParts: unknown[], config = {}) {
-  for (const modelName of [MODELS.PRIMARY, MODELS.FALLBACK]) {
+  let lastError: unknown;
+  for (const modelName of GRADING_MODELS) {
     try {
       const model = genAI.getGenerativeModel({ model: modelName, ...config });
       const result = await model.generateContent([prompt, ...imageParts]);
       return result.response.text();
     } catch (e: unknown) {
+      lastError = e;
       const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[gemini-grade] Model ${modelName} failed:`, msg);
       if (msg.includes("404") || msg.includes("not found")) continue;
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  throw new Error("All Gemini models failed.");
+  throw lastError || new Error("All Gemini models failed.");
 }
 
 const getCorsConfig = (req: Request) => {

@@ -1912,8 +1912,8 @@ function AdminExamEditor() {
     };
 
     const handleBulkGenerateStructureOnlyNativePdf = async () => {
-        if (!confirm(`全 ${sectionCount} つの大問の【構造・正解・配点のみ】を【Gemini 3.8 Flash ＆ Native PDF】で一括生成します。\n（テキストレイヤー直読で高速抽出します。完了後に正解をご確認いただけます）\nよろしいですか？`)) return;
-        return handleBulkGenerateSections(false, false, { useNativePdf: true });
+        if (!confirm(`全 ${sectionCount} つの大問の【構造・正解・配点のみ】を【Gemini 3.1 Pro ＆ Native PDF】で一括生成します。\n（テキストレイヤー直読で高精度に抽出します。完了後に正解をご確認いただけます）\nよろしいですか？`)) return;
+        return handleBulkGenerateSections(false, false, { useNativePdf: true, usePro: true });
     };
 
     const handleBulkGenerateExplanationsOnlyNativePdf = async (options = {}) => {
@@ -6340,13 +6340,13 @@ function AdminExamEditor() {
                                     </div>
                                 </div>
 
-                                {/* ⚡ Gemini 3.1 Pro & 3.8 Flash & Native PDF 高精度・横断一括セクション */}
+                                {/* ⚡ Gemini 3.1 Pro & Native PDF 高精度・横断一括セクション */}
                                 <div className="bg-gradient-to-br from-indigo-50/90 to-purple-50/60 border-2 border-indigo-200 p-6 rounded-3xl space-y-5 text-left shadow-xs">
                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
                                         <div className="flex items-center gap-2">
                                             <span className="text-base">⚡</span>
                                             <span className="text-xs font-black text-navy-blue tracking-wide">
-                                                Gemini 3.1 Pro ＆ 3.8 Flash ＆ Native PDF 高精度横断一括生成
+                                                Gemini 3.1 Pro ＆ Native PDF 高精度横断一括生成
                                             </span>
                                         </div>
                                         <span className="text-[10px] font-bold text-indigo-700 bg-white px-2.5 py-1 rounded-full border border-indigo-200 shadow-xs">
