@@ -56,9 +56,18 @@ const normalizeStructure = (structure) => {
     });
 };
 
+const safeDecodeURIComponent = (value = '') => {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+};
+
 export default function AnswerVerifyPage() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const examId = safeDecodeURIComponent(id || '');
     const [fullExamData, setFullExamData] = useState(null);
     const [sections, setSections] = useState([]);
     const [examMeta, setExamMeta] = useState(null);
@@ -69,8 +78,13 @@ export default function AnswerVerifyPage() {
 
     useEffect(() => {
         const fetch = async () => {
-            const { data, error } = await getAdminExamById(id);
-            if (error || !data) { alert('データ取得失敗'); navigate('/admin'); return; }
+            const { data, error } = await getAdminExamById(examId);
+            if (error || !data) {
+                console.error('[AnswerVerifyPage] Failed to fetch exam data', { examId, error });
+                alert(`データ取得失敗\n試験ID: ${examId}`);
+                navigate('/admin');
+                return;
+            }
             setExamMeta({
                 university: data.university,
                 faculty: data.faculty,
@@ -83,7 +97,7 @@ export default function AnswerVerifyPage() {
             setLoading(false);
         };
         fetch();
-    }, [id]);
+    }, [examId, navigate]);
 
     const updateQuestion = useCallback((sIdx, qIdx, field, value) => {
         setSections(prev => prev.map((sec, si) =>
@@ -147,7 +161,7 @@ export default function AnswerVerifyPage() {
 
             {/* Header — 高さ auto、縮まない */}
             <div style={{ flexShrink: 0 }} className="answer-verify-header bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-4 shadow-sm">
-                <button onClick={() => navigate(`/admin/exam/${id}`)} className="text-gray-400 hover:text-gray-600 text-sm font-black transition-colors">← 編集に戻る</button>
+                <button onClick={() => navigate(`/admin/exam/${encodeURIComponent(examId)}`)} className="text-gray-400 hover:text-gray-600 text-sm font-black transition-colors">← 編集に戻る</button>
                 <div className="h-4 w-px bg-gray-200" />
                 <div className="text-sm font-black text-gray-700 flex-1 min-w-0">
                     <div className="truncate">

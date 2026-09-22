@@ -35,15 +35,27 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress
         const loadingTask = pdfjsLib.getDocument(await createPdfLoadingSource(pdfUrl));
         onLog("Loading PDF document...");
         const pdf = await loadingTask.promise;
-        onLog(`PDF loaded. Pages: ${pdf.numPages}`);
-
         const numPages = pdf.numPages;
+        onLog(`PDF loaded. Pages: ${numPages}`);
 
         // Process up to 50 pages by default. AI requests can pass a smaller cap.
-        const pagesToProcess = Math.min(numPages, options.maxPages || 50);
+        const maxPages = options.maxPages || 50;
+        const pagesToProcess = Math.min(numPages, maxPages);
         const images = [];
 
-        onLog(`Processing ${pagesToProcess} pages sequentially...`);
+        const targetScale = typeof options.scale === 'number' ? options.scale : 1.2;
+        const targetQuality = typeof options.quality === 'number' ? options.quality : 0.75;
+
+        if (numPages > pagesToProcess) {
+            const warnMsg = `[pdfUtils] ⚠️ PDF上限超過警告: 全${numPages}ページ中、${pagesToProcess}ページのみ変換します（${numPages - pagesToProcess}ページがスキップされます。上限: ${maxPages}ページ）。Geminiが後半の内容を読めない可能性があります。`;
+            console.warn(warnMsg);
+            onLog(warnMsg);
+            if (typeof options.onWarning === 'function') {
+                options.onWarning(warnMsg, { totalPages: numPages, convertedPages: pagesToProcess, skippedPages: numPages - pagesToProcess, maxPages });
+            }
+        }
+
+        onLog(`Processing ${pagesToProcess} pages sequentially (scale: ${targetScale}, quality: ${targetQuality})...`);
         if (onProgress) onProgress(0);
 
         for (let i = 1; i <= pagesToProcess; i++) {
@@ -56,8 +68,7 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress
             try {
                 page = await pdf.getPage(i);
 
-                // Scale 0.85: Balance between resolution and payload size
-                const viewport = page.getViewport({ scale: options.scale || 0.85 });
+                const viewport = page.getViewport({ scale: targetScale });
 
                 canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
@@ -75,13 +86,13 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress
                 // Yield again before heavy toDataURL
                 await new Promise(resolve => setTimeout(resolve, 50));
 
-                // Quality 0.6: Good enough for text, compressed enough for API
-                const base64 = canvas.toDataURL('image/jpeg', options.quality || 0.6).split(',')[1];
+                const base64 = canvas.toDataURL('image/jpeg', targetQuality).split(',')[1];
                 images.push({
                     inlineData: {
                         data: base64,
                         mimeType: "image/jpeg"
-                    }
+                    },
+                    pageNumber: i
                 });
                 onLog(`Page ${i} processed.`);
                 if (onProgress) {
@@ -101,7 +112,25 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress
             }
         }
 
-        onLog("PDF conversion complete.");
+        const totalBase64Length = images.reduce((acc, img) => acc + (img?.inlineData?.data?.length || 0), 0);
+        const totalBytesApprox = Math.round(totalBase64Length * 0.75);
+
+        const metadata = {
+            totalPages: numPages,
+            convertedPages: images.length,
+            skippedPages: Math.max(0, numPages - images.length),
+            isTruncated: numPages > images.length,
+            scale: targetScale,
+            quality: targetQuality,
+            maxPages,
+            totalBytesApprox,
+            warning: numPages > images.length
+                ? `全${numPages}ページ中${images.length}ページのみ変換されました（${numPages - images.length}ページが上限によりスキップ）`
+                : null
+        };
+        images.metadata = metadata;
+
+        onLog(`PDF conversion complete. ${images.length}/${numPages} pages converted (~${Math.round(totalBytesApprox / 1024)} KB).`);
         if (onProgress) onProgress(100);
         if (pdf?.cleanup) pdf.cleanup();
         if (pdf?.destroy) await pdf.destroy();
@@ -111,4 +140,12 @@ export const convertPdfToImages = async (pdfUrl, onLog = console.log, onProgress
         onLog(`Error converting PDF: ${error.message}`);
         throw error;
     }
+};
+
+export const convertPdfToImagesWithMeta = async (pdfUrl, onLog = console.log, onProgress = null, options = {}) => {
+    const images = await convertPdfToImages(pdfUrl, onLog, onProgress, options);
+    return {
+        images,
+        metadata: images.metadata || {}
+    };
 };

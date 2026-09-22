@@ -2549,7 +2549,7 @@ ${adminInstruction ? "・管理者の個別指示にない前置き、タイト�
   }
 
   if (imageParts.length === 0) {
-    throw new Error("詳細解説には問題画像または解答画像が必要です。画像なしの構造データだけでは、プロンプトに沿った根拠ある解説を生成しません。");
+    throw new Error("詳細解説には問題ファイルまたは解答ファイル（PDF/画像）が必要です。ファイルなしの構造データだけでは、プロンプトに沿った根拠ある解説を生成しません。");
   }
 
   const questionType = (sectionData.questionType as string) || "default";
@@ -3561,7 +3561,13 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
   const emptyQuestions = questions.filter((q) => !q.explanation || String(q.explanation).trim() === "");
   if (emptyQuestions.length === 0) return sectionData;
 
-  const chunkSize = 1;
+  const usePro = body.usePro === true || body.useNativePdf === true || imageParts.some((p) => (p as any)?.inlineData?.mimeType === "application/pdf");
+  const qaModelList = usePro
+    ? ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    : ["gemini-2.5-flash", "gemini-2.0-flash"];
+
+  // 複数問を1回のリクエストでまとめて処理することでRPM制限（5〜10回/分）を回避
+  const chunkSize = Math.max(1, Math.min(emptyQuestions.length, 6));
   const updatedQuestions = [...questions];
 
   for (let i = 0; i < emptyQuestions.length; i += chunkSize) {
@@ -3624,8 +3630,8 @@ ${JSON.stringify(tempSectionData)}
 
       const result = await generateContentWithFallback(genAI, {
         contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
-        generationConfig: { maxOutputTokens: 4096 },
-      }, 1, 1000, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+        generationConfig: { maxOutputTokens: usePro ? 8192 : 4096 },
+      }, usePro ? 2 : 1, 2000, qaModelList);
 
       const parsed = JSON.parse(sanitizeJson(result.response.text())) as Record<string, unknown>;
       let chunkQuestions: Array<Record<string, unknown>> = [];

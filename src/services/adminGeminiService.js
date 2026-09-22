@@ -74,20 +74,34 @@ export const sanitizeJson = (jsonString) => {
 // Helper function to convert either a File object or a URL string to base64.
 // Must stay client-side because it uses FileReader, canvas, and Image APIs.
 // ---------------------------------------------------------------------------
-const DEFAULT_PDF_IMAGE_OPTIONS = Object.freeze({
-  maxPages: 6,
-  scale: 0.7,
-  quality: 0.5
+// ---------------------------------------------------------------------------
+// PDF conversion options
+// ---------------------------------------------------------------------------
+let customGlobalPdfOptions = null;
+
+export const setAdminPdfConversionOptions = (options) => {
+  customGlobalPdfOptions = options ? { ...options } : null;
+};
+
+export const getAdminPdfConversionOptions = () => {
+  return customGlobalPdfOptions ? { ...customGlobalPdfOptions } : null;
+};
+
+export const DEFAULT_PDF_IMAGE_OPTIONS = Object.freeze({
+  maxPages: 12,
+  scale: 1.2,
+  quality: 0.75
 });
 
-const SECTION_ANALYSIS_PDF_IMAGE_OPTIONS = Object.freeze({
-  maxPages: 3,
-  scale: 0.55,
-  quality: 0.42
+export const SECTION_ANALYSIS_PDF_IMAGE_OPTIONS = Object.freeze({
+  maxPages: 12,
+  scale: 1.2,
+  quality: 0.75
 });
 
 const getPdfImageOptions = (conversionOptions = {}) => ({
   ...DEFAULT_PDF_IMAGE_OPTIONS,
+  ...(customGlobalPdfOptions || {}),
   ...(conversionOptions.pdf || {})
 });
 
@@ -116,15 +130,133 @@ const resolveSupabaseStorageFetchUrl = async (source) => {
   }
 };
 
+const getSourceLabel = (src) => {
+  if (!src) return 'UnknownSource';
+  if (src instanceof File) return `File(${src.name})`;
+  if (src instanceof Blob) return `Blob(${src.type}, ${src.size}B)`;
+  if (typeof src === 'string') {
+    try {
+      const u = new URL(src);
+      return decodeURIComponent(u.pathname.split('/').pop() || src);
+    } catch {
+      return src.slice(0, 40);
+    }
+  }
+  return 'UnknownSource';
+};
+
+const handleConvertedPdfImages = (images, sourceLabel, conversionOptions = {}) => {
+  if (images?.metadata) {
+    const meta = images.metadata;
+    console.info(`[AdminGeminiService] PDF converted: "${sourceLabel}" -> ` +
+      `pages: ${meta.convertedPages}/${meta.totalPages} ` +
+      `(skipped: ${meta.skippedPages}, scale: ${meta.scale}, quality: ${meta.quality}, approx: ${Math.round(meta.totalBytesApprox / 1024)} KB)`);
+    if (meta.isTruncated) {
+      console.warn(`[AdminGeminiService] ⚠️ PDF truncated: "${sourceLabel}" has ${meta.totalPages} pages, but maxPages is capped at ${meta.maxPages}. ${meta.skippedPages} pages were omitted.`);
+    }
+    if (Array.isArray(conversionOptions.collectedMetadata)) {
+      conversionOptions.collectedMetadata.push({
+        source: sourceLabel,
+        ...meta
+      });
+    }
+    if (typeof conversionOptions.onPdfConverted === 'function') {
+      conversionOptions.onPdfConverted(meta, sourceLabel);
+    }
+  }
+  return images.map(img => img.inlineData).filter(Boolean);
+};
+
+const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const result = reader.result;
+    if (typeof result === 'string') {
+      const commaIdx = result.indexOf(',');
+      resolve(commaIdx !== -1 ? result.slice(commaIdx + 1) : result);
+    } else {
+      resolve('');
+    }
+  };
+  reader.onerror = (err) => reject(err);
+  reader.readAsDataURL(blob);
+});
+
+const MAX_NATIVE_PDF_BYTES = 14 * 1024 * 1024; // 14MB
+
+const shouldUseNativePdf = (conversionOptions = {}) => {
+  if (conversionOptions.useNativePdf !== undefined) return Boolean(conversionOptions.useNativePdf);
+  if (customGlobalPdfOptions?.useNativePdf !== undefined) return Boolean(customGlobalPdfOptions.useNativePdf);
+  return false;
+};
+
+const tryNativePdfConversion = async (blob, sourceLabel, conversionOptions = {}) => {
+  const size = blob.size || 0;
+  if (size > MAX_NATIVE_PDF_BYTES) {
+    console.warn(`[AdminGeminiService] PDF is too large for Native PDF input (${Math.round(size / 1024 / 1024)}MB > 14MB). Falling back to image rendering: "${sourceLabel}"`);
+    return null;
+  }
+  const t0 = performance.now();
+  const base64Data = await blobToBase64(blob);
+  const elapsed = Math.round(performance.now() - t0);
+  console.info(`[AdminGeminiService] ⚡ Native PDF prepared: "${sourceLabel}" (${Math.round(size / 1024)} KB in ${elapsed}ms)`);
+  if (Array.isArray(conversionOptions.collectedMetadata)) {
+    conversionOptions.collectedMetadata.push({
+      source: sourceLabel,
+      mode: 'native_pdf',
+      sizeBytes: size,
+      isNativePdf: true,
+      convertedPages: 'all',
+      skippedPages: 0,
+      isTruncated: false
+    });
+  }
+  if (typeof conversionOptions.onPdfConverted === 'function') {
+    conversionOptions.onPdfConverted({
+      mode: 'native_pdf',
+      sizeBytes: size,
+      isNativePdf: true,
+      convertedPages: 'all',
+      skippedPages: 0,
+      isTruncated: false
+    }, sourceLabel);
+  }
+  return [{
+    data: base64Data,
+    mimeType: 'application/pdf'
+  }];
+};
+
 const anySourceToBase64 = async (source, conversionOptions = {}) => {
   if (!source) return null;
 
+  const pdfOptions = getPdfImageOptions(conversionOptions);
+  const sourceLabel = getSourceLabel(source);
+
   // Case 1: source is already a File/Blob object
   if (source instanceof File || source instanceof Blob) {
-    if (source.type === 'application/pdf') {
+    const isPdf = source.type === 'application/pdf' || (source.name && source.name.toLowerCase().endsWith('.pdf'));
+    if (isPdf) {
+      if (shouldUseNativePdf(conversionOptions)) {
+        const nativeParts = await tryNativePdfConversion(source, sourceLabel, conversionOptions);
+        if (nativeParts) return nativeParts;
+      }
+
       const { convertPdfToImages } = await import('../utils/pdfUtils');
-      const images = await convertPdfToImages(source, () => {}, null, getPdfImageOptions(conversionOptions));
-      return images.map(img => img.inlineData).filter(Boolean);
+      const images = await convertPdfToImages(
+        source,
+        (msg) => console.log(`[AdminGeminiService:PDF] ${msg}`),
+        null,
+        {
+          ...pdfOptions,
+          onWarning: (msg, meta) => {
+            if (typeof conversionOptions.onWarning === 'function') {
+              conversionOptions.onWarning(msg, meta);
+            }
+          }
+        }
+      );
+      return handleConvertedPdfImages(images, sourceLabel, conversionOptions);
     }
 
     return new Promise((resolve, reject) => {
@@ -188,11 +320,29 @@ const anySourceToBase64 = async (source, conversionOptions = {}) => {
       const response = await fetch(fetchUrl);
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const blob = await response.blob();
+      const isPdf = blob.type === 'application/pdf' || source.split('?')[0].toLowerCase().endsWith('.pdf');
 
-      if (blob.type === 'application/pdf') {
+      if (isPdf) {
+        if (shouldUseNativePdf(conversionOptions)) {
+          const nativeParts = await tryNativePdfConversion(blob, sourceLabel, conversionOptions);
+          if (nativeParts) return nativeParts;
+        }
+
         const { convertPdfToImages } = await import('../utils/pdfUtils');
-        const images = await convertPdfToImages(blob, () => {}, null, getPdfImageOptions(conversionOptions));
-        return images.map(img => img.inlineData).filter(Boolean);
+        const images = await convertPdfToImages(
+          blob,
+          (msg) => console.log(`[AdminGeminiService:PDF] ${msg}`),
+          null,
+          {
+            ...pdfOptions,
+            onWarning: (msg, meta) => {
+              if (typeof conversionOptions.onWarning === 'function') {
+                conversionOptions.onWarning(msg, meta);
+              }
+            }
+          }
+        );
+        return handleConvertedPdfImages(images, sourceLabel, conversionOptions);
       }
 
       // If it's an image, use the recursive logic above to compress it
@@ -613,7 +763,7 @@ export const regeneratePointsAllocation = async (subjectType, examData, question
   }
 };
 
-export const generateSectionDetailedAnalysis = async (subjectType, sectionData, questionFiles = [], answerFiles = [], specialInstruction = "", subjectName = "") => {
+export const generateSectionDetailedAnalysis = async (subjectType, sectionData, questionFiles = [], answerFiles = [], specialInstruction = "", subjectName = "", options = {}) => {
   try {
     return await withAdminGenerationLock(async () => {
       const questions = Array.isArray(sectionData?.questions) ? sectionData.questions : [];
@@ -649,7 +799,14 @@ export const generateSectionDetailedAnalysis = async (subjectType, sectionData, 
 
       const slimSectionData = makeSlimSectionData(questions);
       const sectionAnalysisConversionOptions = {
-        pdf: SECTION_ANALYSIS_PDF_IMAGE_OPTIONS
+        pdf: {
+          ...SECTION_ANALYSIS_PDF_IMAGE_OPTIONS,
+          ...(options.pdf || {})
+        },
+        useNativePdf: options.useNativePdf,
+        onWarning: options.onWarning,
+        collectedMetadata: options.collectedMetadata,
+        onPdfConverted: options.onPdfConverted
       };
       const questionFilesData = await sourcesToBase64(questionFiles, sectionAnalysisConversionOptions);
       const answerFilesData = await sourcesToBase64(answerFiles, sectionAnalysisConversionOptions);
@@ -670,13 +827,20 @@ export const generateSectionDetailedAnalysis = async (subjectType, sectionData, 
   }
 };
 
-export const generateSingleSectionData = async (subjectType, sectionIndex, questionFiles, answerFiles, instruction, targetPoints, expectedQuestionCount = null, includeExplanations = true, allowLargeSectionSkeletonFallback = true) => {
+export const generateSingleSectionData = async (subjectType, sectionIndex, questionFiles, answerFiles, instruction, targetPoints, expectedQuestionCount = null, includeExplanations = true, allowLargeSectionSkeletonFallback = true, options = {}) => {
   try {
     return await withAdminGenerationLock(async () => {
       console.log(`[AdminGeminiService] Generating section ${sectionIndex} data...`);
 
-      const questionFilesData = await sourcesToBase64(questionFiles);
-      const answerFilesData = await sourcesToBase64(answerFiles);
+      const conversionOptions = {
+        pdf: options.pdf,
+        useNativePdf: options.useNativePdf,
+        onWarning: options.onWarning,
+        collectedMetadata: options.collectedMetadata,
+        onPdfConverted: options.onPdfConverted
+      };
+      const questionFilesData = await sourcesToBase64(questionFiles, conversionOptions);
+      const answerFilesData = await sourcesToBase64(answerFiles, conversionOptions);
 
       return await invokeGeminiAdmin({
         operation: 'generateSingleSection',
@@ -700,8 +864,15 @@ export const generateSingleSectionData = async (subjectType, sectionIndex, quest
 export const generateSectionQuestionsExplanations = async (subjectType, sectionData, questionFiles = [], answerFiles = [], options = {}) => {
   try {
     return await withAdminGenerationLock(async () => {
-      const questionFilesData = await sourcesToBase64(questionFiles);
-      const answerFilesData = await sourcesToBase64(answerFiles);
+      const conversionOptions = {
+        pdf: options.pdf,
+        useNativePdf: options.useNativePdf,
+        onWarning: options.onWarning,
+        collectedMetadata: options.collectedMetadata,
+        onPdfConverted: options.onPdfConverted
+      };
+      const questionFilesData = await sourcesToBase64(questionFiles, conversionOptions);
+      const answerFilesData = await sourcesToBase64(answerFiles, conversionOptions);
       const originalQuestions = Array.isArray(sectionData?.questions) ? sectionData.questions : [];
       let sourceQuestions = originalQuestions;
       let sectionForGeneration = {
@@ -709,7 +880,8 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
         questions: sourceQuestions
       };
       let updatedQuestions = [...sourceQuestions];
-      const chunkSize = 5;
+      const usePro = Boolean(options.usePro ?? options.useNativePdf);
+      const chunkSize = usePro ? Math.max(1, Math.min(sourceQuestions.length, 8)) : 5;
 
       if (originalQuestions.length === 0) return sectionData;
 
@@ -749,6 +921,8 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
             const chunkResult = await invokeGeminiAdmin({
               operation: 'generateSectionQA',
               subjectType,
+              usePro,
+              useNativePdf: options.useNativePdf,
               sectionData: {
                 ...sectionForGeneration,
                 questions: unresolvedQuestions.map(q => ({ ...q, explanation: '' }))

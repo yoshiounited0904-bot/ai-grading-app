@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, updateAdminFields, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements, transformRubricToScoringElements, generateEssayModelAnswer } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements, transformRubricToScoringElements, generateEssayModelAnswer, setAdminPdfConversionOptions } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
 import { findUniversityMetadataKnowledge, listUniversityMetadataKnowledgeCandidates } from '../data/universityMetadataKnowledge';
@@ -19,6 +19,14 @@ import universityBaseData from '../data/universityBaseData.json';
 import { MARKETING_CONFIG } from '../config/marketingConfig';
 import { SUBJECT_OPTIONS, inferSubjectIdFromLabel } from '../config/subjectConfig';
 import { EXTERNAL_AI_PROMPTS } from '../config/externalAiPrompts';
+import {
+    exportQuestionsCsv,
+    previewImportQuestionsCsv,
+    applyImportQuestionsCsv,
+    exportSectionsAnalysisCsv,
+    previewImportSectionsAnalysisCsv,
+    applyImportSectionsAnalysisCsv
+} from '../services/examCsvService';
 
 const normalizeAdBlockContent = (content) => {
     if (content && typeof content === 'object' && !Array.isArray(content)) {
@@ -47,9 +55,36 @@ const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
 
 const isPlainObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 
+const cleanStructureForSave = (structure = []) => {
+    return (structure || []).map(sec => {
+        const { _baselineSectionAnalysis, _sectionAnalysisDirty, ...restSec } = sec;
+        return {
+            ...restSec,
+            questions: (restSec.questions || []).map(q => {
+                const { _baselineExplanation, _explanationDirty, ...restQ } = q;
+                return restQ;
+            })
+        };
+    });
+};
+
 const normalizeEditorStructure = (structure = []) => {
     const { structure: typeNormalized } = normalizeExamStructureQuestionTypes(structure);
-    return ensureExamStructureEssayCharacterCountElements(typeNormalized).structure;
+    const withEssays = ensureExamStructureEssayCharacterCountElements(typeNormalized).structure || [];
+    return withEssays.map(sec => ({
+        ...sec,
+        section_analysis_version: Number.isInteger(sec.section_analysis_version) && sec.section_analysis_version > 0 ? sec.section_analysis_version : 1,
+        section_analysis_updated_at: sec.section_analysis_updated_at || null,
+        _baselineSectionAnalysis: sec._baselineSectionAnalysis !== undefined ? sec._baselineSectionAnalysis : (sec.sectionAnalysis || ''),
+        _sectionAnalysisDirty: Boolean(sec._sectionAnalysisDirty),
+        questions: (sec.questions || []).map(q => ({
+            ...q,
+            explanation_version: Number.isInteger(q.explanation_version) && q.explanation_version > 0 ? q.explanation_version : 1,
+            explanation_updated_at: q.explanation_updated_at || null,
+            _baselineExplanation: q._baselineExplanation !== undefined ? q._baselineExplanation : (q.explanation || ''),
+            _explanationDirty: Boolean(q._explanationDirty)
+        }))
+    }));
 };
 
 const requireGeneratedNumber = (record, field, context, positive = false) => {
@@ -286,6 +321,55 @@ const getUniversityBaseDataId = (item) => (
     [item?.university, item?.year, item?.faculty, item?.subject].filter(Boolean).join('_')
 );
 
+const safeDecodeURIComponent = (value = '') => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    try {
+        return decodeURIComponent(text);
+    } catch {
+        return text;
+    }
+};
+
+const normalizeExternalExamId = (value = '') => safeDecodeURIComponent(value).trim();
+
+const normalizeExamIdForCompare = (value = '') => normalizeExternalExamId(value)
+    .replace(/[／/]/g, '_')
+    .replace(/（/g, '(')
+    .replace(/）/g, ')')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+
+const findUniversityBaseDataById = (rawId) => {
+    const target = normalizeExamIdForCompare(rawId);
+    if (!target) return null;
+    return universityBaseData.find(item => normalizeExamIdForCompare(getUniversityBaseDataId(item)) === target) || null;
+};
+
+const parseSeedExamMetadata = (seedId) => {
+    const decoded = normalizeExternalExamId(seedId);
+    const yearMatch = decoded.match(/(20\d{2})/);
+    const subjectOption = SUBJECT_OPTIONS.find(option =>
+        decoded.toLowerCase().includes(option.value) || decoded.includes(option.label)
+    );
+    const facultyMatch = decoded.match(/-(fac[^-]+)-(.+?)-(20\d{2})-/);
+
+    return {
+        examId: decoded,
+        university: decoded.includes('早稲田') ? '早稲田大学' : '',
+        facultyId: facultyMatch?.[1] || '',
+        faculty: facultyMatch?.[2] || '',
+        year: yearMatch ? Number(yearMatch[1]) : null,
+        subject: subjectOption?.label || '',
+        subject_en: subjectOption?.value || inferSubjectIdFromLabel('', decoded)
+    };
+};
+
+const getNewExamSeedId = (search = '') => {
+    const params = new URLSearchParams(search);
+    return normalizeExternalExamId(params.get('seedExamId') || params.get('baseDataId') || '');
+};
+
 const buildSectionAnalysisInstruction = (baseInstruction = '', section) => {
     const customPrompt = String(baseInstruction || '').trim();
     if (!customPrompt) return '';
@@ -427,6 +511,10 @@ function AdminExamEditor() {
     const [essayModelAnswerLoading, setEssayModelAnswerLoading] = useState({});
     const [essayModelAnswerPreview, setEssayModelAnswerPreview] = useState(null);
     const [customPromptType, setCustomPromptType] = useState('auto');
+    const [questionsPromptType, setQuestionsPromptType] = useState('auto');
+    const [sectionsPromptType, setSectionsPromptType] = useState('auto');
+    const [csvPreviewModal, setCsvPreviewModal] = useState(null);
+    const [csvPreviewTab, setCsvPreviewTab] = useState('all');
 
     // Form states
     const [examId, setExamId] = useState('');
@@ -925,10 +1013,14 @@ function AdminExamEditor() {
     }, [id]);
 
     useEffect(() => {
-        if (isNew) {
-            setExamId(`${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase());
+        if (!isNew) return;
+        const seededExamId = getNewExamSeedId(location.search);
+        if (seededExamId) {
+            setExamId(prev => (prev === seededExamId ? prev : seededExamId));
+            return;
         }
-    }, [universityId, facultyId, year, subjectEn, isNew]);
+        setExamId(`${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase());
+    }, [universityId, facultyId, year, subjectEn, isNew, location.search]);
 
     // 大学リストの非同期ロード完了時にIDを補正
     useEffect(() => {
@@ -1069,24 +1161,34 @@ function AdminExamEditor() {
         if (!isNew || initialBaseDataAppliedRef.current) return;
 
         const params = new URLSearchParams(location.search);
-        const baseDataId = params.get('baseDataId');
-        if (!baseDataId) return;
+        const seedExamId = normalizeExternalExamId(params.get('seedExamId'));
+        const baseDataId = normalizeExternalExamId(params.get('baseDataId'));
+        const initialExamId = seedExamId || baseDataId;
+        if (!initialExamId) return;
 
-        const data = universityBaseData.find(item => getUniversityBaseDataId(item) === baseDataId);
-        if (!data) return;
+        const data = findUniversityBaseDataById(baseDataId || seedExamId);
+        const parsedMetadata = data ? null : parseSeedExamMetadata(initialExamId);
 
         initialBaseDataAppliedRef.current = true;
+        setExamId(initialExamId);
+
+        if (!data && !parsedMetadata) return;
+
         applyMetadataToForm({
-            university: data.university,
-            faculty: data.faculty,
-            year: data.year,
-            subject: data.subject,
-            subject_en: normalizeSubjectFromMetadata(data.subject_en, data.subject),
-            max_score: data.maxScore,
-            duration_minutes: data.duration,
-            passing_lines: data.passingLines
+            university: data?.university || parsedMetadata?.university,
+            faculty: data?.faculty || parsedMetadata?.faculty,
+            year: data?.year || parsedMetadata?.year,
+            subject: data?.subject || parsedMetadata?.subject,
+            subject_en: normalizeSubjectFromMetadata(data?.subject_en || parsedMetadata?.subject_en, data?.subject || parsedMetadata?.subject),
+            max_score: data?.maxScore,
+            duration_minutes: data?.duration,
+            passing_lines: data?.passingLines
         });
-    }, [isNew, location.search]);
+
+        if (!data && parsedMetadata?.facultyId) {
+            setFacultyId(parsedMetadata.facultyId);
+        }
+    }, [isNew, location.search, universitiesData]);
 
     const handleExtractMetadata = async () => {
         const finalQFiles = questionFiles.length > 0 ? questionFiles : (examData?.pdf_path ? [examData.pdf_path] : []);
@@ -1166,7 +1268,7 @@ function AdminExamEditor() {
             if (isNotFound) {
                 const proceedNew = window.confirm(`試験データ（ID: "${id}"）がデータベースに見つかりませんでした。\n\n新規作成画面（/admin/exam/new）を開きますか？`);
                 if (proceedNew) {
-                    navigate('/admin/exam/new');
+                    navigate(`/admin/exam/new?seedExamId=${encodeURIComponent(normalizeExternalExamId(id))}`, { replace: true });
                     return;
                 }
             } else {
@@ -1238,7 +1340,7 @@ function AdminExamEditor() {
         const selectedId = e.target.value;
         if (!selectedId) return;
 
-        const data = universityBaseData.find(d => getUniversityBaseDataId(d) === selectedId);
+        const data = findUniversityBaseDataById(selectedId);
         if (!data) return;
 
         if (!confirm(`${data.university} ${data.faculty} の基礎データを読み込みますか？\n(満点、制限時間、合格ラインが上書きされます)`)) {
@@ -1346,7 +1448,12 @@ function AdminExamEditor() {
                 targetPoints,
                 expectedQuestionCount,
                 false,
-                !includeExplanations
+                !includeExplanations,
+                {
+                    useNativePdf: options.useNativePdf,
+                    collectedMetadata: options.collectedMetadata,
+                    onWarning: options.onWarning
+                }
             ));
             console.info('[AdminExamEditor] generate section response', {
                 sectionNum,
@@ -1395,6 +1502,9 @@ function AdminExamEditor() {
 
             await persistGeneratedStep(normalizedSectionResult, '');
 
+            const stepPdfMetadata = [];
+            const stepPdfWarnings = [];
+
             if (includeExplanations) {
                 setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'explanations' }));
                 const sectionWithExplanations = await geminiQueue.add(() => generateSectionQuestionsExplanations(
@@ -1403,6 +1513,8 @@ function AdminExamEditor() {
                     finalQFiles,
                     finalAFiles,
                     {
+                        collectedMetadata: stepPdfMetadata,
+                        onWarning: (msg) => stepPdfWarnings.push(msg),
                         onChunk: async (partialSection, chunkInfo) => {
                             const normalizedPartial = normalizeEditorStructure([partialSection])[0] || partialSection;
                             await persistGeneratedStep(normalizedPartial, '');
@@ -1418,7 +1530,7 @@ function AdminExamEditor() {
             }
 
             const generationWarnings = Array.isArray(normalizedSectionResult.generationWarnings)
-                ? normalizedSectionResult.generationWarnings.filter(Boolean)
+                ? [...normalizedSectionResult.generationWarnings.filter(Boolean)]
                 : [];
 
             let generatedSectionAnalysis = normalizedSectionResult.sectionAnalysis || '';
@@ -1430,9 +1542,27 @@ function AdminExamEditor() {
                     finalQFiles,
                     finalAFiles,
                     buildSectionAnalysisInstruction(baseInstruction, normalizedSectionResult),
-                    examData?.subject || subject || ''
+                    examData?.subject || subject || '',
+                    {
+                        collectedMetadata: stepPdfMetadata,
+                        onWarning: (msg) => stepPdfWarnings.push(msg)
+                    }
                 ));
                 generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${normalizedSectionResult.id || sectionNum}問の詳細解説`);
+            }
+
+            const truncatedStepPdfs = stepPdfMetadata.filter(m => m.isTruncated);
+            if (truncatedStepPdfs.length > 0) {
+                for (const t of truncatedStepPdfs) {
+                    const warnText = `PDF上限超過: ${t.source || '問題/解答PDF'} 全${t.totalPages}ページ中${t.convertedPages}ページのみ送信（${t.skippedPages}ページ省略）`;
+                    if (!generationWarnings.includes(warnText)) {
+                        generationWarnings.push(warnText);
+                    }
+                }
+                normalizedSectionResult = {
+                    ...normalizedSectionResult,
+                    generationWarnings
+                };
             }
 
             const sectionToPersist = buildPersistableSection(
@@ -1496,7 +1626,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleGenerateOnlyExplanations = async (sectionNum, includeAnalysis = true) => {
+    const handleGenerateOnlyExplanations = async (sectionNum, includeAnalysis = true, options = {}) => {
         const sIdx = sectionNum - 1;
         const sectionData = examData?.structure?.[sIdx];
         if (!sectionData) {
@@ -1519,17 +1649,32 @@ function AdminExamEditor() {
                 examPdfPath: examData?.pdf_path
             });
 
+            const explanationPdfMetadata = [];
+            const explanationPdfWarnings = [];
+
             const result = await geminiQueue.add(() => generateSectionQuestionsExplanations(
                 subjectEn,
                 sectionData,
                 finalQFiles,
-                finalAFiles
+                finalAFiles,
+                {
+                    useNativePdf: options.useNativePdf,
+                    usePro: options.usePro,
+                    collectedMetadata: explanationPdfMetadata,
+                    onWarning: (msg) => explanationPdfWarnings.push(msg)
+                }
             ));
             
             console.log("=== AI Generation Result ===", result);
             if (!result) {
                 alert("AIから有効なデータが返されませんでした。");
                 return;
+            }
+
+            const truncatedExplanationPdfs = explanationPdfMetadata.filter(m => m.isTruncated);
+            if (truncatedExplanationPdfs.length > 0) {
+                const warnMsg = truncatedExplanationPdfs.map(m => `・${m.source || 'PDF'}: 全${m.totalPages}ページ中${m.convertedPages}ページのみ送信（${m.skippedPages}ページ省略）`).join('\n');
+                alert(`⚠️ 注意: PDFのページ上限により、一部のページがGeminiに送信されませんでした。\n${warnMsg}\n\n後半の小問解説が正確でない可能性があります。`);
             }
 
             let aiQuestions = [];
@@ -1977,7 +2122,7 @@ function AdminExamEditor() {
             pdf_path: finalPdfPath,
             max_score: parseInt(currentExamData?.max_score || 100),
             detailed_analysis: currentExamData?.detailed_analysis || '',
-            structure: normalizedStructure,
+            structure: cleanStructureForSave(normalizedStructure),
             passing_lines: currentExamData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
             custom_layout: customLayout
         };
@@ -2002,7 +2147,7 @@ function AdminExamEditor() {
             markCurrentStateAsSaved(savedSnapshot);
             if (showPrompt) alert('保存しました！');
             if (isNew && examId) {
-                navigate(`/admin/exam/${examId}`, { replace: true });
+                navigate(`/admin/exam/${encodeURIComponent(examId)}`, { replace: true });
             }
         }
     };
@@ -2415,7 +2560,7 @@ function AdminExamEditor() {
             pdf_path: finalPdfPath,
             max_score: parseInt(examData.max_score),
             detailed_analysis: examData.detailed_analysis,
-            structure: normalizedCurrentStructure,
+            structure: cleanStructureForSave(normalizedCurrentStructure),
             passing_lines: examData.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
             custom_layout: customLayout
         };
@@ -2429,7 +2574,7 @@ function AdminExamEditor() {
             clearGenerationDraft(examId);
             setAvailableDrafts(prev => prev.filter(d => d.examId !== examId && !d.key.includes(examId)));
             if (isNew && examId) {
-                navigate(`/admin/exam/${examId}`, { replace: true });
+                navigate(`/admin/exam/${encodeURIComponent(examId)}`, { replace: true });
             }
             alert('保存しました！');
         }
@@ -2449,12 +2594,44 @@ function AdminExamEditor() {
             return false;
         }
         if (qIdx === null) {
+            if (field === 'sectionAnalysis') {
+                const isTemporary = value === '🔄 AI生成中...' || value === '⚠️ AI生成エラー';
+                if (!isTemporary) {
+                    const baseline = targetSection._baselineSectionAnalysis !== undefined ? targetSection._baselineSectionAnalysis : (targetSection.sectionAnalysis || '');
+                    if (value !== baseline) {
+                        if (!targetSection._sectionAnalysisDirty) {
+                            targetSection.section_analysis_version = (Number.isInteger(targetSection.section_analysis_version) ? targetSection.section_analysis_version : 1) + 1;
+                            targetSection._sectionAnalysisDirty = true;
+                        }
+                        targetSection.section_analysis_updated_at = new Date().toISOString();
+                    } else if (targetSection._sectionAnalysisDirty) {
+                        targetSection.section_analysis_version = Math.max(1, (targetSection.section_analysis_version || 1) - 1);
+                        targetSection._sectionAnalysisDirty = false;
+                    }
+                }
+            }
             targetSection[field] = value;
         } else {
             const targetQuestion = targetSection.questions?.[qIdx];
             if (!targetQuestion) {
                 console.warn('[AdminExamEditor] Structure update skipped: question not found', { sectionIdx, qIdx, field });
                 return false;
+            }
+            if (field === 'explanation') {
+                const isTemporary = value === '🔄 AI生成中...' || value === '⚠️ AI生成エラー';
+                if (!isTemporary) {
+                    const baseline = targetQuestion._baselineExplanation !== undefined ? targetQuestion._baselineExplanation : (targetQuestion.explanation || '');
+                    if (value !== baseline) {
+                        if (!targetQuestion._explanationDirty) {
+                            targetQuestion.explanation_version = (Number.isInteger(targetQuestion.explanation_version) ? targetQuestion.explanation_version : 1) + 1;
+                            targetQuestion._explanationDirty = true;
+                        }
+                        targetQuestion.explanation_updated_at = new Date().toISOString();
+                    } else if (targetQuestion._explanationDirty) {
+                        targetQuestion.explanation_version = Math.max(1, (targetQuestion.explanation_version || 1) - 1);
+                        targetQuestion._explanationDirty = false;
+                    }
+                }
             }
             if (field === 'options') {
                 targetQuestion[field] = value.split(',').map(s => s.trim());
@@ -2765,6 +2942,254 @@ function AdminExamEditor() {
                 return next;
             });
         }
+    };
+
+    const renderCsvPreviewModal = () => {
+        if (!csvPreviewModal) return null;
+        const { type, title, result } = csvPreviewModal;
+        const { summary, items } = result;
+
+        const filteredItems = (items || []).filter(item => {
+            if (csvPreviewTab === 'all') return true;
+            return item.status === csvPreviewTab;
+        });
+
+        const isQuestion = type === 'questions';
+
+        return createPortal(
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 md:p-6 animate-in fade-in duration-200">
+                <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-gray-100">
+                    {/* Header */}
+                    <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xl">{isQuestion ? '📝' : '📖'}</span>
+                                <h3 className="text-lg font-black text-navy-blue">{title}</h3>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1 font-bold">
+                                対象：{university || ''} {faculty || ''} {year ? year + '年度' : ''} {subject || ''}（ID: {examId || '未設定'}）
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setCsvPreviewModal(null)}
+                            className="w-8 h-8 rounded-full bg-gray-200/60 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-bold transition-all cursor-pointer"
+                        >
+                            ✕
+                        </button>
+                    </div>
+
+                    {/* Summary Cards */}
+                    <div className="p-5 border-b border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white">
+                        <div className="p-3 bg-green-50/80 border border-green-200/80 rounded-2xl">
+                            <div className="text-[10px] font-black text-green-700 uppercase tracking-wider">更新対象</div>
+                            <div className="text-xl font-black text-green-700 mt-0.5">{summary.updateCount} <span className="text-xs font-bold">件</span></div>
+                        </div>
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-2xl">
+                            <div className="text-[10px] font-black text-gray-500 uppercase tracking-wider">スキップ（変更なし/空欄）</div>
+                            <div className="text-xl font-black text-gray-700 mt-0.5">{summary.skipCount} <span className="text-xs font-bold">件</span></div>
+                        </div>
+                        <div className="p-3 bg-red-50/80 border border-red-200/80 rounded-2xl">
+                            <div className="text-[10px] font-black text-red-700 uppercase tracking-wider">エラー（競合/不正ID）</div>
+                            <div className="text-xl font-black text-red-700 mt-0.5">{summary.errorCount} <span className="text-xs font-bold">件</span></div>
+                        </div>
+                        <div className="p-3 bg-indigo-50/80 border border-indigo-200/80 rounded-2xl">
+                            <div className="text-[10px] font-black text-indigo-700 uppercase tracking-wider">CSV全行数</div>
+                            <div className="text-xl font-black text-indigo-700 mt-0.5">{summary.totalRows} <span className="text-xs font-bold">行</span></div>
+                        </div>
+                    </div>
+
+                    {/* Warning Banner if Errors */}
+                    {summary.errorCount > 0 && (
+                        <div className="px-6 py-3 bg-red-50 border-b border-red-100 flex items-start gap-2.5 text-xs text-red-800">
+                            <span className="text-base flex-shrink-0">⚠️</span>
+                            <div>
+                                <span className="font-bold">エラーが発生した行（{summary.errorCount}件）は反映されません。</span>
+                                <span className="text-[11px] block text-red-700 mt-0.5">
+                                    バージョン不一致（エクスポート後に解説が更新されている）または未登録のIDが含まれています。エラー行以外の正常な更新行（{summary.updateCount}件）のみ反映可能です。
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Filter Tabs */}
+                    <div className="px-6 pt-3 pb-2 border-b border-gray-100 flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setCsvPreviewTab('all')}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                csvPreviewTab === 'all'
+                                    ? 'bg-navy-blue text-white shadow-sm'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                        >
+                            すべて ({items.length})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCsvPreviewTab('update')}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                csvPreviewTab === 'update'
+                                    ? 'bg-green-600 text-white shadow-sm'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                        >
+                            🟢 更新対象のみ ({summary.updateCount})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCsvPreviewTab('skip')}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                csvPreviewTab === 'skip'
+                                    ? 'bg-gray-600 text-white shadow-sm'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                        >
+                            ⚪ スキップのみ ({summary.skipCount})
+                        </button>
+                        {summary.errorCount > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => setCsvPreviewTab('error')}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                                    csvPreviewTab === 'error'
+                                        ? 'bg-red-600 text-white shadow-sm'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                            >
+                                🔴 エラーのみ ({summary.errorCount})
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Diff / Item List */}
+                    <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50/30">
+                        {filteredItems.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400 text-xs font-bold">
+                                該当する項目はありません
+                            </div>
+                        ) : (
+                            filteredItems.map((item, idx) => {
+                                const isUpdate = item.status === 'update';
+                                const isError = item.status === 'error';
+                                const isSkip = item.status === 'skip';
+
+                                const labelText = isQuestion
+                                    ? `${item.sectionLabel || `大問${item.sectionId}`} ${item.questionLabel || `問${item.questionId}`}`
+                                    : `${item.sectionLabel || `第${item.sectionId}問`}`;
+
+                                const beforeText = isQuestion ? item.oldExplanation : item.oldSectionAnalysis;
+                                const afterText = isQuestion ? item.newExplanation : item.newSectionAnalysis;
+
+                                return (
+                                    <div
+                                        key={idx}
+                                        className={`p-4 rounded-2xl border transition-all ${
+                                            isUpdate
+                                                ? 'bg-white border-green-200 shadow-sm'
+                                                : isError
+                                                ? 'bg-red-50/50 border-red-200'
+                                                : 'bg-white/80 border-gray-200'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-black text-navy-blue bg-navy-blue/10 px-2.5 py-1 rounded-lg">
+                                                    {labelText}
+                                                </span>
+                                                {isQuestion && (
+                                                    <span className="text-[10px] text-gray-400 font-mono">
+                                                        ID: {item.sectionId}-{item.questionId}
+                                                    </span>
+                                                )}
+                                                {!isQuestion && (
+                                                    <span className="text-[10px] text-gray-400 font-mono">
+                                                        ID: {item.sectionId}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div>
+                                                {isUpdate && (
+                                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-green-100 text-green-800">
+                                                        更新 (v{item.version} → v{item.newVersion})
+                                                    </span>
+                                                )}
+                                                {isSkip && (
+                                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-gray-100 text-gray-600">
+                                                        スキップ
+                                                    </span>
+                                                )}
+                                                {isError && (
+                                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-red-100 text-red-800">
+                                                        エラー
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {item.reason && (
+                                            <p className={`text-xs mb-3 ${isError ? 'font-bold text-red-600' : 'text-gray-500'}`}>
+                                                {isError ? '⚠️ ' : 'ℹ️ '}{item.reason}
+                                            </p>
+                                        )}
+
+                                        {isUpdate && (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                                <div className="border border-red-100 bg-red-50/30 rounded-xl p-3">
+                                                    <div className="text-[10px] font-black text-red-600 mb-1 flex items-center gap-1">
+                                                        <span>−</span> 変更前 (v{item.version})
+                                                    </div>
+                                                    <div className="text-gray-600 whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed text-[11px] font-sans">
+                                                        {beforeText || <span className="text-gray-400 italic">（空欄）</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="border border-green-200 bg-green-50/40 rounded-xl p-3">
+                                                    <div className="text-[10px] font-black text-green-700 mb-1 flex items-center gap-1">
+                                                        <span>+</span> 変更後 (v{item.newVersion})
+                                                    </div>
+                                                    <div className="text-navy-blue whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed text-[11px] font-sans">
+                                                        {afterText}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    {/* Footer Buttons */}
+                    <div className="p-4 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                        <button
+                            type="button"
+                            onClick={() => setCsvPreviewModal(null)}
+                            className="px-5 py-2.5 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer"
+                        >
+                            キャンセル
+                        </button>
+                        <div className="flex items-center gap-3">
+                            {summary.updateCount === 0 && (
+                                <span className="text-xs text-gray-500 font-bold">更新対象の差分がありません</span>
+                            )}
+                            <button
+                                type="button"
+                                disabled={summary.updateCount === 0}
+                                onClick={handleApplyCsvImport}
+                                className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all shadow-md ${
+                                    summary.updateCount > 0
+                                        ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-200 cursor-pointer'
+                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                }`}
+                            >
+                                反映する（{summary.updateCount}件を更新）
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>,
+            document.body
+        );
     };
 
     const renderEssayModelAnswerPreviewModal = () => {
@@ -3626,7 +4051,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleRegenerateSectionAnalysis = async (sIdx, section) => {
+    const handleRegenerateSectionAnalysis = async (sIdx, section, options = {}) => {
         if (!confirm(`第${section.id}問の全体解説を再生成しますか？\n（内容が上書きされます）`)) return;
 
         setGeneratingSectionAnalysis(prev => ({ ...prev, [sIdx]: true }));
@@ -3645,15 +4070,29 @@ function AdminExamEditor() {
             });
 
             ensureSectionAnalysisSources(section, finalQFiles, finalAFiles);
+            const analysisPdfMetadata = [];
+            const analysisPdfWarnings = [];
+
             const newAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
                 subjectEn,
                 section,
                 finalQFiles,
                 finalAFiles,
                 buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sIdx + 1, section), section),
-                examData?.subject || ''
+                examData?.subject || '',
+                {
+                    useNativePdf: options.useNativePdf,
+                    collectedMetadata: analysisPdfMetadata,
+                    onWarning: (msg) => analysisPdfWarnings.push(msg)
+                }
             ));
             handleStructureChange(sIdx, null, 'sectionAnalysis', validateGeneratedText(newAnalysis, `第${section.id}問の詳細解説`));
+
+            const truncatedAnalysisPdfs = analysisPdfMetadata.filter(m => m.isTruncated);
+            if (truncatedAnalysisPdfs.length > 0) {
+                const warnMsg = truncatedAnalysisPdfs.map(m => `・${m.source || 'PDF'}: 全${m.totalPages}ページ中${m.convertedPages}ページのみ送信（${m.skippedPages}ページ省略）`).join('\n');
+                alert(`⚠️ 注意: PDFのページ上限により、一部のページがGeminiに送信されませんでした。\n${warnMsg}\n\n後半の内容が解説に反映されていない可能性があります。`);
+            }
         } catch (error) {
             alert('大問解説の再生成に失敗しました:\n' + error.message);
         } finally {
@@ -3664,6 +4103,25 @@ function AdminExamEditor() {
                 return next;
             });
         }
+    };
+
+    // -------------------------------------------------------------------------
+    // Gemini Native PDF (直接送信・実験版) 専用アクション
+    // 既存のボタンや通常生成体系には一切影響を与えずに独立動作
+    // -------------------------------------------------------------------------
+    const handleGenerateStructureNativePdf = async (sectionNum) => {
+        if (!confirm(`大問${sectionNum}の構造（小問・正解・配点）を【Gemini Native PDF（直接送信）】で生成しますか？\n（テキストレイヤーを直接活用して高精度に抽出します）`)) return;
+        return handleGenerateSection(sectionNum, false, false, false, false, { useNativePdf: true });
+    };
+
+    const handleGenerateExplanationsOnlyNativePdf = async (sectionNum) => {
+        if (!confirm(`大問${sectionNum}の小問解説を【Gemini 2.5 Pro ＆ Native PDF】で生成しますか？\n（既存の小問構造・正解データを維持したまま、PDF本文に即して深い解説を作成します）`)) return;
+        return handleGenerateOnlyExplanations(sectionNum, false, { useNativePdf: true, usePro: true });
+    };
+
+    const handleRegenerateSectionAnalysisNativePdf = async (sIdx, section) => {
+        if (!confirm(`第${section.id}問の詳細解説を【Gemini Native PDF（直接送信）】で再生成しますか？\n（PDF本文全体を直接読み込み、正解根拠を詳細に解説します）`)) return;
+        return handleRegenerateSectionAnalysis(sIdx, section, { useNativePdf: true });
     };
 
     const handleExtractVocabulary = async (sIdx, section) => {
@@ -3880,179 +4338,119 @@ function AdminExamEditor() {
         setExamData({ ...examData, structure: newStructure });
     };
 
-    // --- CSV Export: download current structure as CSV for external AI to fill ---
-    const handleCsvExport = () => {
-        if (!examData?.structure?.length) {
-            alert('先にAIでデータを生成してください。');
+    // --- CSV Service Handlers: Questions & Sections Separation ---
+    const handleExportQuestionsCsvClick = () => {
+        const currentExam = examDataRef.current || examData;
+        if (!currentExam?.structure?.length) {
+            alert('先に問題構造データを生成してください。');
             return;
         }
-        const rows = [['section_id', 'section_label', 'question_id', 'question_label', 'type', 'correct_answer', 'alternative_answers', 'grading_instruction', 'points', 'explanation', 'section_analysis']];
-        examData.structure.forEach(sec => {
-            sec.questions.forEach((q, qIdx) => {
-                rows.push([
-                    sec.id,
-                    sec.label,
-                    q.id,
-                    q.label,
-                    q.type || 'selection',
-                    q.correctAnswer || '',
-                    (q.alternativeAnswers || []).join('|'), // Joined by pipe
-                    (q.gradingInstruction || '').replace(/"/g, '""'), // escape quotes
-                    q.points || 0,
-                    (q.explanation || '').replace(/"/g, '""'), // escape quotes
-                    qIdx === 0 ? (sec.sectionAnalysis || '').replace(/"/g, '""') : '' // Output detailed section analysis on first question of each section
-                ]);
-            });
-        });
-        const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
-        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${examId || 'exam'}_explanations.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+        try {
+            const { filename, content } = exportQuestionsCsv(currentExam);
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert('小問解説CSVのエクスポートに失敗しました：\n' + err.message);
+        }
     };
 
-    // --- CSV Import: read CSV and map explanations back into questions ---
-    const parseCsvText = (text) => {
-        const rows = [];
-        let curRow = [];
-        let curCell = '';
-        let inQuote = false;
-
-        const cleanText = text.replace(/^\uFEFF/, '');
-
-        for (let i = 0; i < cleanText.length; i++) {
-            const ch = cleanText[i];
-            const next = cleanText[i + 1];
-
-            if (ch === '"') {
-                if (inQuote && next === '"') {
-                    curCell += '"';
-                    i++;
-                } else {
-                    inQuote = !inQuote;
-                }
-            } else if (ch === ',' && !inQuote) {
-                curRow.push(curCell);
-                curCell = '';
-            } else if ((ch === '\r' || ch === '\n') && !inQuote) {
-                if (ch === '\r' && next === '\n') i++;
-                curRow.push(curCell);
-                if (curRow.some(c => c.trim() !== '')) {
-                    rows.push(curRow);
-                }
-                curRow = [];
-                curCell = '';
-            } else {
-                curCell += ch;
-            }
+    const handleExportSectionsCsvClick = () => {
+        const currentExam = examDataRef.current || examData;
+        if (!currentExam?.structure?.length) {
+            alert('先に問題構造データを生成してください。');
+            return;
         }
-        if (curCell !== '' || curRow.length > 0) {
-            curRow.push(curCell);
-            if (curRow.some(c => c.trim() !== '')) {
-                rows.push(curRow);
-            }
+        try {
+            const { filename, content } = exportSectionsAnalysisCsv(currentExam);
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert('大問詳細解説CSVのエクスポートに失敗しました：\n' + err.message);
         }
-        return rows;
     };
 
-    const handleCsvImport = (e) => {
-        const file = e.target.files[0];
+    const handleQuestionsCsvFileSelect = (e) => {
+        const file = e.target.files?.[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
             try {
                 const text = ev.target.result;
-                const rows = parseCsvText(text);
-                if (rows.length < 2) {
-                    alert('CSVデータが空か、有効な行がありません。');
-                    return;
-                }
-
-                // Dynamic column index resolution based on header names
-                const headerRow = rows[0].map(h => h.trim().toLowerCase().replace(/[\s_]/g, ''));
-                const findColIdx = (candidates) => {
-                    return headerRow.findIndex(h => candidates.some(c => h === c || h.includes(c)));
-                };
-
-                const secIdIdx = findColIdx(['sectionid', '大問id', '大問番号', '大問']);
-                const qIdIdx = findColIdx(['questionid', '問題id', '小問id', '問題番号', '設問番号']);
-                const expIdx = findColIdx(['explanation', '小問解説', '解説']);
-                const secAnalysisIdx = findColIdx(['sectionanalysis', '詳細解説', '大問詳細解説', '大問解説', '大問総評']);
-                const gradingIdx = findColIdx(['gradinginstruction', '採点基準', '指示']);
-                const pointsIdx = findColIdx(['points', '配点', '点数']);
-                const answerIdx = findColIdx(['correctanswer', 'answer', '正解', '回答', '解答']);
-
-                if (secIdIdx === -1 || qIdIdx === -1 || expIdx === -1) {
-                    throw new Error('CSVに必要なカラム（section_id, question_id, explanation）が見つかりません。ヘッダー名をご確認ください。');
-                }
-
-                const updates = {};
-                const sectionAnalysisUpdates = {};
-
-                for (let r = 1; r < rows.length; r++) {
-                    const row = rows[r];
-                    const secId = (row[secIdIdx] || '').trim();
-                    const qId = (row[qIdIdx] || '').trim();
-                    if (!secId || !qId) continue;
-
-                    const explanation = (row[expIdx] || '').trim();
-                    const gradingInstruction = gradingIdx !== -1 ? (row[gradingIdx] || '').trim() : undefined;
-                    const points = pointsIdx !== -1 ? Number(row[pointsIdx]) : undefined;
-                    const correctAnswer = answerIdx !== -1 ? (row[answerIdx] || '').trim() : undefined;
-
-                    updates[`${secId}__${qId}`] = {
-                        explanation,
-                        ...(gradingInstruction !== undefined ? { gradingInstruction } : {}),
-                        ...(Number.isFinite(points) && points > 0 ? { points } : {}),
-                        ...(correctAnswer ? { correctAnswer } : {})
-                    };
-
-                    if (secAnalysisIdx !== -1) {
-                        const secAnalysis = (row[secAnalysisIdx] || '').trim();
-                        if (secAnalysis) {
-                            sectionAnalysisUpdates[secId] = secAnalysis;
-                        }
-                    }
-                }
-
-                const currentExamData = examDataRef.current || examData || {};
-                const newStructure = (currentExamData.structure || []).map(sec => ({
-                    ...sec,
-                    sectionAnalysis: sectionAnalysisUpdates[sec.id] !== undefined
-                        ? sectionAnalysisUpdates[sec.id]
-                        : sec.sectionAnalysis,
-                    questions: (sec.questions || []).map(q => {
-                        const key = `${sec.id}__${q.id}`;
-                        const altKey = `${sec.id}__${q.label}`;
-                        const matched = updates[key] || updates[altKey];
-                        if (matched !== undefined) {
-                            return {
-                                ...q,
-                                explanation: matched.explanation !== undefined ? matched.explanation : q.explanation,
-                                ...(matched.gradingInstruction !== undefined ? { gradingInstruction: matched.gradingInstruction } : {}),
-                                ...(matched.points !== undefined ? { points: matched.points } : {}),
-                                ...(matched.correctAnswer !== undefined ? { correctAnswer: matched.correctAnswer } : {})
-                            };
-                        }
-                        return q;
-                    })
-                }));
-
-                const nextExamData = { ...currentExamData, structure: newStructure };
-                examDataRef.current = nextExamData;
-                setExamData(nextExamData);
-                const updatedSecCount = Object.keys(sectionAnalysisUpdates).length;
-                alert(`CSVのインポートが完了しました！\n・小問解説が更新された問題: ${Object.keys(updates).length}問${updatedSecCount > 0 ? `\n・詳細解説が更新された大問: ${updatedSecCount}個` : ''}\n\n忘れずに画面右上の「保存」ボタンを押してください！`);
+                const currentExam = examDataRef.current || examData || {};
+                const previewResult = previewImportQuestionsCsv(text, currentExam);
+                setCsvPreviewTab('all');
+                setCsvPreviewModal({
+                    type: 'questions',
+                    title: '【小問解説CSV】インポート確認プレビュー',
+                    result: previewResult
+                });
             } catch (err) {
-                alert('CSVの読み込みに失敗しました。形式を確認してください。\n' + err.message);
+                alert('小問解説CSVの読み込みに失敗しました：\n' + err.message);
             } finally {
                 e.target.value = '';
             }
         };
         reader.readAsText(file, 'UTF-8');
+    };
+
+    const handleSectionsCsvFileSelect = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const text = ev.target.result;
+                const currentExam = examDataRef.current || examData || {};
+                const previewResult = previewImportSectionsAnalysisCsv(text, currentExam);
+                setCsvPreviewTab('all');
+                setCsvPreviewModal({
+                    type: 'sections',
+                    title: '【大問詳細解説CSV】インポート確認プレビュー',
+                    result: previewResult
+                });
+            } catch (err) {
+                alert('大問詳細解説CSVの読み込みに失敗しました：\n' + err.message);
+            } finally {
+                e.target.value = '';
+            }
+        };
+        reader.readAsText(file, 'UTF-8');
+    };
+
+    const handleApplyCsvImport = () => {
+        if (!csvPreviewModal) return;
+        const { type, result } = csvPreviewModal;
+        const currentExam = examDataRef.current || examData || {};
+
+        let applyResult;
+        if (type === 'questions') {
+            applyResult = applyImportQuestionsCsv(result, currentExam);
+        } else if (type === 'sections') {
+            applyResult = applyImportSectionsAnalysisCsv(result, currentExam);
+        }
+
+        if (applyResult) {
+            examDataRef.current = applyResult.nextExamData;
+            setExamData(applyResult.nextExamData);
+            setCsvPreviewModal(null);
+            alert(
+                `CSVのインポートを反映しました！\n` +
+                `・更新: ${applyResult.stats.updatedCount}件\n` +
+                `・スキップ（変更なし）: ${applyResult.stats.skippedCount}件\n` +
+                `・エラー（未反映）: ${applyResult.stats.errorCount}件\n\n` +
+                `※ 画面右上の「保存」ボタンを押してデータベースに保存してください。`
+            );
+        }
     };
 
     const totalAllocatedPoints = examData?.structure?.reduce((acc, section) => {
@@ -4147,7 +4545,7 @@ function AdminExamEditor() {
                                     🧹 アスタリスク(*)を一括消去
                                 </button>
                                 <button 
-                                    onClick={() => navigate(`/admin/exam/${examId}/verify`)}
+                                    onClick={() => navigate(`/admin/exam/${encodeURIComponent(examId)}/verify`)}
                                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-emerald-200 transition-all active:scale-95 text-sm flex items-center gap-2"
                                 >
                                     🔍 解答照合 (正解・配点)
@@ -4244,30 +4642,43 @@ function AdminExamEditor() {
                 {examData && (
                     <div className="space-y-6">
                         {/* CSV Import/Export Panel (Fallback) */}
-                        <details className="bg-white/50 backdrop-blur-sm border border-white rounded-3xl p-6 shadow-sm group transition-all">
-                            <summary className="text-sm font-black text-navy-blue/60 cursor-pointer select-none flex items-center gap-3 list-none">
-                                <span className="group-open:rotate-90 transition-transform bg-navy-blue/5 w-6 h-6 rounded-full flex items-center justify-center text-[10px]">▶</span>
-                                <span className="text-xl">🛠️</span> 外部AI（ChatGPT等）を使って解説を作る場合（CSV連携）
+                        <details className="bg-white/60 backdrop-blur-sm border border-navy-blue/10 rounded-3xl p-6 shadow-sm group transition-all">
+                            <summary className="text-sm font-black text-navy-blue cursor-pointer select-none flex items-center justify-between list-none">
+                                <div className="flex items-center gap-3">
+                                    <span className="group-open:rotate-90 transition-transform bg-navy-blue/5 w-6 h-6 rounded-full flex items-center justify-center text-[10px]">▶</span>
+                                    <span className="text-xl">🛠️</span>
+                                    <span>外部AI（ChatGPT等）を使って解説を作る場合（CSV連携）</span>
+                                </div>
+                                <span className="text-[11px] font-bold text-navy-blue/50 bg-navy-blue/5 px-3 py-1 rounded-full">
+                                    小問解説・大問詳細解説 独立連携 &amp; バージョン管理
+                                </span>
                             </summary>
-                            <div className="mt-6 pt-6 border-t border-navy-blue/5 space-y-6">
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                    <div className="text-xs text-gray-500 space-y-4">
-                                        <p className="font-black text-navy-blue uppercase tracking-widest text-[10px]">Workflow</p>
-                                        <ol className="space-y-3">
-                                            <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">1</span> 「CSVをエクスポート」で構造データを取得</li>
-                                            <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">2</span> AIにPDFとCSVを渡し、右のプロンプトで解説生成を依頼</li>
-                                            <li className="flex gap-3"><span className="font-mono text-navy-blue bg-navy-blue/5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0">3</span> AIが返したCSVを「インポート」して保存</li>
-                                        </ol>
-                                        <div className="flex gap-3 pt-2">
-                                            <button onClick={handleCsvExport} className="px-5 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-lg shadow-navy-blue/20 hover:bg-navy-light transition-all">
-                                                📤 CSVをエクスポート
-                                            </button>
-                                            <label className="px-5 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-lg shadow-green-200 hover:bg-green-700 transition-all cursor-pointer">
-                                                📥 解説入りCSVをインポート
-                                                <input type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
-                                            </label>
+                            <div className="mt-6 pt-6 border-t border-navy-blue/5 space-y-8">
+                                {/* Workflow overview */}
+                                <div className="bg-navy-blue/[0.02] border border-navy-blue/10 rounded-2xl p-5">
+                                    <p className="font-black text-navy-blue uppercase tracking-widest text-[10px] mb-2">運用フロー（原本PDFとCSVの照合）</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-600">
+                                        <div className="flex gap-2.5 items-start">
+                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">1</span>
+                                            <span>目的のCSV（小問解説 または 大問詳細解説）をエクスポート</span>
+                                        </div>
+                                        <div className="flex gap-2.5 items-start">
+                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">2</span>
+                                            <span>外部AIに問題PDF＋CSV＋指示プロンプトを渡し、解説列を埋めてもらう（解答PDFは渡さない）</span>
+                                        </div>
+                                        <div className="flex gap-2.5 items-start">
+                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">3</span>
+                                            <span>AIが返したCSVをインポートし、プレビュー画面で差分・安全性を確認して反映＆保存</span>
                                         </div>
                                     </div>
+                                    <div className="mt-3 text-[11px] leading-relaxed bg-amber-50 text-amber-900 border border-amber-200/70 rounded-xl p-2.5 font-bold">
+                                        ⚠️ 解答PDFを外部AIに渡す必要はありません（CSV内の correct_answer 列を参照させます）。ID列やバージョン列は書き換えずにそのまま返してもらってください。
+                                    </div>
+                                </div>
+
+                                {/* 2 Separated Cards Grid */}
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                                    {/* Card 1: 小問解説 CSV */}
                                     {(() => {
                                         const isJapaneseExam = (examData?.subject && (
                                             examData.subject.includes('国語') ||
@@ -4275,63 +4686,199 @@ function AdminExamEditor() {
                                             examData.subject.includes('古文') ||
                                             examData.subject.includes('漢文')
                                         )) || subjectEn === 'japanese';
-                                        const effectiveKey = customPromptType === 'auto'
-                                            ? (isJapaneseExam ? 'japanese' : 'standard')
-                                            : customPromptType;
-                                        const currentConfig = EXTERNAL_AI_PROMPTS[effectiveKey] || EXTERNAL_AI_PROMPTS.standard;
+                                        const effectiveQKey = questionsPromptType === 'auto'
+                                            ? (isJapaneseExam ? 'japanese_questions' : 'standard_questions')
+                                            : questionsPromptType;
+                                        const qPromptConfig = EXTERNAL_AI_PROMPTS[effectiveQKey] || EXTERNAL_AI_PROMPTS.japanese_questions;
 
                                         return (
-                                            <div className="bg-navy-blue/5 p-5 rounded-2xl border border-navy-blue/10 space-y-3 relative group/prompt">
-                                                <div className="flex items-center justify-between gap-2 flex-wrap">
-                                                    <div className="flex items-center gap-1.5 p-1 bg-navy-blue/10 rounded-xl">
+                                            <div className="bg-white rounded-2xl border border-navy-blue/15 p-6 shadow-sm space-y-5 flex flex-col justify-between">
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xl">📝</span>
+                                                            <h4 className="text-sm font-black text-navy-blue">【小問解説CSV】連携</h4>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-2.5 py-0.5 rounded-full border border-indigo-200/50">
+                                                            1行 ＝ 1小問
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 leading-relaxed">
+                                                        各小問の <code className="text-navy-blue font-mono font-bold bg-navy-blue/5 px-1.5 py-0.5 rounded">explanation</code> 列のみを更新します。大問詳細解説は含みません。正答・配点・大問構造・学習履歴などは一切変更されません。
+                                                    </p>
+
+                                                    {/* Export / Import Buttons */}
+                                                    <div className="flex flex-wrap gap-2.5 pt-2">
                                                         <button
                                                             type="button"
-                                                            onClick={() => setCustomPromptType('japanese')}
-                                                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                                                                effectiveKey === 'japanese'
-                                                                    ? 'bg-white text-navy-blue shadow-sm'
-                                                                    : 'text-navy-blue/60 hover:text-navy-blue'
-                                                            }`}
+                                                            onClick={handleExportQuestionsCsvClick}
+                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2"
                                                         >
-                                                            📖 国語（完全解説・詳細版）
+                                                            📤 小問解説CSVをエクスポート
                                                         </button>
+                                                        <label className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2">
+                                                            📥 小問解説CSVをインポート
+                                                            <input
+                                                                type="file"
+                                                                accept=".csv"
+                                                                className="hidden"
+                                                                onChange={handleQuestionsCsvFileSelect}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                {/* Prompt Box */}
+                                                <div className="bg-navy-blue/5 p-4 rounded-2xl border border-navy-blue/10 space-y-3 mt-4">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                        <div className="flex items-center gap-1 p-1 bg-navy-blue/10 rounded-xl">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setQuestionsPromptType('japanese_questions')}
+                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
+                                                                    effectiveQKey === 'japanese_questions'
+                                                                        ? 'bg-white text-navy-blue shadow-sm'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                📖 国語用
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setQuestionsPromptType('standard_questions')}
+                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
+                                                                    effectiveQKey === 'standard_questions'
+                                                                        ? 'bg-white text-navy-blue shadow-sm'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                🌐 標準 / 英語長文用
+                                                            </button>
+                                                        </div>
                                                         <button
                                                             type="button"
-                                                            onClick={() => setCustomPromptType('standard')}
-                                                            className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                                                                effectiveKey === 'standard'
-                                                                    ? 'bg-white text-navy-blue shadow-sm'
-                                                                    : 'text-navy-blue/60 hover:text-navy-blue'
-                                                            }`}
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                navigator.clipboard.writeText(qPromptConfig.prompt);
+                                                                alert(`【${qPromptConfig.name}】のプロンプトをコピーしました！`);
+                                                            }}
+                                                            className="px-3 py-1 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1"
                                                         >
-                                                            🌐 標準 / 英語長文用
+                                                            📋 プロンプトをコピー
                                                         </button>
                                                     </div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            navigator.clipboard.writeText(currentConfig.prompt);
-                                                            alert(`【${currentConfig.name}】のプロンプトをコピーしました！`);
-                                                        }}
-                                                        className="px-3.5 py-1.5 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1.5"
-                                                    >
-                                                        📋 プロンプトをコピー
-                                                    </button>
-                                                </div>
-                                                <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
-                                                    <span className="truncate">{currentConfig.badge}：{currentConfig.shortDescription}</span>
-                                                    <span className="font-mono flex-shrink-0 ml-2">{currentConfig.prompt.length.toLocaleString()}文字</span>
-                                                </div>
-                                                <div className="relative">
-                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-52 overflow-y-auto p-3 bg-white/70 rounded-xl border border-navy-blue/10 select-all">
-                                                        {currentConfig.prompt}
+                                                    <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
+                                                        <span className="truncate">{qPromptConfig.name}（{qPromptConfig.shortDescription}）</span>
+                                                        <span className="font-mono flex-shrink-0 ml-2">{qPromptConfig.prompt.length.toLocaleString()}文字</span>
+                                                    </div>
+                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-44 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
+                                                        {qPromptConfig.prompt}
                                                     </pre>
                                                 </div>
                                             </div>
                                         );
                                     })()}
 
+                                    {/* Card 2: 大問詳細解説 CSV */}
+                                    {(() => {
+                                        const isJapaneseExam = (examData?.subject && (
+                                            examData.subject.includes('国語') ||
+                                            examData.subject.includes('現代文') ||
+                                            examData.subject.includes('古文') ||
+                                            examData.subject.includes('漢文')
+                                        )) || subjectEn === 'japanese';
+                                        const effectiveSecKey = sectionsPromptType === 'auto'
+                                            ? (isJapaneseExam ? 'japanese_sections' : 'standard_sections')
+                                            : sectionsPromptType;
+                                        const secPromptConfig = EXTERNAL_AI_PROMPTS[effectiveSecKey] || EXTERNAL_AI_PROMPTS.japanese_sections;
+
+                                        return (
+                                            <div className="bg-white rounded-2xl border border-navy-blue/15 p-6 shadow-sm space-y-5 flex flex-col justify-between">
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xl">📖</span>
+                                                            <h4 className="text-sm font-black text-navy-blue">【大問詳細解説CSV】連携</h4>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2.5 py-0.5 rounded-full border border-amber-200/50">
+                                                            1行 ＝ 1大問
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 leading-relaxed">
+                                                        大問ごとの長文詳細解説 <code className="text-navy-blue font-mono font-bold bg-navy-blue/5 px-1.5 py-0.5 rounded">section_analysis</code> 列のみを更新します。小問データは一切変更されません。
+                                                    </p>
+
+                                                    {/* Export / Import Buttons */}
+                                                    <div className="flex flex-wrap gap-2.5 pt-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleExportSectionsCsvClick}
+                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2"
+                                                        >
+                                                            📤 大問詳細解説CSVをエクスポート
+                                                        </button>
+                                                        <label className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2">
+                                                            📥 大問詳細解説CSVをインポート
+                                                            <input
+                                                                type="file"
+                                                                accept=".csv"
+                                                                className="hidden"
+                                                                onChange={handleSectionsCsvFileSelect}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                {/* Prompt Box */}
+                                                <div className="bg-navy-blue/5 p-4 rounded-2xl border border-navy-blue/10 space-y-3 mt-4">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                        <div className="flex items-center gap-1 p-1 bg-navy-blue/10 rounded-xl">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSectionsPromptType('japanese_sections')}
+                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
+                                                                    effectiveSecKey === 'japanese_sections'
+                                                                        ? 'bg-white text-navy-blue shadow-sm'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                📖 国語用
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSectionsPromptType('standard_sections')}
+                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
+                                                                    effectiveSecKey === 'standard_sections'
+                                                                        ? 'bg-white text-navy-blue shadow-sm'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                🌐 標準 / 英語長文用
+                                                            </button>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                navigator.clipboard.writeText(secPromptConfig.prompt);
+                                                                alert(`【${secPromptConfig.name}】のプロンプトをコピーしました！`);
+                                                            }}
+                                                            className="px-3 py-1 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1"
+                                                        >
+                                                            📋 プロンプトをコピー
+                                                        </button>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
+                                                        <span className="truncate">{secPromptConfig.name}（{secPromptConfig.shortDescription}）</span>
+                                                        <span className="font-mono flex-shrink-0 ml-2">{secPromptConfig.prompt.length.toLocaleString()}文字</span>
+                                                    </div>
+                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-44 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
+                                                        {secPromptConfig.prompt}
+                                                    </pre>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </details>
@@ -5038,6 +5585,34 @@ function AdminExamEditor() {
                                                         </>
                                                     )}
                                                 </button>
+
+                                                {/* Native PDF (直接送信) 独立アクション */}
+                                                <div className="mt-3 pt-3 border-t border-indigo-100/80 flex flex-col gap-1.5 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100">
+                                                    <div className="flex items-center justify-between px-0.5">
+                                                        <span className="text-[10px] font-black text-indigo-800 flex items-center gap-1">
+                                                            <span>⚡</span> Gemini Native PDF（直接送信）
+                                                        </span>
+                                                        <span className="text-[9px] font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded border border-indigo-200 shadow-xs">文字劣化ゼロ</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <button
+                                                            onClick={() => handleGenerateStructureNativePdf(num)}
+                                                            disabled={generatingSectionData[num] || generating}
+                                                            className="bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold py-2 px-2 rounded-lg transition-all text-[11px] flex items-center justify-center gap-1 shadow-xs disabled:opacity-50 cursor-pointer"
+                                                            title="Step 1: テキストレイヤー直読で小問・正解・配点のみを生成"
+                                                        >
+                                                            {generatingSectionData[num] ? '生成中...' : '⚡ 構造・正解・配点'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleGenerateExplanationsOnlyNativePdf(num)}
+                                                            disabled={generatingExplanationsOnly[num] || generating}
+                                                            className="bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 font-bold py-2 px-2 rounded-lg transition-all text-[11px] flex items-center justify-center gap-1 shadow-xs disabled:opacity-50 cursor-pointer"
+                                                            title="Step 3: 検査済みの構造を維持し、Native PDFで小問解説のみを生成"
+                                                        >
+                                                            {generatingExplanationsOnly[num] ? '生成中...' : '⚡ 小問解説のみ'}
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -5538,8 +6113,16 @@ function AdminExamEditor() {
                                                     </button>
                                                 )}
 
-                                                <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5">
+                                                <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer">
                                                     {generatingSectionAnalysis[sIdx] ? '再生成中...' : '✨ AIで解説生成'}
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleRegenerateSectionAnalysisNativePdf(sIdx, section)} 
+                                                    disabled={generatingSectionAnalysis[sIdx]} 
+                                                    className="text-[10px] font-black text-indigo-700 hover:text-indigo-900 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                                                    title="Step 5: PDFを直接送信して詳細解説を高精度生成（文字劣化ゼロ）"
+                                                >
+                                                    {generatingSectionAnalysis[sIdx] ? '生成中...' : '⚡ Native PDF生成'}
                                                 </button>
                                             </div>
                                         </div>
@@ -5639,6 +6222,7 @@ function AdminExamEditor() {
             )}
             {renderScoringModal()}
             {renderEssayModelAnswerPreviewModal()}
+            {renderCsvPreviewModal()}
         </div>
     );
 }

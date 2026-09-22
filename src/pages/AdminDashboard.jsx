@@ -12,6 +12,8 @@ import { MARKETING_CONFIG } from '../config/marketingConfig';
 
 const CRITERIA_REQUIRED_TYPES = new Set(['essay']);
 
+const buildAdminExamPath = (examId) => `/admin/exam/${encodeURIComponent(examId)}`;
+
 const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
 
 const hasQuestionExplanation = (question) => hasText(question?.explanation);
@@ -1669,7 +1671,7 @@ function AdminDashboard() {
                                                     </div>
                                                 ) : pointStats.isMismatch ? (
                                                     <Link
-                                                        to={`/admin/exam/${exam.id}`}
+                                                        to={buildAdminExamPath(exam.id)}
                                                         className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-red-50 border border-red-200 hover:bg-red-100 transition-colors min-w-[86px]"
                                                         title={`生成問題の合計点が満点と一致していません。差分: ${pointStats.diff > 0 ? '+' : ''}${pointStats.diff}点`}
                                                     >
@@ -1703,7 +1705,7 @@ function AdminDashboard() {
                                                     </div>
                                                 ) : (
                                                     <Link
-                                                        to={`/admin/exam/${exam.id}`}
+                                                        to={buildAdminExamPath(exam.id)}
                                                         className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-red-50 border border-red-200 hover:bg-red-100 transition-colors min-w-[78px]"
                                                         title="採点基準が未作成の問題があります。編集画面で採点基準を入力してください。"
                                                     >
@@ -1732,7 +1734,7 @@ function AdminDashboard() {
                                                     </div>
                                                 ) : (
                                                     <Link
-                                                        to={`/admin/exam/${exam.id}`}
+                                                        to={buildAdminExamPath(exam.id)}
                                                         className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-red-50 border border-red-200 hover:bg-red-100 transition-colors min-w-[78px]"
                                                         title="小問解説が未入力の小問があります。編集画面で小問解説を生成・入力してください。"
                                                     >
@@ -1761,7 +1763,7 @@ function AdminDashboard() {
                                                     </div>
                                                 ) : (
                                                     <Link
-                                                        to={`/admin/exam/${exam.id}`}
+                                                        to={buildAdminExamPath(exam.id)}
                                                         className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-red-50 border border-red-200 hover:bg-red-100 transition-colors min-w-[78px]"
                                                         title="大問全体の詳細解説が未入力の大問があります。編集画面で詳細解説を生成・入力してください。"
                                                     >
@@ -1869,7 +1871,7 @@ function AdminDashboard() {
                                                         🎨 レイアウト編集
                                                     </button>
                                                     <div className="flex gap-1">
-                                                        <Link to={`/admin/exam/${exam.id}`} className="flex-1 py-0.5 text-[9px] font-bold bg-gray-50 text-gray-600 rounded border border-gray-100 hover:bg-gray-100 text-center">
+                                                        <Link to={buildAdminExamPath(exam.id)} className="flex-1 py-0.5 text-[9px] font-bold bg-gray-50 text-gray-600 rounded border border-gray-100 hover:bg-gray-100 text-center">
                                                             編集
                                                         </Link>
                                                         <button onClick={() => handleCopy(exam)} className="flex-1 py-0.5 text-[9px] font-bold bg-indigo-50 text-indigo-600 rounded border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-colors">

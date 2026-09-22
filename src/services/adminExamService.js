@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 import { universities } from '../data/mockData';
 import universityBaseData from '../data/universityBaseData.json';
+import { inferSubjectIdFromLabel } from '../config/subjectConfig';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -41,6 +42,102 @@ const runSupabaseQuery = async (queryFactory, label, { retries = 2, timeoutMs = 
     }
 
     return { data: null, error: lastError || new Error(`${label}に失敗しました。`) };
+};
+
+const safeDecodeURIComponent = (value = '') => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    try {
+        return decodeURIComponent(text);
+    } catch {
+        return text;
+    }
+};
+
+const uniqueNonEmpty = (items = []) => [...new Set(
+    items
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+)];
+
+const stripExamIdNoise = (value = '') => safeDecodeURIComponent(value)
+    .replace(/^#\s*/, '')
+    .replace(/^copy_\d+_/, '')
+    .trim();
+
+const normalizeExamLookupText = (value = '') => stripExamIdNoise(value)
+    .normalize('NFKC')
+    .replace(/[／/]/g, '_')
+    .replace(/[（]/g, '(')
+    .replace(/[）]/g, ')')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+
+const getUniversityBaseDataId = (item) => (
+    item?.id ||
+    [item?.university, item?.year, item?.faculty, item?.subject].filter(Boolean).join('_')
+);
+
+const getAdminExamIdCandidates = (id) => {
+    const raw = String(id || '').trim();
+    const decoded = safeDecodeURIComponent(raw);
+    const stripped = stripExamIdNoise(decoded);
+    const withoutCopy = decoded.replace(/^copy_\d+_/, '').trim();
+    const withoutHash = decoded.replace(/^#\s*/, '').trim();
+
+    return uniqueNonEmpty([
+        raw,
+        decoded,
+        stripped,
+        withoutCopy,
+        withoutHash,
+        encodeURIComponent(decoded),
+        encodeURIComponent(stripped)
+    ]);
+};
+
+const parseExamIdentityFromId = (id) => {
+    const decoded = stripExamIdNoise(id);
+    const baseDataMatch = universityBaseData.find(item =>
+        normalizeExamLookupText(getUniversityBaseDataId(item)) === normalizeExamLookupText(decoded)
+    );
+
+    if (baseDataMatch) {
+        return {
+            university: baseDataMatch.university || '',
+            facultyId: baseDataMatch.faculty_id || baseDataMatch.facultyId || '',
+            faculty: baseDataMatch.faculty || '',
+            year: baseDataMatch.year ? Number(baseDataMatch.year) : null,
+            subject: baseDataMatch.subject || '',
+            subject_en: inferSubjectIdFromLabel(baseDataMatch.subject_en, baseDataMatch.subject, '')
+        };
+    }
+
+    const match = decoded.match(/^(.*?)-(fac[^-]+)-(.+?)-((?:19|20)\d{2})-([a-z_]+)$/i);
+    if (!match) return null;
+
+    const [, university, facultyId, faculty, year, subjectEn] = match;
+    return {
+        university,
+        facultyId,
+        faculty,
+        year: Number(year),
+        subject: '',
+        subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
+    };
+};
+
+const pickMatchingExamRow = (rows = [], id, identity) => {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const targetId = normalizeExamLookupText(id);
+    const targetFacultyId = normalizeExamLookupText(identity?.facultyId);
+    const targetFaculty = normalizeExamLookupText(identity?.faculty);
+
+    return rows.find(row => normalizeExamLookupText(row.id) === targetId) ||
+        rows.find(row => targetFacultyId && normalizeExamLookupText(row.faculty_id) === targetFacultyId) ||
+        rows.find(row => targetFaculty && normalizeExamLookupText(row.faculty) === targetFaculty) ||
+        (rows.length === 1 ? rows[0] : null);
 };
 
 export const importAogakuData = async () => {
@@ -251,14 +348,51 @@ export const getAdminExamStructureSummaries = async (ids = null) => {
 };
 
 export const getAdminExamById = async (id) => {
-    return runSupabaseQuery(
+    const candidates = getAdminExamIdCandidates(id);
+    const exactResult = await runSupabaseQuery(
         () => supabase
             .from('exams')
             .select('*')
-            .eq('id', id)
-            .single(),
+            .in('id', candidates)
+            .limit(Math.max(candidates.length, 1)),
         '試験データ詳細の取得'
     );
+
+    const exactRows = Array.isArray(exactResult.data) ? exactResult.data : [];
+    const exactMatch = pickMatchingExamRow(exactRows, id, null);
+    if (exactMatch) {
+        return { data: exactMatch, error: null };
+    }
+
+    const identity = parseExamIdentityFromId(id);
+    if (!identity?.university || !identity?.year || !identity?.subject_en) {
+        return {
+            data: null,
+            error: exactResult.error || new Error(`試験データが見つかりませんでした: ${id}`)
+        };
+    }
+
+    const fallbackResult = await runSupabaseQuery(
+        () => supabase
+            .from('exams')
+            .select('*')
+            .eq('university', identity.university)
+            .eq('year', identity.year)
+            .eq('subject_en', identity.subject_en)
+            .limit(80),
+        '試験データ詳細の補完取得'
+    );
+
+    const fallbackRows = Array.isArray(fallbackResult.data) ? fallbackResult.data : [];
+    const fallbackMatch = pickMatchingExamRow(fallbackRows, id, identity);
+    if (fallbackMatch) {
+        return { data: fallbackMatch, error: null };
+    }
+
+    return {
+        data: null,
+        error: fallbackResult.error || exactResult.error || new Error(`試験データが見つかりませんでした: ${id}`)
+    };
 };
 
 export const saveAdminExam = async (examData) => {
