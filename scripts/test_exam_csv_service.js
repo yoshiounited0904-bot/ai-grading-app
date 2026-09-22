@@ -318,4 +318,43 @@ assert(namedSExport.blob, "Sections export must provide blob");
 
 console.log("✓ Test 9 passed: UTF-8 BOM successfully configured to prevent mojibake in Excel");
 
-console.log("\n ALL 9 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
+// =========================================================================
+// Test 10: 表記揺れ（第1問、問1、1-1）のFuzzy IDマッチング検証
+// =========================================================================
+console.log("\n[Test 10] Fuzzy ID Matching (第1問/問1 to 1/1-1)");
+const fuzzyCsv = [
+    qRows[0].map(c => `"${c}"`).join(','),
+    `"${examId}","第1問","問1","第1問","問1","selection","ア","イ","部分点なし","10","Fuzzyマッチで更新された問1の解説","1",""`
+];
+const fuzzyPreview = previewImportQuestionsCsv({
+    csvText: fuzzyCsv.join('\r\n'),
+    currentExamId: examId,
+    currentStructure: initialStructure
+});
+assert.strictEqual(fuzzyPreview.readyCount, 1, "Fuzzy ID matching should successfully match 第1問/問1 to 1/1-1");
+const fuzzyApplied = applyImportQuestionsCsv({ previewResult: fuzzyPreview, currentStructure: initialStructure });
+assert.strictEqual(fuzzyApplied.newStructure[0].questions[0].explanation, "Fuzzyマッチで更新された問1の解説");
+console.log("✓ Test 10 passed: Fuzzy ID matching resolved 第1問/問1 seamlessly");
+
+// =========================================================================
+// Test 11: 大学名・学部・年度ベースのexam_idフォールバック照合
+// =========================================================================
+console.log("\n[Test 11] University Name Fallback Matching for exam_id");
+const uniNameCsv = [
+    qRows[0].map(c => `"${c}"`).join(','),
+    `"早稲田大学_商学部_2026年度_国語","1","1-1","第1問","問1","selection","ア","イ","部分点なし","10","大学名IDで更新された解説","1",""`
+];
+const uniNamePreview = previewImportQuestionsCsv({
+    csvText: uniNameCsv.join('\r\n'),
+    currentExamId: 'uuid-1234-5678', // DB上のUUID
+    examId: 'uuid-1234-5678',
+    university: '早稲田大学',
+    faculty: '商学部',
+    year: '2026',
+    subject: '国語',
+    currentStructure: initialStructure
+});
+assert.strictEqual(uniNamePreview.readyCount, 1, "Should successfully match exam_id containing university name");
+console.log("✓ Test 11 passed: Exam ID containing university name matched successfully");
+
+console.log("\n ALL 11 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");

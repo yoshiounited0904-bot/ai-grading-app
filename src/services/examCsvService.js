@@ -109,6 +109,35 @@ const isTextContentEqual = (textA, textB) => {
     return normalize(textA) === normalize(textB);
 };
 
+/**
+ * 試験IDの整合性検証（柔軟マッチング）
+ */
+const isExamIdMatching = (rowExamId, currentExamId, examObj = {}) => {
+    if (!rowExamId || !currentExamId) return true;
+    const cleanRow = String(rowExamId).trim().toLowerCase().replace(/[\s_-]/g, '');
+    const cleanCurrent = String(currentExamId).trim().toLowerCase().replace(/[\s_-]/g, '');
+    if (cleanRow === cleanCurrent) return true;
+
+    // 大学名・学部・年度・科目の連結文字列との部分一致検証
+    const uni = String(examObj.university || '').trim();
+    const fac = String(examObj.faculty || '').trim();
+    const yr = String(examObj.year || '').trim();
+    const sub = String(examObj.subject || '').trim();
+    if (uni || fac || yr || sub) {
+        const normalizeStr = (s) => String(s || '').toLowerCase().replace(/[\s_・\-年度]/g, '');
+        const normRow = normalizeStr(rowExamId);
+        const joinedName = normalizeStr([uni, fac, yr, sub].filter(Boolean).join(''));
+        if (normRow.includes(joinedName) || joinedName.includes(normRow)) {
+            return true;
+        }
+        if (uni && fac && normRow.includes(normalizeStr(uni)) && normRow.includes(normalizeStr(fac))) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
 // ==============================================================================
 // 1. 小問解説CSV (Question Explanation CSV)
 // ==============================================================================
@@ -189,20 +218,36 @@ export const exportQuestionsCsv = (params = {}) => {
 };
 
 /**
+ * IDの正規化（表記揺れ吸収：全角半角、記号、第X問、問Xなど）
+ */
+const normalizeId = (val) => {
+    return String(val || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[第問大問（）\(\)\[\]【】\s_-]/g, '')
+        .replace(/^[ivxlcdm]+/i, (match) => {
+            const romanMap = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+            return romanMap[match.toLowerCase()] || match;
+        });
+};
+
+/**
  * 小問解説CSVの取り込み前検証（プレビュー）
  */
 export const previewImportQuestionsCsv = (arg1, arg2) => {
     let csvText = '';
     let currentExamId = '';
     let currentStructure = [];
+    let examObj = {};
 
     if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1) && arg1.csvText !== undefined) {
         csvText = arg1.csvText || '';
-        currentExamId = arg1.currentExamId || arg1.examId || '';
+        examObj = arg1;
+        currentExamId = arg1.currentExamId || arg1.examId || arg1.id || '';
         currentStructure = arg1.currentStructure || arg1.structure || [];
     } else {
         csvText = typeof arg1 === 'string' ? arg1 : '';
-        const examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
+        examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
         currentExamId = examObj.examId || examObj.id || (typeof arg2 === 'string' ? arg2 : '');
         currentStructure = examObj.structure || (Array.isArray(arg2) ? arg2 : []);
     }
@@ -221,20 +266,42 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
     const updatedIdx = getIndex(['explanationupdatedat', '解説更新日時', '更新日時', 'updatedat']);
 
     if (secIdIdx === -1 || qIdIdx === -1 || expIdx === -1) {
-        throw new Error('CSVに必要な列（大問ID / section_id、小問ID / question_id、小問解説 / explanation）が見つかりません。');
+        throw new Error('CSVに必要な列（大問ID / section_id、小問ID / question_id、小問解説 / explanation）が見つかりません。ヘッダー名をご確認ください。');
     }
 
-    // 現在の小問マップを作成: `${secId}__${qId}` -> { question, section }
+    // 現在の小問マップを作成（完全一致用 + 正規化キー用）
     const currentQuestionMap = new Map();
     const currentSectionSet = new Set();
     currentStructure.forEach(sec => {
         const secId = String(sec.id || '');
         currentSectionSet.add(secId);
+        currentSectionSet.add(normalizeId(secId));
+        if (sec.label) currentSectionSet.add(normalizeId(sec.label));
+
         (sec.questions || []).forEach(q => {
             const qId = String(q.id || '');
-            currentQuestionMap.set(`${secId}__${qId}`, {
-                section: sec,
-                question: q
+            const info = { section: sec, question: q, exactKey: `${secId}__${qId}` };
+            
+            // 登録可能な全キーパターン
+            const keysToRegister = new Set([
+                `${secId}__${qId}`,
+                `${normalizeId(secId)}__${normalizeId(qId)}`,
+            ]);
+
+            // ハイフン分割（例: 1-1 -> 1）
+            if (qId.includes('-')) {
+                const subPart = qId.split('-').pop();
+                keysToRegister.add(`${normalizeId(secId)}__${normalizeId(subPart)}`);
+            }
+            // ラベル対応（例: 問1 -> 1）
+            if (q.label) {
+                keysToRegister.add(`${normalizeId(secId)}__${normalizeId(q.label)}`);
+            }
+
+            keysToRegister.forEach(k => {
+                if (!currentQuestionMap.has(k)) {
+                    currentQuestionMap.set(k, info);
+                }
             });
         });
     });
@@ -276,13 +343,15 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
         };
 
         // 1. 試験IDの検証（指定されている場合）
-        if (rowExamId && currentExamId && rowExamId !== currentExamId) {
+        if (rowExamId && currentExamId && !isExamIdMatching(rowExamId, currentExamId, examObj)) {
             item.status = 'error';
             item.reason = `試験ID不一致（CSV: "${rowExamId}", 対象: "${currentExamId}"）`;
             errorCount++;
             errors.push(`行 ${rowNum}: ${item.reason}`);
             items.push(item);
             continue;
+        } else if (rowExamId && currentExamId && rowExamId !== currentExamId) {
+            item.warning = `試験IDの表記が異なります（CSV: "${rowExamId}", 対象: "${currentExamId}"）`;
         }
 
         // 2. IDの存在・重複検証
@@ -296,20 +365,14 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
         }
 
         const key = `${secId}__${qId}`;
-        if (seenQuestionIds.has(key)) {
-            item.status = 'error';
-            item.reason = `重複ID: 大問 "${secId}" の小問 "${qId}" がCSV内に複数行存在します`;
-            errorCount++;
-            errors.push(`行 ${rowNum}: ${item.reason}`);
-            items.push(item);
-            continue;
-        }
-        seenQuestionIds.add(key);
+        const fuzzyKey = `${normalizeId(secId)}__${normalizeId(qId)}`;
+        const subPart = qId.includes('-') ? qId.split('-').pop() : '';
+        const subKey = subPart ? `${normalizeId(secId)}__${normalizeId(subPart)}` : '';
 
-        const found = currentQuestionMap.get(key);
+        const found = currentQuestionMap.get(key) || currentQuestionMap.get(fuzzyKey) || (subKey ? currentQuestionMap.get(subKey) : null);
         if (!found) {
             item.status = 'error';
-            if (!currentSectionSet.has(secId)) {
+            if (!currentSectionSet.has(secId) && !currentSectionSet.has(normalizeId(secId))) {
                 item.reason = `存在しない大問ID: "${secId}"（所属不一致・新規自動追加は禁止されています）`;
             } else {
                 item.reason = `大問 "${secId}" 内に存在しない小問ID: "${qId}"（新規自動追加は禁止されています）`;
@@ -319,6 +382,20 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
             items.push(item);
             continue;
         }
+
+        if (seenQuestionIds.has(found.exactKey)) {
+            item.status = 'error';
+            item.reason = `重複ID: 大問 "${secId}" の小問 "${qId}"（対象: ${found.exactKey}）がCSV内に複数行存在します`;
+            errorCount++;
+            errors.push(`行 ${rowNum}: ${item.reason}`);
+            items.push(item);
+            continue;
+        }
+        seenQuestionIds.add(found.exactKey);
+
+        // 正確な内部IDを記録
+        item.exactSectionId = String(found.section.id || '');
+        item.exactQuestionId = String(found.question.id || '');
 
         const currentQ = found.question;
         const currentVersion = currentQ.explanation_version || currentQ.explanationVersion || 1;
@@ -408,7 +485,10 @@ export const applyImportQuestionsCsv = (arg1, arg2) => {
     const updateMap = new Map();
     previewResult.items.forEach(item => {
         if (item.status === 'ready') {
-            updateMap.set(`${item.sectionId}__${item.questionId}`, item);
+            const targetSec = item.exactSectionId || item.sectionId;
+            const targetQ = item.exactQuestionId || item.questionId;
+            updateMap.set(`${targetSec}__${targetQ}`, item);
+            updateMap.set(`${normalizeId(targetSec)}__${normalizeId(targetQ)}`, item);
         }
     });
 
@@ -421,7 +501,7 @@ export const applyImportQuestionsCsv = (arg1, arg2) => {
             ...section,
             questions: (section.questions || []).map(q => {
                 const qId = String(q.id || '');
-                const updateItem = updateMap.get(`${secId}__${qId}`);
+                const updateItem = updateMap.get(`${secId}__${qId}`) || updateMap.get(`${normalizeId(secId)}__${normalizeId(qId)}`);
                 if (updateItem) {
                     updatedCount++;
                     return {
@@ -524,14 +604,16 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
     let csvText = '';
     let currentExamId = '';
     let currentStructure = [];
+    let examObj = {};
 
     if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1) && arg1.csvText !== undefined) {
         csvText = arg1.csvText || '';
-        currentExamId = arg1.currentExamId || arg1.examId || '';
+        examObj = arg1;
+        currentExamId = arg1.currentExamId || arg1.examId || arg1.id || '';
         currentStructure = arg1.currentStructure || arg1.structure || [];
     } else {
         csvText = typeof arg1 === 'string' ? arg1 : '';
-        const examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
+        examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
         currentExamId = examObj.examId || examObj.id || (typeof arg2 === 'string' ? arg2 : '');
         currentStructure = examObj.structure || (Array.isArray(arg2) ? arg2 : []);
     }
@@ -552,11 +634,14 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
         throw new Error('CSVに必要な列（大問ID / section_id、大問詳細解説 / section_analysis）が見つかりません。');
     }
 
-    // 現在の大問マップを作成: secId -> section
+    // 現在の大問マップを作成: secId -> section（完全一致用 + 正規化キー用）
     const currentSectionMap = new Map();
     currentStructure.forEach(sec => {
         const secId = String(sec.id || '');
         currentSectionMap.set(secId, sec);
+        if (!currentSectionMap.has(normalizeId(secId))) {
+            currentSectionMap.set(normalizeId(secId), sec);
+        }
     });
 
     const items = [];
@@ -593,14 +678,16 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
             currentUpdatedAt: ''
         };
 
-        // 1. 試験IDの検証
-        if (rowExamId && currentExamId && rowExamId !== currentExamId) {
+        // 1. 試験IDの検証（指定されている場合）
+        if (rowExamId && currentExamId && !isExamIdMatching(rowExamId, currentExamId, examObj)) {
             item.status = 'error';
             item.reason = `試験ID不一致（CSV: "${rowExamId}", 対象: "${currentExamId}"）`;
             errorCount++;
             errors.push(`行 ${rowNum}: ${item.reason}`);
             items.push(item);
             continue;
+        } else if (rowExamId && currentExamId && rowExamId !== currentExamId) {
+            item.warning = `試験IDの表記が異なります（CSV: "${rowExamId}", 対象: "${currentExamId}"）`;
         }
 
         // 2. 大問IDの存在・重複検証
@@ -613,7 +700,8 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
             continue;
         }
 
-        if (seenSectionIds.has(secId)) {
+        const fuzzySec = normalizeId(secId);
+        if (seenSectionIds.has(secId) || seenSectionIds.has(fuzzySec)) {
             item.status = 'error';
             item.reason = `重複ID: 大問 "${secId}" がCSV内に複数行存在します`;
             errorCount++;
@@ -622,8 +710,9 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
             continue;
         }
         seenSectionIds.add(secId);
+        seenSectionIds.add(fuzzySec);
 
-        const currentSec = currentSectionMap.get(secId);
+        const currentSec = currentSectionMap.get(secId) || currentSectionMap.get(fuzzySec);
         if (!currentSec) {
             item.status = 'error';
             item.reason = `存在しない大問ID: "${secId}"（新規大問の自動追加は禁止されています）`;
@@ -632,6 +721,8 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
             items.push(item);
             continue;
         }
+
+        item.exactSectionId = String(currentSec.id || '');
 
         const currentVersion = currentSec.section_analysis_version || currentSec.sectionAnalysisVersion || 1;
         const currentAnalysis = currentSec.sectionAnalysis || '';
@@ -719,7 +810,9 @@ export const applyImportSectionsAnalysisCsv = (arg1, arg2) => {
     const updateMap = new Map();
     previewResult.items.forEach(item => {
         if (item.status === 'ready') {
-            updateMap.set(item.sectionId, item);
+            const targetSec = item.exactSectionId || item.sectionId;
+            updateMap.set(targetSec, item);
+            updateMap.set(normalizeId(targetSec), item);
         }
     });
 
@@ -728,7 +821,7 @@ export const applyImportSectionsAnalysisCsv = (arg1, arg2) => {
 
     const newStructure = (currentStructure || []).map(section => {
         const secId = String(section.id || '');
-        const updateItem = updateMap.get(secId);
+        const updateItem = updateMap.get(secId) || updateMap.get(normalizeId(secId));
         if (updateItem) {
             updatedCount++;
             return {
@@ -759,3 +852,49 @@ export const applyImportSectionsAnalysisCsv = (arg1, arg2) => {
         }
     };
 };
+
+/**
+ * Reads a CSV File/Blob, automatically detecting UTF-8 (with or without BOM) vs Shift-JIS (CP932).
+ * Prevents Japanese mojibake when CSVs are saved from Microsoft Excel.
+ * @param {Blob|File} file 
+ * @returns {Promise<string>} Decoded CSV text
+ */
+export const readCsvFileWithEncodingDetection = async (file) => {
+    if (!file) throw new Error('ファイルが指定されていません。');
+    
+    let buffer;
+    if (typeof file.arrayBuffer === 'function') {
+        buffer = await file.arrayBuffer();
+    } else {
+        buffer = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました。'));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    const bytes = new Uint8Array(buffer);
+
+    // 1. Check for UTF-8 BOM: 0xEF, 0xBB, 0xBF
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+        const decoder = new TextDecoder('utf-8');
+        return decoder.decode(bytes.subarray(3));
+    }
+
+    // 2. Try strict UTF-8
+    try {
+        const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
+        return strictUtf8Decoder.decode(bytes);
+    } catch {
+        // 3. Fallback to Shift-JIS (CP932 / Windows-31J)
+        try {
+            const sjisDecoder = new TextDecoder('shift-jis');
+            return sjisDecoder.decode(bytes);
+        } catch {
+            const fallbackDecoder = new TextDecoder('utf-8');
+            return fallbackDecoder.decode(bytes);
+        }
+    }
+};
+

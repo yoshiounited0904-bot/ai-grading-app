@@ -25,7 +25,8 @@ import {
     applyImportQuestionsCsv,
     exportSectionsAnalysisCsv,
     previewImportSectionsAnalysisCsv,
-    applyImportSectionsAnalysisCsv
+    applyImportSectionsAnalysisCsv,
+    readCsvFileWithEncodingDetection
 } from '../services/examCsvService';
 
 const normalizeAdBlockContent = (content) => {
@@ -1266,7 +1267,6 @@ function AdminExamEditor() {
                     structure: loadedStructure,
                     pdf_path: ''
                 });
-                setStructure(loadedStructure);
                 setSectionCount(Math.max(loadedStructure.length, 1));
                 if (draft.sectionInstructionsBySection) setSectionInstructionsBySection(draft.sectionInstructionsBySection);
                 if (draft.sectionPointsBySection) setSectionPointsBySection(draft.sectionPointsBySection);
@@ -3252,6 +3252,20 @@ function AdminExamEditor() {
                         </div>
                     )}
 
+                    {/* Notice Banner if 0 Updates */}
+                    {summary.updateCount === 0 && (
+                        <div className="px-6 py-3 bg-amber-50 border-b border-amber-200/70 flex items-start gap-2.5 text-xs text-amber-900">
+                            <span className="text-base flex-shrink-0">ℹ️</span>
+                            <div>
+                                <span className="font-bold">更新対象の差分がありません（0件）</span>
+                                <span className="text-[11px] block text-amber-800 mt-0.5">
+                                    {summary.skipCount > 0 && `CSV内の全解説が現在のシステム内の解説と同一であるか空欄です（${summary.skipCount}件がスキップされました）。`}
+                                    {summary.errorCount > 0 && `すべての行でIDの不整合などのエラーが発生しています（${summary.errorCount}件）。`}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Filter Tabs */}
                     <div className="px-6 pt-3 pb-2 border-b border-gray-100 flex gap-2">
                         <button
@@ -3377,6 +3391,11 @@ function AdminExamEditor() {
                                         {item.reason && (
                                             <p className={`text-xs mb-3 ${isError ? 'font-bold text-red-600' : 'text-gray-500'}`}>
                                                 {isError ? '⚠️ ' : 'ℹ️ '}{item.reason}
+                                            </p>
+                                        )}
+                                        {item.warning && (
+                                            <p className="text-xs mb-3 text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200/80 font-bold leading-relaxed">
+                                                💡 {item.warning}
                                             </p>
                                         )}
 
@@ -4739,82 +4758,74 @@ function AdminExamEditor() {
         }
     };
 
-    const handleQuestionsCsvFileSelect = (e) => {
+    const handleQuestionsCsvFileSelect = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            try {
-                const text = ev.target.result;
-                const currentExam = examDataRef.current || examData || {};
-                const effectiveExamId = (
-                    currentExam.examId ||
-                    currentExam.id ||
-                    examId ||
-                    id ||
-                    (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
-                    [university, faculty, year, subject].filter(Boolean).join('_') ||
-                    ''
-                ).trim();
-                const previewResult = previewImportQuestionsCsv(text, {
-                    ...currentExam,
-                    examId: effectiveExamId,
-                    id: effectiveExamId,
-                    structure: currentExam.structure || structure || []
-                });
-                setCsvPreviewTab('all');
-                setCsvPreviewModal({
-                    type: 'questions',
-                    title: '【小問解説CSV】インポート確認プレビュー',
-                    fileName: file.name,
-                    result: previewResult
-                });
-            } catch (err) {
-                alert('小問解説CSVの読み込みに失敗しました：\n' + err.message);
-            } finally {
-                e.target.value = '';
-            }
-        };
-        reader.readAsText(file, 'UTF-8');
+        try {
+            const text = await readCsvFileWithEncodingDetection(file);
+            const currentExam = examDataRef.current || examData || {};
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                ''
+            ).trim();
+            const previewResult = previewImportQuestionsCsv(text, {
+                ...currentExam,
+                examId: effectiveExamId,
+                id: effectiveExamId,
+                structure: currentExam.structure || []
+            });
+            setCsvPreviewTab('all');
+            setCsvPreviewModal({
+                type: 'questions',
+                title: '【小問解説CSV】インポート確認プレビュー',
+                fileName: file.name,
+                result: previewResult
+            });
+        } catch (err) {
+            alert('小問解説CSVの読み込みに失敗しました：\n' + err.message);
+        } finally {
+            e.target.value = '';
+        }
     };
 
-    const handleSectionsCsvFileSelect = (e) => {
+    const handleSectionsCsvFileSelect = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            try {
-                const text = ev.target.result;
-                const currentExam = examDataRef.current || examData || {};
-                const effectiveExamId = (
-                    currentExam.examId ||
-                    currentExam.id ||
-                    examId ||
-                    id ||
-                    (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
-                    [university, faculty, year, subject].filter(Boolean).join('_') ||
-                    ''
-                ).trim();
-                const previewResult = previewImportSectionsAnalysisCsv(text, {
-                    ...currentExam,
-                    examId: effectiveExamId,
-                    id: effectiveExamId,
-                    structure: currentExam.structure || structure || []
-                });
-                setCsvPreviewTab('all');
-                setCsvPreviewModal({
-                    type: 'sections',
-                    title: '【大問詳細解説CSV】インポート確認プレビュー',
-                    fileName: file.name,
-                    result: previewResult
-                });
-            } catch (err) {
-                alert('大問詳細解説CSVの読み込みに失敗しました：\n' + err.message);
-            } finally {
-                e.target.value = '';
-            }
-        };
-        reader.readAsText(file, 'UTF-8');
+        try {
+            const text = await readCsvFileWithEncodingDetection(file);
+            const currentExam = examDataRef.current || examData || {};
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                ''
+            ).trim();
+            const previewResult = previewImportSectionsAnalysisCsv(text, {
+                ...currentExam,
+                examId: effectiveExamId,
+                id: effectiveExamId,
+                structure: currentExam.structure || []
+            });
+            setCsvPreviewTab('all');
+            setCsvPreviewModal({
+                type: 'sections',
+                title: '【大問詳細解説CSV】インポート確認プレビュー',
+                fileName: file.name,
+                result: previewResult
+            });
+        } catch (err) {
+            alert('大問詳細解説CSVの読み込みに失敗しました：\n' + err.message);
+        } finally {
+            e.target.value = '';
+        }
     };
 
     const handleApplyCsvImport = () => {
@@ -4832,6 +4843,10 @@ function AdminExamEditor() {
         if (applyResult) {
             examDataRef.current = applyResult.nextExamData;
             setExamData(applyResult.nextExamData);
+            setHasUnsavedChanges(true);
+            if (applyResult.nextExamData?.structure) {
+                saveGenerationDraft(applyResult.nextExamData.structure, 'CSVインポート反映');
+            }
             setCsvPreviewModal(null);
             alert(
                 `CSVのインポートを反映しました！\n` +
