@@ -2567,6 +2567,36 @@ function AdminExamEditor() {
         }
     };
 
+    const handleNavigateToVerify = () => {
+        const rawStructure = Array.isArray(examData?.structure) ? examData.structure : [];
+        const normalizedStructure = normalizeEditorStructure(rawStructure);
+        const currentSnapshot = {
+            id: examId,
+            examId,
+            university,
+            university_id: parseInt(universityId) || 0,
+            faculty,
+            faculty_id: facultyId,
+            year: parseInt(year),
+            subject,
+            subject_en: subjectEn,
+            type,
+            master_status: masterStatus,
+            max_score: parseInt(examData?.max_score || 100),
+            detailed_analysis: examData?.detailed_analysis || '',
+            structure: normalizedStructure,
+            pdf_path: examData?.pdf_path || '',
+            passing_lines: examData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
+            custom_layout: customLayout
+        };
+        if (normalizedStructure.length > 0) {
+            saveGenerationDraft(normalizedStructure, '解答照合画面遷移前の自動一時保存');
+        }
+        navigate(`/admin/exam/${encodeURIComponent(examId)}/verify`, {
+            state: { examData: currentSnapshot }
+        });
+    };
+
     const handleExportCsv = () => {
         const structure = examData?.structure || [];
         if (!structure || structure.length === 0) {
@@ -5047,7 +5077,7 @@ function AdminExamEditor() {
                                     🧹 アスタリスク(*)を一括消去
                                 </button>
                                 <button 
-                                    onClick={() => navigate(`/admin/exam/${encodeURIComponent(examId)}/verify`)}
+                                    onClick={handleNavigateToVerify}
                                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-emerald-200 transition-all active:scale-95 text-sm flex items-center gap-2"
                                 >
                                     🔍 解答照合 (正解・配点)

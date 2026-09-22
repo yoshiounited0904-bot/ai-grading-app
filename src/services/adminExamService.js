@@ -73,19 +73,113 @@ const normalizeExamLookupText = (value = '') => stripExamIdNoise(value)
     .replace(/\s+/g, '')
     .toLowerCase();
 
+export const KNOWN_UNIVERSITIES = [
+    { name: '早稲田大学', id: '2250', prefixes: ['waseda', '早稲田大学', '早稲田'] },
+    { name: '慶應義塾大学', id: '2390', prefixes: ['keio', '慶應義塾大学', '慶應'] },
+    { name: '明治大学', id: '2270', prefixes: ['meiji', '明治大学', '明治'] },
+    { name: '青山学院大学', id: '2260', prefixes: ['aoyama', '青山学院大学', '青山'] },
+    { name: '立教大学', id: '2280', prefixes: ['rikkyo', '立教大学', '立教'] },
+    { name: '中央大学', id: '2680', prefixes: ['chuo', '中央大学', '中央'] },
+    { name: '法政大学', id: '3050', prefixes: ['hosei', '法政大学', '法政'] },
+];
+
+export const resolveCanonicalUniversity = (text = '') => {
+    const s = String(text || '').trim().toLowerCase();
+    if (!s) return null;
+    for (const u of KNOWN_UNIVERSITIES) {
+        if (
+            u.name.toLowerCase() === s ||
+            u.id === s ||
+            u.prefixes.some(p => s === p.toLowerCase() || s.startsWith(p.toLowerCase() + '-') || s.startsWith(p.toLowerCase() + '_'))
+        ) {
+            return u;
+        }
+    }
+    // 部分一致のフォールバック
+    for (const u of KNOWN_UNIVERSITIES) {
+        if (u.prefixes.some(p => s.includes(p.toLowerCase()))) {
+            return u;
+        }
+    }
+    return null;
+};
+
+export const GENERATION_DRAFT_PREFIX = 'adminExamGenerationDraft.v1';
+
+export const loadGenerationDraft = (targetExamId) => {
+    if (!targetExamId || typeof window === 'undefined') return null;
+    const key = `${GENERATION_DRAFT_PREFIX}:${targetExamId}`;
+    try {
+        const draft = JSON.parse(localStorage.getItem(key) || 'null');
+        return draft && Array.isArray(draft.structure) ? draft : null;
+    } catch {
+        return null;
+    }
+};
+
+export const findMatchingDraft = (targetExamId) => {
+    if (!targetExamId || typeof window === 'undefined') return null;
+    const direct = loadGenerationDraft(targetExamId);
+    if (direct && Array.isArray(direct.structure) && direct.structure.length > 0) {
+        return direct;
+    }
+    try {
+        const targetLower = String(targetExamId).toLowerCase();
+        const targetFacMatch = targetLower.match(/fac\d+/);
+        const targetYearMatch = targetLower.match(/202\d/);
+        const targetIsJp = targetLower.includes('japanese') || targetLower.includes('国語');
+        const targetIsEn = targetLower.includes('english') || targetLower.includes('英語');
+
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(GENERATION_DRAFT_PREFIX)) {
+                const storedExamId = key.replace(`${GENERATION_DRAFT_PREFIX}:`, '').toLowerCase();
+                const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                if (!parsed || !Array.isArray(parsed.structure) || parsed.structure.length === 0) continue;
+
+                // 1. 完全一致・部分一致
+                if (storedExamId === targetLower || targetLower.includes(storedExamId) || storedExamId.includes(targetLower)) {
+                    return parsed;
+                }
+
+                // 2. 学部ID (fac8090 等) による一致判定
+                if (targetFacMatch && storedExamId.includes(targetFacMatch[0])) {
+                    return parsed;
+                }
+
+                // 3. 年度 + 科目 + キーワードによる判定
+                if (targetYearMatch && storedExamId.includes(targetYearMatch[0])) {
+                    const storedIsJp = storedExamId.includes('japanese') || storedExamId.includes('国語');
+                    const storedIsEn = storedExamId.includes('english') || storedExamId.includes('英語');
+                    if ((targetIsJp && storedIsJp) || (targetIsEn && storedIsEn)) {
+                        if ((targetLower.includes('商') && storedExamId.includes('商')) ||
+                            (targetLower.includes('早稲田') && storedExamId.includes('早稲田')) ||
+                            (targetLower.includes('waseda') && storedExamId.includes('waseda'))) {
+                            return parsed;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[adminExamService] Error scanning drafts in localStorage:', e);
+    }
+    return null;
+};
+
 const getUniversityBaseDataId = (item) => (
     item?.id ||
     [item?.university, item?.year, item?.faculty, item?.subject].filter(Boolean).join('_')
 );
 
-const getAdminExamIdCandidates = (id) => {
+export const getAdminExamIdCandidates = (id) => {
     const raw = String(id || '').trim();
     const decoded = safeDecodeURIComponent(raw);
     const stripped = stripExamIdNoise(decoded);
     const withoutCopy = decoded.replace(/^copy_\d+_/, '').trim();
     const withoutHash = decoded.replace(/^#\s*/, '').trim();
 
-    return uniqueNonEmpty([
+    const variants = [
         raw,
         decoded,
         stripped,
@@ -93,10 +187,25 @@ const getAdminExamIdCandidates = (id) => {
         withoutHash,
         encodeURIComponent(decoded),
         encodeURIComponent(stripped)
-    ]);
+    ];
+
+    // 大学のスラッグ・名称・IDの相互置換バリエーションを追加
+    for (const u of KNOWN_UNIVERSITIES) {
+        for (const p of [...u.prefixes, u.name, u.id]) {
+            if (stripped.toLowerCase().startsWith(p.toLowerCase() + '-')) {
+                const rest = stripped.substring(p.length + 1);
+                variants.push(`${u.prefixes[0]}-${rest}`);
+                variants.push(`${u.name}-${rest}`);
+                variants.push(`${u.id}-${rest}`);
+                break;
+            }
+        }
+    }
+
+    return uniqueNonEmpty(variants);
 };
 
-const parseExamIdentityFromId = (id) => {
+export const parseExamIdentityFromId = (id) => {
     const decoded = stripExamIdNoise(id);
     const baseDataMatch = universityBaseData.find(item =>
         normalizeExamLookupText(getUniversityBaseDataId(item)) === normalizeExamLookupText(decoded)
@@ -113,18 +222,84 @@ const parseExamIdentityFromId = (id) => {
         };
     }
 
-    const match = decoded.match(/^(.*?)-(fac[^-]+)-(.+?)-((?:19|20)\d{2})-([a-z_]+)$/i);
-    if (!match) return null;
+    // Pattern 1: 5セグメント標準（例: waseda-fac5693-商学部-2026-english）
+    const match5 = decoded.match(/^(.*?)-(fac[^-]+)-(.+?)-((?:19|20)\d{2})-([a-z_]+)$/i);
+    if (match5) {
+        const [, uniRaw, facultyId, faculty, year, subjectEn] = match5;
+        const uniObj = resolveCanonicalUniversity(uniRaw);
+        return {
+            university: uniObj ? uniObj.name : uniRaw,
+            facultyId,
+            faculty,
+            year: Number(year),
+            subject: '',
+            subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
+        };
+    }
 
-    const [, university, facultyId, faculty, year, subjectEn] = match;
-    return {
-        university,
-        facultyId,
-        faculty,
-        year: Number(year),
-        subject: '',
-        subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
-    };
+    // Pattern 2: 4セグメント 学部ID形式（例: 早稲田大学-fac5693-2026-english, waseda-fac5693-2026-english）
+    const match4FacId = decoded.match(/^(.*?)-(fac[^-]+)-((?:19|20)\d{2})-([a-z_]+)$/i);
+    if (match4FacId) {
+        const [, uniRaw, facultyId, year, subjectEn] = match4FacId;
+        const uniObj = resolveCanonicalUniversity(uniRaw);
+        return {
+            university: uniObj ? uniObj.name : uniRaw,
+            facultyId,
+            faculty: '',
+            year: Number(year),
+            subject: '',
+            subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
+        };
+    }
+
+    // Pattern 3: 4セグメント 学部名形式（例: 早稲田大学-商学部-2026-english）
+    const match4FacName = decoded.match(/^(.*?)-(.+?)-((?:19|20)\d{2})-([a-z_]+)$/i);
+    if (match4FacName) {
+        const [, uniRaw, faculty, year, subjectEn] = match4FacName;
+        const uniObj = resolveCanonicalUniversity(uniRaw);
+        return {
+            university: uniObj ? uniObj.name : uniRaw,
+            facultyId: '',
+            faculty,
+            year: Number(year),
+            subject: '',
+            subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
+        };
+    }
+
+    // Pattern 4: 3セグメント形式（例: waseda-2026-english）
+    const match3 = decoded.match(/^(.*?)-((?:19|20)\d{2})-([a-z_]+)$/i);
+    if (match3) {
+        const [, uniRaw, year, subjectEn] = match3;
+        const uniObj = resolveCanonicalUniversity(uniRaw);
+        return {
+            university: uniObj ? uniObj.name : uniRaw,
+            facultyId: '',
+            faculty: '',
+            year: Number(year),
+            subject: '',
+            subject_en: inferSubjectIdFromLabel(subjectEn, '', subjectEn)
+        };
+    }
+
+    // 汎用フォールバック: 年度と大学・科目の抽出
+    const yearMatch = decoded.match(/(19\d{2}|20\d{2})/);
+    const facIdMatch = decoded.match(/(fac[a-zA-Z0-9_-]+)/i);
+    const uniObj = resolveCanonicalUniversity(decoded);
+    const subjectEn = inferSubjectIdFromLabel('', decoded);
+
+    if (yearMatch && (uniObj || subjectEn)) {
+        return {
+            university: uniObj ? uniObj.name : '',
+            facultyId: facIdMatch ? facIdMatch[1] : '',
+            faculty: '',
+            year: Number(yearMatch[1]),
+            subject: '',
+            subject_en: subjectEn || 'english'
+        };
+    }
+
+    return null;
 };
 
 const pickMatchingExamRow = (rows = [], id, identity) => {
@@ -369,33 +544,88 @@ export const getAdminExamById = async (id) => {
     }
 
     const identity = parseExamIdentityFromId(id);
-    if (!identity?.university || !identity?.year || !identity?.subject_en) {
+    if (!identity?.university && !identity?.year && !identity?.subject_en && !identity?.facultyId) {
         return {
             data: null,
             error: exactResult.error || new Error(`試験データが見つかりませんでした: ${id}`)
         };
     }
 
-    const fallbackResult = await runSupabaseQuery(
-        () => supabase
-            .from('exams')
-            .select('*')
-            .eq('university', identity.university)
-            .eq('year', identity.year)
-            .eq('subject_en', identity.subject_en)
-            .limit(80),
-        '試験データ詳細の補完取得'
-    );
+    // 1. 大学名 + 年度 + 科目による検索
+    if (identity?.university && identity?.year && identity?.subject_en) {
+        const fallbackResult = await runSupabaseQuery(
+            () => supabase
+                .from('exams')
+                .select('*')
+                .eq('university', identity.university)
+                .eq('year', identity.year)
+                .eq('subject_en', identity.subject_en)
+                .limit(80),
+            '試験データ詳細の補完取得'
+        );
 
-    const fallbackRows = Array.isArray(fallbackResult.data) ? fallbackResult.data : [];
-    const fallbackMatch = pickMatchingExamRow(fallbackRows, id, identity);
-    if (fallbackMatch) {
-        return { data: fallbackMatch, error: null };
+        const fallbackRows = Array.isArray(fallbackResult.data) ? fallbackResult.data : [];
+        const fallbackMatch = pickMatchingExamRow(fallbackRows, id, identity);
+        if (fallbackMatch) {
+            return { data: fallbackMatch, error: null };
+        }
+    }
+
+    // 2. 学部ID (facXXXX 等) による検索
+    if (identity?.facultyId) {
+        const facResult = await runSupabaseQuery(
+            () => supabase
+                .from('exams')
+                .select('*')
+                .eq('faculty_id', identity.facultyId)
+                .limit(10),
+            '学部IDによる補完取得'
+        );
+        const facRows = Array.isArray(facResult.data) ? facResult.data : [];
+        const facMatch = pickMatchingExamRow(facRows, id, identity);
+        if (facMatch) {
+            return { data: facMatch, error: null };
+        }
+    }
+
+    // 3. IDの部分一致検索（facXXXX 等が含まれる場合）
+    if (identity?.facultyId) {
+        const ilikeResult = await runSupabaseQuery(
+            () => supabase
+                .from('exams')
+                .select('*')
+                .ilike('id', `%${identity.facultyId}%`)
+                .limit(10),
+            'ID部分一致による補完取得'
+        );
+        const ilikeRows = Array.isArray(ilikeResult.data) ? ilikeResult.data : [];
+        const ilikeMatch = pickMatchingExamRow(ilikeRows, id, identity);
+        if (ilikeMatch) {
+            return { data: ilikeMatch, error: null };
+        }
+    }
+
+    // 4. 年度 + 科目での検索（大学名の表記揺れ対策）
+    if (identity?.year && identity?.subject_en) {
+        const yearSubResult = await runSupabaseQuery(
+            () => supabase
+                .from('exams')
+                .select('*')
+                .eq('year', identity.year)
+                .eq('subject_en', identity.subject_en)
+                .limit(50),
+            '年度・科目による補完取得'
+        );
+        const yearSubRows = Array.isArray(yearSubResult.data) ? yearSubResult.data : [];
+        const yearSubMatch = pickMatchingExamRow(yearSubRows, id, identity);
+        if (yearSubMatch) {
+            return { data: yearSubMatch, error: null };
+        }
     }
 
     return {
         data: null,
-        error: fallbackResult.error || exactResult.error || new Error(`試験データが見つかりませんでした: ${id}`)
+        error: exactResult.error || new Error(`試験データが見つかりませんでした: ${id}`)
     };
 };
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getAdminExamById, saveAdminExam } from '../services/adminExamService';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { getAdminExamById, saveAdminExam, parseExamIdentityFromId, findMatchingDraft } from '../services/adminExamService';
 
 const isLargeSequentialNumericOptions = (options) => (
     Array.isArray(options) &&
@@ -67,6 +67,7 @@ const safeDecodeURIComponent = (value = '') => {
 export default function AnswerVerifyPage() {
     const { id } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const examId = safeDecodeURIComponent(id || '');
     const [fullExamData, setFullExamData] = useState(null);
     const [sections, setSections] = useState([]);
@@ -75,29 +76,99 @@ export default function AnswerVerifyPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+    const [sourceNotice, setSourceNotice] = useState('');
+    const [fetchError, setFetchError] = useState(null);
 
     useEffect(() => {
         const fetch = async () => {
-            const { data, error } = await getAdminExamById(examId);
-            if (error || !data) {
-                console.error('[AnswerVerifyPage] Failed to fetch exam data', { examId, error });
-                alert(`データ取得失敗\n試験ID: ${examId}`);
-                navigate('/admin');
+            setLoading(true);
+            setFetchError(null);
+
+            // 1. 優先度1: AdminExamEditorから渡された最新ステート
+            const passedExam = location.state?.examData;
+            if (passedExam && Array.isArray(passedExam.structure) && passedExam.structure.length > 0) {
+                setExamMeta({
+                    university: passedExam.university || '',
+                    faculty: passedExam.faculty || '',
+                    subject: passedExam.subject || '',
+                    year: passedExam.year || '',
+                    maxScore: passedExam.max_score || 100,
+                });
+                setFullExamData(passedExam);
+                setSections(normalizeStructure(passedExam.structure));
+                setLoading(false);
                 return;
             }
-            setExamMeta({
-                university: data.university,
-                faculty: data.faculty,
-                subject: data.subject,
-                year: data.year,
-                maxScore: data.max_score,
-            });
-            setFullExamData(data);
-            setSections(normalizeStructure(data.structure));
+
+            // 2. 優先度2: Supabaseからの取得
+            const { data, error } = await getAdminExamById(examId);
+            if (data && Array.isArray(data.structure) && data.structure.length > 0) {
+                setExamMeta({
+                    university: data.university,
+                    faculty: data.faculty,
+                    subject: data.subject,
+                    year: data.year,
+                    maxScore: data.max_score,
+                });
+                setFullExamData(data);
+                setSections(normalizeStructure(data.structure));
+                setLoading(false);
+                return;
+            }
+
+            // 3. 優先度3: ローカルストレージ（下書きドラフト）からの自動復元
+            const draft = findMatchingDraft(examId);
+            if (draft && Array.isArray(draft.structure) && draft.structure.length > 0) {
+                console.info('[AnswerVerifyPage] Restored structure from local draft:', examId, draft);
+                const identity = parseExamIdentityFromId(examId);
+                const fallbackData = {
+                    id: examId,
+                    university: data?.university || identity?.university || '早稲田大学',
+                    faculty: data?.faculty || identity?.faculty || '',
+                    faculty_id: data?.faculty_id || identity?.facultyId || '',
+                    year: data?.year || identity?.year || new Date().getFullYear(),
+                    subject: data?.subject || identity?.subject || (identity?.subject_en === 'japanese' ? '国語' : '英語'),
+                    subject_en: data?.subject_en || identity?.subject_en || 'english',
+                    structure: draft.structure,
+                    max_score: data?.max_score || draft.structure.reduce((sum, sec) => sum + (sec.questions || []).reduce((qsum, q) => qsum + (Number(q.points) || 0), 0), 0) || 100,
+                    pdf_path: data?.pdf_path || ''
+                };
+                setExamMeta({
+                    university: fallbackData.university,
+                    faculty: fallbackData.faculty,
+                    subject: fallbackData.subject,
+                    year: fallbackData.year,
+                    maxScore: fallbackData.max_score,
+                });
+                setFullExamData(fallbackData);
+                setSections(normalizeStructure(draft.structure));
+                setSourceNotice('データベース未保存の下書きデータから照合画面を表示しています。「💾 保存」でDBに保存できます。');
+                setLoading(false);
+                return;
+            }
+
+            // 4. DB上にレコードが存在するがstructureが空の場合
+            if (data) {
+                setExamMeta({
+                    university: data.university,
+                    faculty: data.faculty,
+                    subject: data.subject,
+                    year: data.year,
+                    maxScore: data.max_score,
+                });
+                setFullExamData(data);
+                setSections(normalizeStructure(data.structure || []));
+                setLoading(false);
+                return;
+            }
+
+            // 5. データが全く見つからない場合
+            console.error('[AnswerVerifyPage] Failed to fetch exam data', { examId, error });
+            setFetchError(`試験データが見つかりませんでした (ID: ${examId})`);
             setLoading(false);
         };
         fetch();
-    }, [examId, navigate]);
+    }, [examId, location.state]);
 
     const updateQuestion = useCallback((sIdx, qIdx, field, value) => {
         setSections(prev => prev.map((sec, si) =>
@@ -123,13 +194,15 @@ export default function AnswerVerifyPage() {
     }, [sections]);
 
     const handleSave = async () => {
+        if (!fullExamData) return;
         setSaving(true);
         try {
             const { error } = await saveAdminExam({ ...fullExamData, structure: sections });
             if (error) throw error;
             setIsDirty(false);
+            setSourceNotice('');
             setFullExamData(prev => ({ ...prev, structure: sections }));
-            alert('保存しました');
+            alert('保存しました！');
         } catch (e) {
             alert('保存失敗: ' + e.message);
         } finally {
@@ -143,8 +216,35 @@ export default function AnswerVerifyPage() {
         </div>
     );
 
+    if (fetchError) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+                <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 max-w-md w-full text-center">
+                    <div className="w-14 h-14 bg-amber-50 text-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-black">⚠️</div>
+                    <h2 className="text-base font-black text-gray-800 mb-2">試験データを取得できませんでした</h2>
+                    <p className="text-xs text-gray-500 mb-1 font-mono break-all bg-gray-50 p-2.5 rounded-xl border border-gray-100">{examId}</p>
+                    <p className="text-xs text-gray-400 mb-6">{fetchError}</p>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            onClick={() => navigate(`/admin/exam/${encodeURIComponent(examId)}`)}
+                            className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-indigo-100 active:scale-95"
+                        >
+                            ← 試験編集画面に戻る
+                        </button>
+                        <button
+                            onClick={() => navigate('/admin')}
+                            className="w-full py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-black rounded-xl transition-all active:scale-95"
+                        >
+                            管理画面トップへ
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     const section = sections[selectedSectionIdx];
-    const pdfUrl = section?.answer_pdf_path || null;
+    const pdfUrl = section?.answer_pdf_path || section?.pdf_path || fullExamData?.answer_pdf_path || fullExamData?.pdf_path || null;
     const totalQuestionPoints = sections.reduce((sectionSum, sec) =>
         sectionSum + (Array.isArray(sec.questions)
             ? sec.questions.reduce((questionSum, q) => questionSum + (parseInt(q.points) || 0), 0)
@@ -174,13 +274,18 @@ export default function AnswerVerifyPage() {
                         <span className={`px-2 py-1 rounded-lg ${totalAllocatedPoints !== totalQuestionPoints ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-500'}`}>
                             大問配点合計: {totalAllocatedPoints}点
                         </span>
+                        {sourceNotice && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg">
+                                💡 下書き復元中（保存でDB反映）
+                            </span>
+                        )}
                     </div>
                 </div>
                 {isDirty && <span className="text-xs font-black text-amber-500">未保存の変更あり</span>}
                 <button
                     onClick={handleSave}
-                    disabled={saving || !isDirty}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2 px-5 rounded-xl text-xs transition-all disabled:opacity-40 shadow-lg shadow-indigo-200"
+                    disabled={saving || (!isDirty && !sourceNotice)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2 px-5 rounded-xl text-xs transition-all disabled:opacity-40 shadow-lg shadow-indigo-200 cursor-pointer"
                 >
                     {saving ? '保存中...' : '💾 保存'}
                 </button>
