@@ -27,3 +27,4 @@ dist-ssr
 scratch/
 supabase/.temp/
 *.backup-*
+supabase/functions/_shared/gcpConfig.ts

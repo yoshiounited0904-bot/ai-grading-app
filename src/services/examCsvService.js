@@ -368,6 +368,12 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
         readyCount,
         skipCount,
         errorCount,
+        summary: {
+            updateCount: readyCount,
+            skipCount,
+            errorCount,
+            totalRows: items.length
+        },
         items,
         errors,
         canApply: readyCount > 0
@@ -674,6 +680,12 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
         readyCount,
         skipCount,
         errorCount,
+        summary: {
+            updateCount: readyCount,
+            skipCount,
+            errorCount,
+            totalRows: items.length
+        },
         items,
         errors,
         canApply: readyCount > 0

@@ -356,7 +356,7 @@ const anySourceToBase64 = async (source, conversionOptions = {}) => {
   return null;
 };
 
-const sourcesToBase64 = async (sources = [], conversionOptions = {}) => {
+export const sourcesToBase64 = async (sources = [], conversionOptions = {}) => {
   const converted = [];
   for (const source of sources || []) {
     const item = await anySourceToBase64(source, conversionOptions);
@@ -819,6 +819,7 @@ export const generateSectionDetailedAnalysis = async (subjectType, sectionData, 
         answerFilesData,
         specialInstruction,
         subjectName,
+        parsedMarkdown: options.parsedMarkdown,
       });
     });
   } catch (error) {
@@ -923,6 +924,7 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
               subjectType,
               usePro,
               useNativePdf: options.useNativePdf,
+              parsedMarkdown: options.parsedMarkdown,
               sectionData: {
                 ...sectionForGeneration,
                 questions: unresolvedQuestions.map(q => ({ ...q, explanation: '' }))
@@ -958,6 +960,7 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
               questionData: question,
               questionFilesData,
               answerFilesData,
+              parsedMarkdown: options.parsedMarkdown,
             });
             const explanation = typeof explanationResult === 'string'
               ? explanationResult
@@ -1083,4 +1086,42 @@ export const generateEssayModelAnswer = async ({
     console.error(`[AdminGeminiService] Failed to generate essay model answer:`, error);
     throw error;
   }
+};
+
+/**
+ * Parse exam PDF using Google Cloud Document AI Layout Parser
+ * @param {string|File|Blob} pdfSource Base64 string, File, or Blob
+ * @returns {Promise<{ markdown: string, totalBlocks: number, totalPages: number, rawBlocksSummary: Array }>}
+ */
+export const parseExamPdfWithDocumentAI = async (pdfSource) => {
+  let base64 = '';
+  if (!pdfSource) {
+    throw new Error('PDFデータが指定されていません。');
+  }
+
+  if (typeof pdfSource === 'string') {
+    if (pdfSource.startsWith('http://') || pdfSource.startsWith('https://') || (!pdfSource.startsWith('data:') && pdfSource.includes('/') && !pdfSource.startsWith('JVBERi'))) {
+      const fetchUrl = await resolveSupabaseStorageFetchUrl(pdfSource);
+      const res = await fetch(fetchUrl);
+      if (!res.ok) throw new Error(`PDFファイルの取得に失敗しました: HTTP ${res.status}`);
+      const blob = await res.blob();
+      base64 = await blobToBase64(blob);
+    } else {
+      const commaIdx = pdfSource.indexOf(',');
+      base64 = commaIdx !== -1 ? pdfSource.slice(commaIdx + 1) : pdfSource;
+    }
+  } else if (pdfSource instanceof Blob || pdfSource instanceof File) {
+    base64 = await blobToBase64(pdfSource);
+  } else {
+    throw new Error('不正なPDFデータ形式です。');
+  }
+
+  base64 = String(base64 || '').replace(/[\r\n\s]/g, '');
+
+  const result = await invokeGeminiAdmin({
+    operation: 'parseDocumentAI',
+    pdfBase64: base64,
+  });
+
+  return result;
 };

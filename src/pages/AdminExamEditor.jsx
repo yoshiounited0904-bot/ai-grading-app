@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { getAdminExamById, saveAdminExam, updateAdminFields, uploadExamPdf } from '../services/adminExamService';
-import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements, transformRubricToScoringElements, generateEssayModelAnswer, setAdminPdfConversionOptions } from '../services/adminGeminiService';
+import { generateExamMasterData, regenerateQuestionExplanation, regenerateDetailedAnalysis, regeneratePointsAllocation, generateSectionDetailedAnalysis, generateSingleSectionData, generateSectionQuestionsExplanations, extractSectionVocabulary, extractExamMetadata, consultScoringElements, transformRubricToScoringElements, generateEssayModelAnswer, setAdminPdfConversionOptions, parseExamPdfWithDocumentAI, sourcesToBase64 } from '../services/adminGeminiService';
 import { getAdminExams } from '../services/adminExamService';
 import { getUniversityList } from '../data/examRegistry';
 import { findUniversityMetadataKnowledge, listUniversityMetadataKnowledgeCandidates } from '../data/universityMetadataKnowledge';
@@ -492,6 +492,8 @@ function AdminExamEditor() {
     const [isBulkGeneratingExplanationsOnly, setIsBulkGeneratingExplanationsOnly] = useState(false);
     const [bulkExplanationsOnlyProgress, setBulkExplanationsOnlyProgress] = useState({ current: 0, total: 0 });
     const [bulkIncludeVocab, setBulkIncludeVocab] = useState(true);
+    const [isParsingDocumentAI, setIsParsingDocumentAI] = useState(false);
+    const [showDocAiModal, setShowDocAiModal] = useState(false);
     const [saving, setSaving] = useState(false);
     const [uploadingQuestion, setUploadingQuestion] = useState(false);
     const [extractingMetadata, setExtractingMetadata] = useState(false);
@@ -1681,6 +1683,7 @@ function AdminExamEditor() {
                 {
                     useNativePdf: options.useNativePdf,
                     usePro: options.usePro,
+                    parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
                     collectedMetadata: explanationPdfMetadata,
                     onWarning: (msg) => explanationPdfWarnings.push(msg)
                 }
@@ -1747,7 +1750,11 @@ function AdminExamEditor() {
                     finalQFiles,
                     finalAFiles,
                     buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sectionNum, sectionData), sectionData),
-                    examData?.subject || ''
+                    examData?.subject || '',
+                    {
+                        useNativePdf: options.useNativePdf,
+                        parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
+                    }
                 ));
                 generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${sectionData.id}問の詳細解説`);
             }
@@ -1893,7 +1900,9 @@ function AdminExamEditor() {
         return handleBulkGenerateSections(false, false, { useNativePdf: true });
     };
 
-    const handleBulkGenerateExplanationsOnlyNativePdf = async () => {
+    const handleBulkGenerateExplanationsOnlyNativePdf = async (options = {}) => {
+        const isOcr = !options.disableOcr;
+        const ocrLabel = isOcr ? "【3.1 Pro ＋ OCR連動】" : "【3.1 Pro 通常 (OCRなし)】";
         if (!examData || !examData.structure || examData.structure.length === 0) {
             alert('大問の構成データが見つかりません。先にStep 1（構造・正解・配点）を実行してください。');
             return;
@@ -1912,7 +1921,7 @@ function AdminExamEditor() {
             return;
         }
 
-        if (!confirm(`全 ${validSectionNums.length} つの大問の小問解説を【Gemini 3.1 Pro ＆ Native PDF】で一括生成します。\n（確定した正解データを維持し、各大問の小問解説を順番に作成します）\nよろしいですか？`)) {
+        if (!confirm(`全 ${validSectionNums.length} つの大問の小問解説を${ocrLabel}で一括生成します。\n（確定した正解データを維持し、各大問の小問解説を順番に作成します）\nよろしいですか？`)) {
             return;
         }
 
@@ -1925,7 +1934,7 @@ function AdminExamEditor() {
                 const secNum = validSectionNums[idx];
                 setBulkExplanationsOnlyProgress({ current: idx + 1, total: validSectionNums.length });
                 try {
-                    await handleGenerateOnlyExplanations(secNum, false, { useNativePdf: true, usePro: true });
+                    await handleGenerateOnlyExplanations(secNum, false, { useNativePdf: true, usePro: true, disableOcr: options.disableOcr });
                 } catch (secError) {
                     console.error(`Bulk explanations failed for section ${secNum}:`, secError);
                     failures.push(`第${secNum}問`);
@@ -1947,6 +1956,84 @@ function AdminExamEditor() {
         } finally {
             setIsBulkGeneratingExplanationsOnly(false);
             setBulkExplanationsOnlyProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handleParseDocumentAiForExam = async (forceReParse = false) => {
+        const existingParsed = examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown;
+        if (existingParsed && !forceReParse) {
+            if (!confirm('すでにDocument AIで本文が解析されています（キャッシュ有効 / 追加料金0円）。\n再解析して上書きしますか？\n（Google Cloud Document AIの処理が再実行されます）')) {
+                return;
+            }
+        }
+
+        let pdfSource = null;
+        if (questionFiles && questionFiles.length > 0) {
+            const pdfFile = questionFiles.find(f => (f.name && f.name.toLowerCase().endsWith('.pdf')) || f.type === 'application/pdf');
+            if (pdfFile) pdfSource = pdfFile;
+        }
+
+        if (!pdfSource && examData?.pdf_path) {
+            pdfSource = examData.pdf_path;
+        }
+
+        if (!pdfSource) {
+            for (let i = 1; i <= sectionCount; i++) {
+                const sFiles = questionFilesBySection[i] || [];
+                const sPdf = sFiles.find(f => (f.name && f.name.toLowerCase().endsWith('.pdf')) || f.type === 'application/pdf');
+                if (sPdf) {
+                    pdfSource = sPdf;
+                    break;
+                }
+                if (examData?.structure?.[i - 1]?.question_pdf_path) {
+                    pdfSource = examData.structure[i - 1].question_pdf_path;
+                    break;
+                }
+            }
+        }
+
+        if (!pdfSource) {
+            alert('問題PDFが見つかりません。先に試験問題のPDFをアップロードしてください。');
+            return;
+        }
+
+        setIsParsingDocumentAI(true);
+        try {
+            const result = await parseExamPdfWithDocumentAI(pdfSource);
+            if (!result || !result.markdown) {
+                throw new Error('Document AIから有効なテキストが返されませんでした。');
+            }
+
+            const newMarkdown = result.markdown;
+            const newCustomLayout = {
+                ...(examData?.custom_layout || {}),
+                parsed_markdown: newMarkdown,
+                doc_ai_blocks: result.totalBlocks,
+                doc_ai_pages: result.totalPages
+            };
+
+            setExamData(prev => ({
+                ...prev,
+                parsed_markdown: newMarkdown,
+                custom_layout: newCustomLayout
+            }));
+
+            try {
+                await saveAdminExam({
+                    ...examData,
+                    parsed_markdown: newMarkdown,
+                    custom_layout: newCustomLayout
+                });
+            } catch (saveErr) {
+                console.warn('Auto-save of parsed markdown failed, but local state is updated:', saveErr);
+            }
+
+            alert(`✅ Document AI 本文パースが完了しました！\n\n・抽出ページ数: ${result.totalPages} ページ\n・段落・ブロック数: ${result.totalBlocks} 件\n\n各段落に [P1-§1] 等の識別子が自動付与されました。\n小問解説・詳細解説の生成時に自動的に活用され、本文の正確な引用と根拠がAIに渡されます。\n\n※DBにキャッシュ保存されたため、以降の生成は追加料金0円・即時実行されます。`);
+        } catch (error) {
+            console.error('Document AI parsing error:', error);
+            alert('Document AIの本文解析に失敗しました:\n' + error.message);
+        } finally {
+            setIsParsingDocumentAI(false);
         }
     };
 
@@ -3034,14 +3121,70 @@ function AdminExamEditor() {
         }
     };
 
+    const normalizeCsvPreviewResult = (rawResult = {}) => {
+        const items = Array.isArray(rawResult.items) ? rawResult.items : [];
+        const asCount = (value, fallback = 0) => {
+            const numberValue = Number(value);
+            return Number.isFinite(numberValue) ? numberValue : fallback;
+        };
+        const rawSummary = rawResult.summary || {};
+        const updateFallback = items.filter(item => item?.status === 'ready' || item?.status === 'update').length;
+        const skipFallback = items.filter(item => item?.status === 'skip').length;
+        const errorFallback = items.filter(item => item?.status === 'error').length;
+        const updateCount = asCount(
+            rawSummary.updateCount
+                ?? rawSummary.updatedCount
+                ?? rawResult.updateCount
+                ?? rawResult.updatedCount
+                ?? rawResult.readyCount,
+            updateFallback
+        );
+        const skipCount = asCount(
+            rawSummary.skipCount
+                ?? rawSummary.skippedCount
+                ?? rawResult.skipCount
+                ?? rawResult.skippedCount,
+            skipFallback
+        );
+        const errorCount = asCount(
+            rawSummary.errorCount
+                ?? rawResult.errorCount,
+            errorFallback
+        );
+        const totalRows = asCount(
+            rawSummary.totalRows
+                ?? rawResult.totalRows,
+            items.length
+        );
+
+        return {
+            ...rawResult,
+            items,
+            canApply: rawResult.canApply ?? updateCount > 0,
+            summary: {
+                updateCount,
+                skipCount,
+                errorCount,
+                totalRows
+            }
+        };
+    };
+
+    const getCsvPreviewStatus = (item) => {
+        if (item?.status === 'ready') return 'update';
+        return item?.status || 'skip';
+    };
+
     const renderCsvPreviewModal = () => {
         if (!csvPreviewModal) return null;
         const { type, title, fileName, result } = csvPreviewModal;
-        const { summary, items } = result;
+        const normalizedResult = normalizeCsvPreviewResult(result);
+        const { summary, items } = normalizedResult;
 
-        const filteredItems = (items || []).filter(item => {
+        const filteredItems = items.filter(item => {
+            const status = getCsvPreviewStatus(item);
             if (csvPreviewTab === 'all') return true;
-            return item.status === csvPreviewTab;
+            return status === csvPreviewTab;
         });
 
         const isQuestion = type === 'questions';
@@ -3167,16 +3310,23 @@ function AdminExamEditor() {
                             </div>
                         ) : (
                             filteredItems.map((item, idx) => {
-                                const isUpdate = item.status === 'update';
-                                const isError = item.status === 'error';
-                                const isSkip = item.status === 'skip';
+                                const normalizedStatus = getCsvPreviewStatus(item);
+                                const isUpdate = normalizedStatus === 'update';
+                                const isError = normalizedStatus === 'error';
+                                const isSkip = normalizedStatus === 'skip';
 
                                 const labelText = isQuestion
                                     ? `${item.sectionLabel || `大問${item.sectionId}`} ${item.questionLabel || `問${item.questionId}`}`
                                     : `${item.sectionLabel || `第${item.sectionId}問`}`;
 
-                                const beforeText = isQuestion ? item.oldExplanation : item.oldSectionAnalysis;
-                                const afterText = isQuestion ? item.newExplanation : item.newSectionAnalysis;
+                                const beforeText = isQuestion
+                                    ? (item.oldExplanation ?? item.beforeExplanation)
+                                    : (item.oldSectionAnalysis ?? item.beforeAnalysis);
+                                const afterText = isQuestion
+                                    ? (item.newExplanation ?? item.afterExplanation)
+                                    : (item.newSectionAnalysis ?? item.afterAnalysis);
+                                const currentVersion = item.version ?? item.currentVersion ?? item.csvVersion ?? 1;
+                                const nextVersion = item.newVersion ?? item.nextVersion ?? (Number(currentVersion) + 1);
 
                                 return (
                                     <div
@@ -3208,7 +3358,7 @@ function AdminExamEditor() {
                                             <div>
                                                 {isUpdate && (
                                                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-green-100 text-green-800">
-                                                        更新 (v{item.version} → v{item.newVersion})
+                                                        更新 (v{currentVersion} → v{nextVersion})
                                                     </span>
                                                 )}
                                                 {isSkip && (
@@ -3234,7 +3384,7 @@ function AdminExamEditor() {
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                                                 <div className="border border-red-100 bg-red-50/30 rounded-xl p-3">
                                                     <div className="text-[10px] font-black text-red-600 mb-1 flex items-center gap-1">
-                                                        <span>−</span> 変更前 (v{item.version})
+                                                        <span>−</span> 変更前 (v{currentVersion})
                                                     </div>
                                                     <div className="text-gray-600 whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed text-[11px] font-sans">
                                                         {beforeText || <span className="text-gray-400 italic">（空欄）</span>}
@@ -3242,7 +3392,7 @@ function AdminExamEditor() {
                                                 </div>
                                                 <div className="border border-green-200 bg-green-50/40 rounded-xl p-3">
                                                     <div className="text-[10px] font-black text-green-700 mb-1 flex items-center gap-1">
-                                                        <span>+</span> 変更後 (v{item.newVersion})
+                                                        <span>+</span> 変更後 (v{nextVersion})
                                                     </div>
                                                     <div className="text-navy-blue whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed text-[11px] font-sans">
                                                         {afterText}
@@ -3436,6 +3586,62 @@ function AdminExamEditor() {
         return Array.isArray(value)
             ? value.map(normalizeScoringElement)
             : [];
+    };
+
+    const renderDocAiModal = () => {
+        if (!showDocAiModal) return null;
+        const text = examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown || '';
+        return createPortal(
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden border border-emerald-100">
+                    <div className="px-6 py-4 bg-gradient-to-r from-emerald-700 to-teal-800 text-white flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                            <span className="text-xl">📐</span>
+                            <div>
+                                <h3 className="font-black text-sm">Document AI 本文解析テキスト</h3>
+                                <p className="text-[10px] text-emerald-100">Google Cloud Layout Parser による段落・ブロック抽出結果</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    navigator.clipboard.writeText(text);
+                                    alert('クリップボードにコピーしました！');
+                                }}
+                                className="text-xs bg-white/20 hover:bg-white/30 text-white font-bold px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+                            >
+                                📋 テキストをコピー
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={() => setShowDocAiModal(false)}
+                                className="text-white/80 hover:text-white font-bold text-xl px-2 cursor-pointer"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </div>
+                    <div className="p-6 overflow-y-auto flex-1 bg-gray-50/50">
+                        <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-xs">
+                            <pre className="text-xs font-mono whitespace-pre-wrap text-gray-800 leading-relaxed select-text">
+                                {text || '解析テキストがありません。'}
+                            </pre>
+                        </div>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex justify-end">
+                        <button
+                            type="button"
+                            onClick={() => setShowDocAiModal(false)}
+                            className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-5 py-2 rounded-xl text-xs transition-all cursor-pointer"
+                        >
+                            閉じる
+                        </button>
+                    </div>
+                </div>
+            </div>,
+            document.body
+        );
     };
 
     const renderScoringModal = () => {
@@ -4121,6 +4327,7 @@ function AdminExamEditor() {
                         examData?.subject || '',
                         {
                             useNativePdf: options.useNativePdf,
+                            parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
                         }
                     ));
                     handleStructureChange(sIdx, null, 'sectionAnalysis', validateGeneratedText(newAnalysis, `第${section.id}問の詳細解説`));
@@ -4152,8 +4359,11 @@ function AdminExamEditor() {
         }
     };
 
-    const handleBulkGenerateSectionAnalysesNativePdf = async () => {
-        return handleBulkGenerateSectionAnalyses({ useNativePdf: true });
+    const handleBulkGenerateSectionAnalysesNativePdf = async (options = {}) => {
+        const isOcr = !options.disableOcr;
+        const ocrLabel = isOcr ? "【3.1 Pro ＋ OCR連動】" : "【3.1 Pro 通常 (OCRなし)】";
+        if (!confirm(`全大問の詳細解説を一括で${ocrLabel}で生成しますか？`)) return;
+        return handleBulkGenerateSectionAnalyses({ useNativePdf: true, disableOcr: options.disableOcr });
     };
 
     const handleRegenerateSectionAnalysis = async (sIdx, section, options = {}) => {
@@ -4187,6 +4397,7 @@ function AdminExamEditor() {
                 examData?.subject || '',
                 {
                     useNativePdf: options.useNativePdf,
+                    parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
                     collectedMetadata: analysisPdfMetadata,
                     onWarning: (msg) => analysisPdfWarnings.push(msg)
                 }
@@ -4219,14 +4430,18 @@ function AdminExamEditor() {
         return handleGenerateSection(sectionNum, false, false, false, false, { useNativePdf: true });
     };
 
-    const handleGenerateExplanationsOnlyNativePdf = async (sectionNum) => {
-        if (!confirm(`大問${sectionNum}の小問解説を【Gemini 3.1 Pro ＆ Native PDF】で生成しますか？\n（既存の小問構造・正解データを維持したまま、PDF本文に即して深い解説を作成します）`)) return;
-        return handleGenerateOnlyExplanations(sectionNum, false, { useNativePdf: true, usePro: true });
+    const handleGenerateExplanationsOnlyNativePdf = async (sectionNum, options = {}) => {
+        const isOcr = !options.disableOcr;
+        const ocrLabel = isOcr ? "【Gemini 3.1 Pro ＋ OCR連動】" : "【Gemini 3.1 Pro 通常 (OCRなし)】";
+        if (!confirm(`大問${sectionNum}の小問解説を${ocrLabel}で生成しますか？\n（既存の小問構造・正解データを維持したまま解説を作成します）`)) return;
+        return handleGenerateOnlyExplanations(sectionNum, false, { useNativePdf: true, usePro: true, disableOcr: options.disableOcr });
     };
 
-    const handleRegenerateSectionAnalysisNativePdf = async (sIdx, section) => {
-        if (!confirm(`第${section.id}問の詳細解説を【Gemini Native PDF（直接送信）】で再生成しますか？\n（PDF本文全体を直接読み込み、正解根拠を詳細に解説します）`)) return;
-        return handleRegenerateSectionAnalysis(sIdx, section, { useNativePdf: true });
+    const handleRegenerateSectionAnalysisNativePdf = async (sIdx, section, options = {}) => {
+        const isOcr = !options.disableOcr;
+        const ocrLabel = isOcr ? "【Gemini 3.1 Pro ＋ OCR連動】" : "【Gemini 3.1 Pro 通常 (OCRなし)】";
+        if (!confirm(`第${section.id}問の詳細解説を${ocrLabel}で再生成しますか？`)) return;
+        return handleRegenerateSectionAnalysis(sIdx, section, { useNativePdf: true, disableOcr: options.disableOcr });
     };
 
     const handleExtractVocabulary = async (sIdx, section) => {
@@ -5874,6 +6089,66 @@ function AdminExamEditor() {
                                     <span className="text-red-400 font-black mt-1 block">※すでに生成済みのデータがある場合は上書きされます。</span>
                                 </p>
 
+                                {/* 📐 Google Cloud Document AI Layout Parser 連携カード */}
+                                <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 border-2 border-emerald-200 p-5 rounded-3xl text-left shadow-xs space-y-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 pb-2.5">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-lg">📐</span>
+                                            <span className="text-xs font-black text-emerald-950 tracking-wide">
+                                                Document AI 本文構造解析 (Google Cloud Layout Parser)
+                                            </span>
+                                        </div>
+                                        {examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown ? (
+                                            <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
+                                                <span>✅</span>
+                                                <span>本文解析済み (キャッシュ有効・追加費用0円)</span>
+                                            </span>
+                                        ) : (
+                                            <span className="text-[10px] font-black text-amber-800 bg-amber-100/90 border border-amber-300 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-xs">
+                                                <span>⚡</span>
+                                                <span>未解析 (国語・長文の段落崩れ防止＆ピンポイント根拠引用に最適)</span>
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <p className="text-[11px] text-emerald-900/80 leading-relaxed font-medium">
+                                        難関大の現代文・古文・漢文など、段落境界が崩れやすい縦書き文章をGoogle Cloud Document AIで段落解析（[P1-§1]等）します。<br/>
+                                        1度パースするとDBに永続キャッシュされ、以降の再生成時はGemini 3.1 Proに自動注入されます（追加費用0円・待ち時間0秒）。
+                                    </p>
+
+                                    <div className="flex flex-wrap items-center gap-3 pt-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleParseDocumentAiForExam(false)}
+                                            disabled={isParsingDocumentAI || isBulkGeneratingSections || generating}
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2.5 px-5 rounded-xl shadow-md shadow-emerald-200 transition-all text-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                                        >
+                                            {isParsingDocumentAI ? (
+                                                <>
+                                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                    <span>Document AIで本文パース中...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span>📐</span>
+                                                    <span>{examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown ? 'Document AIで再パース' : 'Document AIで本文を解析 (キャッシュ保存)'}</span>
+                                                </>
+                                            )}
+                                        </button>
+
+                                        {(examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown) && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowDocAiModal(true)}
+                                                className="bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 font-black py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs flex items-center gap-1.5 cursor-pointer"
+                                            >
+                                                <span>📄</span>
+                                                <span>解析済みテキストを確認</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
                                 {/* ⚡ Gemini 3.1 Pro & 3.8 Flash & Native PDF 高精度・横断一括セクション */}
                                 <div className="bg-gradient-to-br from-indigo-50/90 to-purple-50/60 border-2 border-indigo-200 p-6 rounded-3xl space-y-5 text-left shadow-xs">
                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
@@ -6048,42 +6323,93 @@ function AdminExamEditor() {
                             </button>
 
                             {/* ⚡ Gemini 3.1 Pro & Native PDF ボタン */}
-                            <button
-                                onClick={handleBulkGenerateExplanationsOnlyNativePdf}
-                                disabled={isBulkGeneratingExplanationsOnly || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingSections || regeneratingPoints}
-                                className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 font-black py-2.5 px-3.5 rounded-xl shadow-md shadow-purple-200 transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-                                title="確定した正解を維持し、全大問の小問解説をGemini 3.1 Pro ＆ Native PDFで一括生成"
-                            >
-                                {isBulkGeneratingExplanationsOnly ? (
-                                    <>
-                                        <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                        <span>小問解説(Pro) ({bulkExplanationsOnlyProgress.current}/{bulkExplanationsOnlyProgress.total})</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span>⚡</span>
-                                        <span>全小問解説を一括生成 (3.1 Pro)</span>
-                                    </>
-                                )}
-                            </button>
-                            <button
-                                onClick={handleBulkGenerateSectionAnalysesNativePdf}
-                                disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
-                                className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white hover:from-emerald-700 hover:to-teal-800 font-black py-2.5 px-3.5 rounded-xl shadow-md shadow-emerald-200 transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-                                title="全大問の詳細解説（大問分析）をGemini 3.1 Pro ＆ Native PDFで一括生成"
-                            >
-                                {bulkGeneratingSectionAnalyses ? (
-                                    <>
-                                        <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                        <span>詳細解説(Pro) ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span>⚡</span>
-                                        <span>全詳細解説を一括作成 (3.1 Pro)</span>
-                                    </>
-                                )}
-                            </button>
+                            {/* ⚡ 小問解説一括（OCR連動版 ＆ 通常版） */}
+                            <div className="flex items-center gap-1 bg-purple-50 p-1 rounded-xl border border-purple-200">
+                                <button
+                                    onClick={() => handleBulkGenerateExplanationsOnlyNativePdf({ disableOcr: false })}
+                                    disabled={isBulkGeneratingExplanationsOnly || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingSections || regeneratingPoints}
+                                    className="bg-purple-600 hover:bg-purple-700 text-white font-black py-2 px-3 rounded-lg shadow-xs transition-all text-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                                    title="Document AIの段落テキスト（[P1-§1]等）を注入して3.1 Proで全小問解説を一括生成"
+                                >
+                                    {isBulkGeneratingExplanationsOnly ? (
+                                        <>
+                                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                            <span>生成中...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span>⚡</span>
+                                            <span>全小問 (Pro ＋ OCR)</span>
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => handleBulkGenerateExplanationsOnlyNativePdf({ disableOcr: true })}
+                                    disabled={isBulkGeneratingExplanationsOnly || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingSections || regeneratingPoints}
+                                    className="bg-white hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold py-2 px-2.5 rounded-lg transition-all text-xs disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                                    title="OCRテキストを使わず、Native PDF画像のみで3.1 Pro解説を一括生成"
+                                >
+                                    <span>通常 (OCRなし)</span>
+                                </button>
+                            </div>
+
+                            {/* ⚡ 詳細解説一括（OCR連動版 ＆ 通常版） */}
+                            <div className="flex items-center gap-1 bg-emerald-50 p-1 rounded-xl border border-emerald-200">
+                                <button
+                                    onClick={() => handleBulkGenerateSectionAnalysesNativePdf({ disableOcr: false })}
+                                    disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2 px-3 rounded-lg shadow-xs transition-all text-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                                    title="Document AIの段落テキストを注入して3.1 Proで全詳細解説を一括作成"
+                                >
+                                    {bulkGeneratingSectionAnalyses ? (
+                                        <>
+                                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                            <span>生成中...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span>⚡</span>
+                                            <span>全詳細 (Pro ＋ OCR)</span>
+                                        </>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => handleBulkGenerateSectionAnalysesNativePdf({ disableOcr: true })}
+                                    disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
+                                    className="bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold py-2 px-2.5 rounded-lg transition-all text-xs disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                                    title="OCRテキストを使わず、Native PDF画像のみで3.1 Pro詳細解説を一括作成"
+                                >
+                                    <span>通常 (OCRなし)</span>
+                                </button>
+                            </div>
+
+                            {/* 📐 Document AI 本文解析ステータス / 実行ボタン */}
+                            {examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDocAiModal(true)}
+                                    className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300 font-bold py-2.5 px-3 rounded-xl transition-all text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                    title="Document AIで抽出された本文テキスト（段落番号付き）を確認"
+                                >
+                                    <span>📐</span>
+                                    <span>Doc AI本文連動中 (確認)</span>
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => handleParseDocumentAiForExam(false)}
+                                    disabled={isParsingDocumentAI || isBulkGeneratingSections || generating}
+                                    className="bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-300 font-bold py-2.5 px-3 rounded-xl transition-all text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+                                    title="Google Cloud Document AIで本文を解析（縦書き国語や段落の崩れ防止）"
+                                >
+                                    {isParsingDocumentAI ? (
+                                        <div className="w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                                    ) : (
+                                        <span>📐</span>
+                                    )}
+                                    <span>Doc AI本文パース</span>
+                                </button>
+                            )}
 
                             {/* 従来方式のボタン */}
                             <button
@@ -6608,6 +6934,7 @@ function AdminExamEditor() {
             {renderScoringModal()}
             {renderEssayModelAnswerPreviewModal()}
             {renderCsvPreviewModal()}
+            {renderDocAiModal()}
         </div>
     );
 }

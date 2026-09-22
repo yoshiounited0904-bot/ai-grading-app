@@ -2,15 +2,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GoogleGenerativeAI } from "npm:@google/generative-ai";
 import { corsHeaders } from "../_shared/cors.ts";
+import { parsePdfWithDocumentAi } from "../_shared/documentAi.ts";
 
 // ---------------------------------------------------------------------------
 // Model list for retry/fallback
 // ---------------------------------------------------------------------------
 const MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-pro",
+  "gemini-3.8-flash",
   "gemini-2.5-pro",
-  "gemini-1.5-pro",
+  "gemini-2.5-flash",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1817,19 +1819,24 @@ const generateContentWithFallback = async (
   maxRetriesPerModel = 5,
   initialDelay = 5000,
   customModelList: string[] | null = null,
-): Promise<{ response: { text: () => string } }> => {
+): Promise<{ response: { text: () => string }; usedModel?: string }> => {
   const errors: Array<{ model: string; error: Error }> = [];
   const modelList = customModelList || MODELS;
+  console.log(`[Gemini Admin] Starting generation with model candidate list: ${JSON.stringify(modelList)}`);
   for (const modelName of modelList) {
     const model = genAI.getGenerativeModel({ model: modelName });
     let attempt = 0;
     while (attempt < maxRetriesPerModel) {
       try {
+        console.log(`[Gemini Admin] Attempting generateContent with model: "${modelName}" (attempt ${attempt + 1}/${maxRetriesPerModel})...`);
         // deno-lint-ignore no-explicit-any
         const result = await (model as any).generateContent(requestData);
+        console.log(`[Gemini Admin] SUCCESS! Generated content with model: "${modelName}"`);
+        (result as any).usedModel = modelName;
         return result;
       } catch (error: unknown) {
         const err = error as Error & { status?: number; response?: unknown };
+        console.warn(`[Gemini Admin] FAILED attempt for model "${modelName}": status=${err.status}, message=${err.message}`);
         if (err.message?.includes("MAX_TOKENS") || err.message?.includes("finishReason: MAX_TOKENS")) {
           err.message = "AIの出力が途中で途切れました。生成結果を反映せず、入力PDFを大問ごとに分けるか再実行してください。";
         }
@@ -1845,6 +1852,7 @@ const generateContentWithFallback = async (
           err.message?.includes("fetch");
         if (isRetryable && attempt < maxRetriesPerModel) {
           const delay = Math.min(30000, initialDelay * Math.pow(2, attempt - 1));
+          console.log(`[Gemini Admin] Waiting ${delay}ms before retrying model "${modelName}"...`);
           await new Promise((r) => setTimeout(r, delay));
           continue;
         }
@@ -2495,6 +2503,14 @@ async function handleGenerateSectionAnalysis(genAI: GoogleGenerativeAI, body: Re
   const allQuestions = (sectionData.questions as Array<Record<string, unknown>>) || [];
 
   const imageParts = [...toImageParts(questionFilesData), ...toImageParts(answerFilesData)];
+  const parsedMarkdown = (body.parsedMarkdown as string) || "";
+  const documentAiBlock = parsedMarkdown ? `
+【Document AI 解析済み本文テキスト（段落番号・ページ付与）】
+${parsedMarkdown}
+
+【最重要要件：根拠段落の明記】
+本文の解説や論理的根拠を述べる際は、上記テキストにある段落番号（例: [P2-§3] など）を特定し、必ず「根拠段落: [P2-§3]」のように明記して解説してください。
+` : "";
 
   if (specialInstruction.includes("SECTION_ANALYSIS_COMPACT_BLOCK")) {
     const questions = (sectionData.questions as Array<Record<string, unknown>>) || [];
@@ -2543,7 +2559,7 @@ ${adminInstruction ? "・管理者の個別指示にない前置き、タイト�
     const compactResult = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: compactPrompt }] }],
       generationConfig: { maxOutputTokens: 4096 },
-    }, 2, 1500, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+    }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
 
     return cleanSectionAnalysisOutput(compactResult.response.text(), Boolean(adminInstruction));
   }
@@ -2895,15 +2911,17 @@ ${adminInstruction ? "・管理者の個別指示に見出しや構成指定が�
 管理者の個別指示と科目別の一般ルールが衝突する場合は、正解データの改変禁止・虚偽情報禁止・アスタリスク禁止・本文のみ出力のルールを除き、管理者の個別指示を優先してください。
 ${adminInstructionBlock}`;
 
-  const finalPrompt = adminInstruction
-    ? buildAdminFirstSectionAnalysisPrompt(adminInstruction, sectionData, subjectType, subjectName, allQuestions, { imageAvailable: true })
+  const finalPrompt = (adminInstruction
+    ? `${buildAdminFirstSectionAnalysisPrompt(adminInstruction, sectionData, subjectType, subjectName, allQuestions, { imageAvailable: true })}\n${documentAiBlock}`
     : `
 ${instructionPriorityBlock}
 
 ${instructionModeBlock}
 ${answersNote}
+${documentAiBlock}
 【対象データ（構造）】
 ${JSON.stringify(sectionData, null, 2)}
+`) + `
 
 【文体・形式のルール（必須）】
 ${adminInstruction ? "・管理者の個別指示に出力形式、見出し、順番、分量の指定がある場合は、それを完全に実行する。" : ""}
@@ -2937,7 +2955,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
     const result = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: finalPrompt }, ...imageParts] }],
       generationConfig: { maxOutputTokens: 32768 },
-    }, 3, 3000, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]);
+    }, 3, 3000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-2.5-flash"]);
 
     const text = cleanAnalysisText(result.response.text());
     if (!text) throw new Error("詳細解説の出力が空でした。");
@@ -3057,7 +3075,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
     const chunkResult = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: chunkPrompt }] }],
       generationConfig: { maxOutputTokens: 4096 },
-    }, 2, 1500, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+    }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
     const chunkText = cleanAnalysisText(chunkResult.response.text());
     if (chunkText) partialAnalyses.push(chunkText);
   }
@@ -3122,7 +3140,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
   const mergeResult = await generateContentWithFallback(genAI, {
     contents: [{ role: "user", parts: [{ text: mergePrompt }] }],
     generationConfig: { maxOutputTokens: 8192 },
-  }, 2, 1500, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+  }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
 
   const mergedText = cleanAnalysisText(mergeResult.response.text());
   if (!mergedText) throw new Error("大問分析の統合結果が空でした。");
@@ -3500,7 +3518,7 @@ ${JSON.stringify({ questions: slimChunk })}
       const expResult = await generateContentWithFallback(genAI, {
         contents: [{ role: "user", parts: [{ text: expPrompt }, ...qInlineData, ...aInlineData] }],
         generationConfig: { maxOutputTokens: 4096 },
-      }, 1, 1000, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+      }, 1, 1000, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
       const expParsed = JSON.parse(sanitizeJson(expResult.response.text())) as Record<string, unknown>;
       const expQuestions = Array.isArray(expParsed) ? expParsed : ((expParsed.questions as Array<Record<string, unknown>>) || []);
       expQuestions.forEach((q, resultIndex) => {
@@ -3555,6 +3573,14 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
   const answerFilesData = (body.answerFilesData as Array<{ data: string; mimeType: string }>) || [];
 
   const imageParts = [...toImageParts(questionFilesData), ...toImageParts(answerFilesData)];
+  const parsedMarkdown = (body.parsedMarkdown as string) || "";
+  const documentAiBlock = parsedMarkdown ? `
+【Document AI 解析済み本文テキスト（段落番号・ページ付与）】
+${parsedMarkdown}
+
+【最重要要件：根拠段落の明記】
+各問の解説（explanation）において、本文の根拠箇所を示す際は、上記テキストにある段落番号（例: [P2-§3] など）を特定し、必ず「根拠段落: [P2-§3]」のように明記し、本文記述に忠実に解説を作成してください。
+` : "";
   const questions = (sectionData.questions as Array<Record<string, unknown>>) || [];
   if (questions.length === 0) return sectionData;
 
@@ -3563,8 +3589,8 @@ async function handleGenerateSectionQA(genAI: GoogleGenerativeAI, body: Record<s
 
   const usePro = body.usePro === true || body.useNativePdf === true || imageParts.some((p) => (p as any)?.inlineData?.mimeType === "application/pdf");
   const qaModelList = usePro
-    ? ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
-    : ["gemini-2.5-flash", "gemini-2.0-flash"];
+    ? ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-2.5-flash"]
+    : ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
 
   // 複数問を1回のリクエストでまとめて処理することでRPM制限（5〜10回/分）を回避
   const chunkSize = Math.max(1, Math.min(emptyQuestions.length, 6));
@@ -3620,6 +3646,7 @@ ${japaneseQuestionExplanationRules(subjectType)}
 【対象の設問構造（現在のデータ）】
 小問数: ${unresolvedChunk.length}
 ${JSON.stringify(tempSectionData)}
+${documentAiBlock}
 
 【出力要件】
 - ルートはオブジェクトであること（配列ではない）
@@ -4073,6 +4100,14 @@ JSONのみを返してください。説明文、Markdown、コードブロッ�
   };
 }
 
+async function handleParseDocumentAi(body: Record<string, unknown>) {
+  const pdfBase64 = (body.pdfBase64 as string) || (body.pdfData as string) || "";
+  if (!pdfBase64) {
+    throw new Error("PDFデータ（pdfBase64）が指定されていません。");
+  }
+  return await parsePdfWithDocumentAi(pdfBase64);
+}
+
 // ---------------------------------------------------------------------------
 // Main serve handler
 // ---------------------------------------------------------------------------
@@ -4176,6 +4211,9 @@ serve(async (req) => {
         break;
       case "generateEssayModelAnswer":
         result = await handleGenerateEssayModelAnswer(genAI, body);
+        break;
+      case "parseDocumentAI":
+        result = await handleParseDocumentAi(body);
         break;
       default:
         return new Response(JSON.stringify({ error: `Unknown operation: ${operation}` }), {
