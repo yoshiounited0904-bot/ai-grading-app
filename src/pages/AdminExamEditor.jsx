@@ -6975,9 +6975,7 @@ function AdminExamEditor() {
                                                     </button>
                                                 )}
 
-                                                <button onClick={() => handleRegenerateSectionAnalysis(sIdx, section)} disabled={generatingSectionAnalysis[sIdx]} className="text-[10px] font-black text-purple-500 hover:text-purple-700 bg-purple-50 px-3 py-1.5 rounded-lg disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer">
-                                                    {generatingSectionAnalysis[sIdx] ? '再生成中...' : '✨ AIで解説生成'}
-                                                </button>
+
                                                 <button 
                                                     onClick={() => handleRegenerateSectionAnalysisNativePdf(sIdx, section)} 
                                                     disabled={generatingSectionAnalysis[sIdx]} 

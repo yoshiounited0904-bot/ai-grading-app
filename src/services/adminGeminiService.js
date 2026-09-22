@@ -881,8 +881,8 @@ export const generateSectionQuestionsExplanations = async (subjectType, sectionD
         questions: sourceQuestions
       };
       let updatedQuestions = [...sourceQuestions];
-      const usePro = Boolean(options.usePro ?? options.useNativePdf);
-      const chunkSize = usePro ? Math.max(1, Math.min(sourceQuestions.length, 8)) : 5;
+      const usePro = true;
+      const chunkSize = Math.max(1, Math.min(sourceQuestions.length, 8));
 
       if (originalQuestions.length === 0) return sectionData;
 

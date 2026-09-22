@@ -1767,7 +1767,7 @@ ${instruction ? `\n【個別指示】\n${instruction}\n` : ""}
         const result = await generateContentWithFallback(genAI, {
           contents: [{ role: "user", parts: [...qInlineData, ...aInlineData, { text: retryPrompt }] }],
           generationConfig: { maxOutputTokens: 4096 },
-        }, 1, 1000, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+        }, 1, 1000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
         const parsed = JSON.parse(sanitizeJson(result.response.text())) as Record<string, unknown>;
         const rawQuestions = Array.isArray(parsed)
@@ -2275,7 +2275,7 @@ ${JSON.stringify(slimQuestion, null, 2)}
       const result = await generateContentWithFallback(genAI, {
         contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
         generationConfig: { maxOutputTokens: 4096 },
-      }, 2, 1200, ["gemini-2.5-flash", "gemini-2.0-flash"]);
+      }, 2, 1200, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
       const parsed = JSON.parse(sanitizeJson(result.response.text())) as Record<string, unknown>;
       updatedQuestions[i] = normalizeEvidenceQuestionPatch(question, parsed);
@@ -2558,7 +2558,7 @@ ${adminInstruction ? "・管理者の個別指示にない前置き、タイト�
     const compactResult = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: compactPrompt }] }],
       generationConfig: { maxOutputTokens: 4096 },
-    }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
+    }, 2, 1500, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
     return cleanSectionAnalysisOutput(compactResult.response.text(), Boolean(adminInstruction));
   }
@@ -3134,7 +3134,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
     const fallbackResult = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: compactPrompt }, ...imageParts.slice(0, 1)] }],
       generationConfig: { maxOutputTokens: 8192 },
-    }, 2, 2000, ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro"]);
+    }, 2, 2000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
     const fallbackText = cleanAnalysisText(fallbackResult.response.text());
     if (!fallbackText) throw new Error("詳細解説の軽量フォールバックも空でした。");
@@ -3194,7 +3194,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
     const chunkResult = await generateContentWithFallback(genAI, {
       contents: [{ role: "user", parts: [{ text: chunkPrompt }] }],
       generationConfig: { maxOutputTokens: 4096 },
-    }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
+    }, 2, 1500, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
     const chunkText = cleanAnalysisText(chunkResult.response.text());
     if (chunkText) partialAnalyses.push(chunkText);
   }
@@ -3205,7 +3205,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
 
   const mergePrompt = adminInstruction
     ? `
-あなたは大学入試の詳細解説を編集する専門講師です。
+あなたは大​​学入試の詳細解説を編集する専門講師です。
 
 【最重要】
 以下の「管理者の自作プロンプト」を、統合後の出力仕様として最優先してください。
@@ -3259,7 +3259,7 @@ ${adminInstruction ? "・管理者の個別指示にない固定フォーマッ�
   const mergeResult = await generateContentWithFallback(genAI, {
     contents: [{ role: "user", parts: [{ text: mergePrompt }] }],
     generationConfig: { maxOutputTokens: 8192 },
-  }, 2, 1500, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
+  }, 2, 1500, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
   const mergedText = cleanAnalysisText(mergeResult.response.text());
   if (!mergedText) throw new Error("大問分析の統合結果が空でした。");
@@ -3637,7 +3637,7 @@ ${JSON.stringify({ questions: slimChunk })}
       const expResult = await generateContentWithFallback(genAI, {
         contents: [{ role: "user", parts: [{ text: expPrompt }, ...qInlineData, ...aInlineData] }],
         generationConfig: { maxOutputTokens: 4096 },
-      }, 1, 1000, ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]);
+      }, 1, 1000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
       const expParsed = JSON.parse(sanitizeJson(expResult.response.text())) as Record<string, unknown>;
       const expQuestions = Array.isArray(expParsed) ? expParsed : ((expParsed.questions as Array<Record<string, unknown>>) || []);
       expQuestions.forEach((q, resultIndex) => {
@@ -3706,10 +3706,7 @@ ${parsedMarkdown}
   const emptyQuestions = questions.filter((q) => !q.explanation || String(q.explanation).trim() === "");
   if (emptyQuestions.length === 0) return sectionData;
 
-  const usePro = body.usePro === true || body.useNativePdf === true || imageParts.some((p) => (p as any)?.inlineData?.mimeType === "application/pdf");
-  const qaModelList = usePro
-    ? ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash", "gemini-2.5-flash"]
-    : ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+  const qaModelList = ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"];
 
   // 複数問を1回のリクエストでまとめて処理することでRPM制限（5〜10回/分）を回避
   const chunkSize = Math.max(1, Math.min(emptyQuestions.length, 6));
@@ -4071,7 +4068,7 @@ JSONのみを返してください。説明文、Markdown、コードブロッ�
   const result = await generateContentWithFallback(genAI, {
     contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
     generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 },
-  }, 3, 2000, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]);
+  }, 3, 2000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
   const parsed = JSON.parse(sanitizeJson(result.response.text()));
   const rawElements = Array.isArray(parsed.scoringElements) ? parsed.scoringElements : [];
@@ -4201,7 +4198,7 @@ JSONのみを返してください。説明文、Markdown、コードブロッ�
   const result = await generateContentWithFallback(genAI, {
     contents: [{ role: "user", parts: [{ text: prompt }, ...imageParts] }],
     generationConfig: { responseMimeType: "application/json", maxOutputTokens: 4096 },
-  }, 3, 2000, ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]);
+  }, 3, 2000, ["gemini-3.1-pro-preview", "gemini-3.1-pro", "gemini-2.5-pro", "gemini-3.8-flash"]);
 
   const parsed = JSON.parse(sanitizeJson(result.response.text()));
   const modelAnswer = String(parsed.modelAnswer || "").trim();
