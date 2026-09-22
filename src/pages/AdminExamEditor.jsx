@@ -5263,15 +5263,6 @@ function AdminExamEditor() {
                                                         >
                                                             📥 小問解説CSVをインポート
                                                         </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={handleDownloadExamPdf}
-                                                            disabled={!examData?.pdf_path}
-                                                            className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                            title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
-                                                        >
-                                                            📄 問題PDF
-                                                        </button>
                                                         <input
                                                             ref={questionsCsvInputRef}
                                                             type="file"
@@ -5412,15 +5403,6 @@ function AdminExamEditor() {
                                                             className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2"
                                                         >
                                                             📥 大問詳細解説CSVをインポート
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={handleDownloadExamPdf}
-                                                            disabled={!examData?.pdf_path}
-                                                            className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                            title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
-                                                        >
-                                                            📄 問題PDF
                                                         </button>
                                                         <input
                                                             ref={sectionsCsvInputRef}
