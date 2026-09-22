@@ -507,7 +507,7 @@ const getGeminiAdminAuthHeaders = async () => {
 // ---------------------------------------------------------------------------
 const invokeGeminiAdmin = async (body) => {
   const requestSizeMb = estimateRequestSizeMb(body);
-  if (requestSizeMb > 9.5) {
+  if (requestSizeMb > 10) {
     throw new Error(`Edge Functionに送るデータが大きすぎます（約${requestSizeMb.toFixed(1)}MB）。大問PDFのページ数を減らすか、問題PDFをさらに分割してください。`);
   }
 
