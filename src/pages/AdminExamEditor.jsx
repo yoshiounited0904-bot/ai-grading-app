@@ -6374,39 +6374,6 @@ function AdminExamEditor() {
                                         <span className="text-xs font-bold text-navy-blue">難単語（抽出）も同時に行う</span>
                                     </label>
                                 </div>
-
-                                {/* 従来方式の一括処理（互換性維持） */}
-                                <div className="border-t border-gray-100 pt-4">
-                                    <div className="text-[10px] font-bold text-gray-400 mb-2">
-                                        従来方式（通常画像方式）での一括処理:
-                                    </div>
-                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                                        <button
-                                            onClick={() => handleBulkGenerateSections(true, true)}
-                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
-                                            className="bg-white hover:bg-gray-50 text-indigo-600 border border-indigo-100 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                        >
-                                            <span className="text-sm">🚀</span>
-                                            通常全自動一括生成
-                                        </button>
-                                        <button
-                                            onClick={() => handleBulkGenerateSections(false, true)}
-                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
-                                            className="bg-white text-indigo-600 hover:bg-indigo-50 border border-indigo-100 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                        >
-                                            <span className="text-sm">✍️</span>
-                                            通常小問解説まで一括
-                                        </button>
-                                        <button
-                                            onClick={() => handleBulkGenerateSections(false, false)}
-                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
-                                            className="bg-white text-gray-600 hover:bg-gray-50 border border-gray-200 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                        >
-                                            <span className="text-sm">🏗️</span>
-                                            通常構造のみ一括
-                                        </button>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -6426,13 +6393,6 @@ function AdminExamEditor() {
                                     {totalAllocatedPoints} / {examData?.max_score || 100} 点
                                 </span>
                             </div>
-                            <button
-                                onClick={handleRegeneratePoints}
-                                disabled={regeneratingPoints || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || isBulkGeneratingSections}
-                                className="bg-navy-blue text-white hover:bg-navy-light font-black py-2.5 px-3.5 rounded-xl shadow-md transition-all text-xs disabled:opacity-50"
-                            >
-                                {regeneratingPoints ? '再計算中...' : '🤖 配点自動調整'}
-                            </button>
 
                             {/* ⚡ Gemini 3.1 Pro & Native PDF ボタン */}
                             {/* ⚡ 小問解説一括（OCR連動版 ＆ 通常版） */}
@@ -6523,37 +6483,7 @@ function AdminExamEditor() {
                                 </button>
                             )}
 
-                            {/* 従来方式のボタン */}
-                            <button
-                                onClick={handleBulkGenerateExplanations}
-                                disabled={bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || isBulkGeneratingSections || regeneratingPoints}
-                                className="bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 font-bold py-2.5 px-3 rounded-xl transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-1.5"
-                                title="従来の画像方式で空の小問解説のみを1問ずつ生成"
-                            >
-                                {bulkGenerating ? (
-                                    <>
-                                        <div className="w-3 h-3 border-2 border-indigo-400 border-t-indigo-700 rounded-full animate-spin"></div>
-                                        <span>通常生成中 ({bulkProgress.current}/{bulkProgress.total})</span>
-                                    </>
-                                ) : (
-                                    '通常空欄解説のみ'
-                                )}
-                            </button>
-                            <button
-                                onClick={handleBulkGenerateSectionAnalyses}
-                                disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
-                                className="bg-white text-purple-700 hover:bg-purple-50 border border-purple-200 font-bold py-2.5 px-3 rounded-xl transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-1.5"
-                                title="従来の通常画像方式で全詳細解説を一括作成"
-                            >
-                                {bulkGeneratingSectionAnalyses ? (
-                                    <>
-                                        <div className="w-3 h-3 border-2 border-purple-400 border-t-purple-700 rounded-full animate-spin"></div>
-                                        <span>通常詳細解説中 ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
-                                    </>
-                                ) : (
-                                    '通常詳細解説のみ'
-                                )}
-                            </button>
+
                         </div>
                     </div>
                     {activeSectionGenerationEntries.length > 0 && (
