@@ -1253,6 +1253,12 @@ function AdminExamEditor() {
                 setDurationMinutes(isJp ? 90 : 60);
 
                 setExamData({
+                    id: id,
+                    examId: id,
+                    university: String(id).includes('早稲田') ? '早稲田大学' : '早稲田大学',
+                    faculty: String(id).includes('商') ? '商学部（地歴・公民型）' : '商学部',
+                    year: parsedYear,
+                    subject: isJp ? '国語' : '英語',
                     max_score: totalPoints > 0 ? totalPoints : 60,
                     detailed_analysis: '',
                     structure: loadedStructure,
@@ -1300,6 +1306,12 @@ function AdminExamEditor() {
             setMasterStatus(normalizeMasterStatus(data.master_status));
             setDurationMinutes(data.duration_minutes || 60);
             setExamData({
+                id: data.id,
+                examId: data.id,
+                university: data.university,
+                faculty: data.faculty,
+                year: data.year,
+                subject: data.subject,
                 max_score: data.max_score,
                 detailed_analysis: data.detailed_analysis,
                 structure: loadedStructure,
@@ -4439,9 +4451,20 @@ function AdminExamEditor() {
             return;
         }
         try {
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                'exam'
+            ).trim();
+
             const exportData = {
                 ...currentExam,
-                examId: currentExam.examId || currentExam.id || examId,
+                examId: effectiveExamId,
+                id: effectiveExamId,
                 structure: currentExam.structure || structure || [],
                 university: currentExam.university || university,
                 faculty: currentExam.faculty || faculty,
@@ -4468,9 +4491,20 @@ function AdminExamEditor() {
             return;
         }
         try {
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                'exam'
+            ).trim();
+
             const exportData = {
                 ...currentExam,
-                examId: currentExam.examId || currentExam.id || examId,
+                examId: effectiveExamId,
+                id: effectiveExamId,
                 structure: currentExam.structure || structure || [],
                 university: currentExam.university || university,
                 faculty: currentExam.faculty || faculty,
@@ -4498,7 +4532,21 @@ function AdminExamEditor() {
             try {
                 const text = ev.target.result;
                 const currentExam = examDataRef.current || examData || {};
-                const previewResult = previewImportQuestionsCsv(text, currentExam);
+                const effectiveExamId = (
+                    currentExam.examId ||
+                    currentExam.id ||
+                    examId ||
+                    id ||
+                    (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                    [university, faculty, year, subject].filter(Boolean).join('_') ||
+                    ''
+                ).trim();
+                const previewResult = previewImportQuestionsCsv(text, {
+                    ...currentExam,
+                    examId: effectiveExamId,
+                    id: effectiveExamId,
+                    structure: currentExam.structure || structure || []
+                });
                 setCsvPreviewTab('all');
                 setCsvPreviewModal({
                     type: 'questions',
@@ -4523,7 +4571,21 @@ function AdminExamEditor() {
             try {
                 const text = ev.target.result;
                 const currentExam = examDataRef.current || examData || {};
-                const previewResult = previewImportSectionsAnalysisCsv(text, currentExam);
+                const effectiveExamId = (
+                    currentExam.examId ||
+                    currentExam.id ||
+                    examId ||
+                    id ||
+                    (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                    [university, faculty, year, subject].filter(Boolean).join('_') ||
+                    ''
+                ).trim();
+                const previewResult = previewImportSectionsAnalysisCsv(text, {
+                    ...currentExam,
+                    examId: effectiveExamId,
+                    id: effectiveExamId,
+                    structure: currentExam.structure || structure || []
+                });
                 setCsvPreviewTab('all');
                 setCsvPreviewModal({
                     type: 'sections',

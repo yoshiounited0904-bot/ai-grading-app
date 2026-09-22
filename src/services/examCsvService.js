@@ -116,7 +116,26 @@ const isTextContentEqual = (textA, textB) => {
 /**
  * 小問解説CSVのエクスポート
  */
-export const exportQuestionsCsv = ({ examId, structure = [], university = '', faculty = '', year = '', subject = '' }) => {
+export const exportQuestionsCsv = (params = {}) => {
+    const {
+        examId: rawExamId,
+        id: rawId,
+        structure = [],
+        university = '',
+        faculty = '',
+        year = '',
+        subject = ''
+    } = params;
+
+    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
+    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+
+    // A2セル（1行目のデータ行）をはじめ、全データ行の第1列（exam_id）に出力する識別用の試験ID
+    const fallbackExamId = [cleanUni, cleanFac, cleanYear, cleanSub].filter(Boolean).join('_') || 'exam';
+    const examId = String(rawExamId || rawId || fallbackExamId).trim();
+
     const headers = QUESTION_CSV_HEADERS.map(h => h.key);
     const rows = [];
 
@@ -137,7 +156,7 @@ export const exportQuestionsCsv = ({ examId, structure = [], university = '', fa
             const updatedAt = q.explanation_updated_at || q.explanationUpdatedAt || '';
 
             rows.push([
-                examId || '',
+                examId,
                 secId,
                 qId,
                 secLabel,
@@ -159,10 +178,6 @@ export const exportQuestionsCsv = ({ examId, structure = [], university = '', fa
         ...rows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\r\n');
 
-    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
-    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
     const nameParts = [cleanUni || '大学', cleanFac || '学部', cleanYear, cleanSub || '科目'].filter(Boolean);
     const filename = `${nameParts.join('_')}_小問解説.csv`;
 
@@ -441,7 +456,26 @@ export const applyImportQuestionsCsv = (arg1, arg2) => {
 /**
  * 大問詳細解説CSVのエクスポート
  */
-export const exportSectionsAnalysisCsv = ({ examId, structure = [], university = '', faculty = '', year = '', subject = '' }) => {
+export const exportSectionsAnalysisCsv = (params = {}) => {
+    const {
+        examId: rawExamId,
+        id: rawId,
+        structure = [],
+        university = '',
+        faculty = '',
+        year = '',
+        subject = ''
+    } = params;
+
+    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
+    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+
+    // A2セル（1行目のデータ行）をはじめ、全データ行の第1列（exam_id）に出力する識別用の試験ID
+    const fallbackExamId = [cleanUni, cleanFac, cleanYear, cleanSub].filter(Boolean).join('_') || 'exam';
+    const examId = String(rawExamId || rawId || fallbackExamId).trim();
+
     const headers = SECTION_CSV_HEADERS.map(h => h.key);
     const rows = [];
 
@@ -453,7 +487,7 @@ export const exportSectionsAnalysisCsv = ({ examId, structure = [], university =
         const updatedAt = section.section_analysis_updated_at || section.sectionAnalysisUpdatedAt || '';
 
         rows.push([
-            examId || '',
+            examId,
             secId,
             secLabel,
             sectionAnalysis,
@@ -467,10 +501,6 @@ export const exportSectionsAnalysisCsv = ({ examId, structure = [], university =
         ...rows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\r\n');
 
-    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
-    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
     const nameParts = [cleanUni || '大学', cleanFac || '学部', cleanYear, cleanSub || '科目'].filter(Boolean);
     const filename = `${nameParts.join('_')}_大問詳細解説.csv`;
 

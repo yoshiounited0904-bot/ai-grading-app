@@ -283,4 +283,30 @@ assert(posApplied.nextExamData && Array.isArray(posApplied.nextExamData.structur
 
 console.log("✓ Test 7 passed: Filename formatting and dual parameter signatures verified");
 
-console.log("\n ALL 7 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
+// =========================================================================
+// Test 8: A2セル（1行目のデータ行の第1列）に識別用試験IDが確実に出力されることの検証
+// =========================================================================
+console.log("\n[Test 8] Verification of exam_id in Cell A2 (first data row, column A)");
+const qParsedRows = parseCsvText(namedQExport.content);
+assert.strictEqual(qParsedRows[0][0], 'exam_id', 'Cell A1 must be header "exam_id"');
+assert.strictEqual(qParsedRows[1][0], examId, 'Cell A2 must be the identification exam_id');
+assert.strictEqual(qParsedRows[2][0], examId, 'Cell A3 must also carry the identification exam_id');
+
+const sParsedRows = parseCsvText(namedSExport.content);
+assert.strictEqual(sParsedRows[0][0], 'exam_id', 'Section CSV Cell A1 must be header "exam_id"');
+assert.strictEqual(sParsedRows[1][0], examId, 'Section CSV Cell A2 must be the identification exam_id');
+
+// Test fallback examId when raw examId is not provided
+const fallbackExport = exportQuestionsCsv({
+    structure: initialStructure,
+    university: '早稲田大学',
+    faculty: '商学部',
+    year: '2026',
+    subject: '国語'
+});
+const fallbackRows = parseCsvText(fallbackExport.content);
+assert.strictEqual(fallbackRows[1][0], '早稲田大学_商学部_2026年度_国語', 'Cell A2 must use fallback ID if raw examId is missing');
+
+console.log("✓ Test 8 passed: Cell A2 correctly outputs identification exam_id in all scenarios");
+
+console.log("\n ALL 8 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
