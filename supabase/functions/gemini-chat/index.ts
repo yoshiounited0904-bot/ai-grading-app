@@ -5,15 +5,15 @@ import { corsHeaders, fetchPrivatePdfAsInlineData } from "../_shared/cors.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
 
 const MODELS = {
-  PRIMARY: "gemini-3.1-pro-preview",
-  FALLBACK: "gemini-3.1-pro",
+  PRIMARY: "gemini-3.8-flash",
+  FALLBACK: "gemini-2.5-flash",
 };
 
 const CHAT_MODELS = [
-  "gemini-3.1-pro-preview",
-  "gemini-3.1-pro",
-  "gemini-2.5-pro",
   "gemini-3.8-flash",
+  "gemini-2.5-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-pro",
 ];
 
 const sanitizeUserAnswer = (answer: unknown): string => {
