@@ -6085,10 +6085,14 @@ function AdminExamEditor() {
                                                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">詳細解説用プロンプト（オプション・最優先）</label>
                                                     <textarea
                                                         value={sectionInstructionsBySection[num] || ''}
-                                                    onChange={e => setSectionInstructionsBySection(prev => ({ ...prev, [num]: e.target.value }))}
-                                                    placeholder="例: 各設問ごとに「解答根拠→誤答理由→解法の着眼点」の順で説明。導入や講評は不要。"
-                                                    className="w-full p-4 rounded-2xl border border-gray-100 text-xs bg-gray-50/30 focus:bg-white focus:border-indigo-100 transition-all outline-none min-h-[60px]"
-                                                />
+                                                        onChange={e => {
+                                                            const val = e.target.value;
+                                                            setSectionInstructionsBySection(prev => ({ ...prev, [num]: val }));
+                                                            handleStructureChange(num - 1, null, 'instruction', val);
+                                                        }}
+                                                        placeholder="例: 各設問ごとに「解答根拠→誤答理由→解法の着眼点」の順で説明。導入や講評は不要。"
+                                                        className="w-full p-4 rounded-2xl border border-gray-100 text-xs bg-gray-50/30 focus:bg-white focus:border-indigo-100 transition-all outline-none min-h-[60px]"
+                                                    />
                                                     <p className="mt-2 text-[10px] text-gray-400 font-bold leading-relaxed">
                                                         ここに書いた内容は、大問全体の詳細解説生成で最優先されます。
                                                     </p>
@@ -6852,10 +6856,22 @@ function AdminExamEditor() {
                                                         onChange={e => handleStructureChange(sIdx, null, 'questionType', e.target.value)}
                                                         className="p-1 px-2 rounded-md border border-gray-200 text-[10px] font-black text-navy-blue outline-none cursor-pointer"
                                                     >
-                                                        <option value="default">自動 (長文問題)</option>
+                                                        <option value="default">自動 (英語長文)</option>
                                                         <option value="grammar">文法・語彙問題</option>
                                                         <option value="writing">英作文問題</option>
                                                         <option value="conversation">会話文問題</option>
+                                                    </select>
+                                                )}
+                                                {subjectEn === 'japanese' && (
+                                                    <select
+                                                        value={section.questionType || 'default'}
+                                                        onChange={e => handleStructureChange(sIdx, null, 'questionType', e.target.value)}
+                                                        className="p-1 px-2 rounded-md border border-gray-200 text-[10px] font-black text-navy-blue outline-none cursor-pointer"
+                                                    >
+                                                        <option value="default">自動 (現代文長文)</option>
+                                                        <option value="modern">現代文長文</option>
+                                                        <option value="classic">古文問題</option>
+                                                        <option value="chinese">漢文問題</option>
                                                     </select>
                                                 )}
                                             </div>
@@ -6879,6 +6895,29 @@ function AdminExamEditor() {
                                                 </button>
                                             </div>
                                         </div>
+
+                                        {/* 大問詳細解説用個別プロンプト（最優先指示） */}
+                                        <div className="mb-3">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                                    <span>⚙️</span>
+                                                    <span>詳細解説用プロンプト（オプション・最優先）</span>
+                                                </label>
+                                                <span className="text-[9px] text-gray-400">※ 入力時は自作プロンプトが最上位仕様として優先実行されます</span>
+                                            </div>
+                                            <textarea
+                                                value={sectionInstructionsBySection[sIdx + 1] ?? section.instruction ?? ''}
+                                                onChange={e => {
+                                                    const val = e.target.value;
+                                                    setSectionInstructionsBySection(prev => ({ ...prev, [sIdx + 1]: val }));
+                                                    handleStructureChange(sIdx, null, 'instruction', val);
+                                                }}
+                                                placeholder="例: 各設問ごとに「解答根拠→誤答理由→解法の着眼点」の順で説明。導入や講評は不要。"
+                                                className="w-full p-3 rounded-xl border border-gray-100 text-xs bg-gray-50/40 focus:bg-white focus:border-indigo-200 transition-all outline-none min-h-[52px]"
+                                            />
+                                        </div>
+
+                                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">大問詳細解説本文</label>
                                         <textarea value={section.sectionAnalysis || ''} onChange={e => handleStructureChange(sIdx, null, 'sectionAnalysis', e.target.value)} className="w-full p-5 rounded-2xl border border-gray-100 text-xs bg-white focus:bg-gray-50/30 outline-none transition-all min-h-[100px]" placeholder="この大問全体の読解ポイント..." />
                                         
                                         {subjectEn === 'english' && (
