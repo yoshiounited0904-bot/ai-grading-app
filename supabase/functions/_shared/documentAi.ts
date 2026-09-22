@@ -40,7 +40,13 @@ function pemToBinary(pem: string): Uint8Array {
     .replace(/-----BEGIN[ A-Z0-9_-]+-----/g, "")
     .replace(/-----END[ A-Z0-9_-]+-----/g, "")
     .replace(/[\r\n\s]/g, "");
-  const binaryString = atob(cleanPem);
+  let binaryString: string;
+  try {
+    binaryString = atob(cleanPem);
+  } catch (err) {
+    console.error("[Document AI Auth Error] Failed to decode private key PEM:", err);
+    throw new Error(`サービスアカウント秘密鍵のBase64デコードに失敗しました: ${(err as Error)?.message || String(err)}`);
+  }
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {

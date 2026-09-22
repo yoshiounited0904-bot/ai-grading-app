@@ -536,6 +536,8 @@ function AdminExamEditor() {
     const [subjectEn, setSubjectEn] = useState('english');
     const [type, setType] = useState('pdf');
     const [masterStatus, setMasterStatus] = useState('working');
+    const [isAiChecked, setIsAiChecked] = useState(false);
+    const [aiCheckedAt, setAiCheckedAt] = useState(null);
     const [durationMinutes, setDurationMinutes] = useState(60);
     const generateDetailed = true;
 
@@ -669,6 +671,8 @@ function AdminExamEditor() {
             type,
             master_status: masterStatus,
             is_published: masterStatus === 'production',
+            is_ai_checked: Boolean(isAiChecked),
+            ai_checked_at: aiCheckedAt || null,
             duration_minutes: parseInt(durationMinutes) || 60,
             pdf_path: pdfPathOverride ?? currentExamData?.pdf_path ?? '',
             max_score: parseInt(currentExamData?.max_score || 100),
@@ -1306,6 +1310,8 @@ function AdminExamEditor() {
             setSubjectEn(data.subject_en);
             setType(data.type);
             setMasterStatus(normalizeMasterStatus(data.master_status));
+            setIsAiChecked(Boolean(data.is_ai_checked));
+            setAiCheckedAt(data.ai_checked_at || null);
             setDurationMinutes(data.duration_minutes || 60);
             setExamData({
                 id: data.id,
@@ -2295,6 +2301,8 @@ function AdminExamEditor() {
             type,
             master_status: masterStatus,
             is_published: masterStatus === 'production',
+            is_ai_checked: Boolean(isAiChecked),
+            ai_checked_at: aiCheckedAt || null,
             duration_minutes: parseInt(durationMinutes) || 60,
             pdf_path: finalPdfPath,
             max_score: parseInt(currentExamData?.max_score || 100),
@@ -5449,6 +5457,35 @@ function AdminExamEditor() {
                             </div>
                             <p className="text-[10px] text-gray-400 font-bold leading-relaxed ml-1">
                                 本番用にすると公開対象、それ以外は非公開として保存します。
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">AI解説チェック状態</label>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = !isAiChecked;
+                                        setIsAiChecked(next);
+                                        setAiCheckedAt(next ? new Date().toISOString() : null);
+                                    }}
+                                    className={`flex items-center gap-2 rounded-2xl border px-4 py-3 text-xs font-black transition-all ${
+                                        isAiChecked
+                                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-100'
+                                            : 'bg-gray-50/50 text-gray-400 border-gray-200 hover:bg-white hover:text-navy-blue'
+                                    }`}
+                                >
+                                    <span className="text-base">{isAiChecked ? '🤖' : '⚪'}</span>
+                                    <span>{isAiChecked ? 'AIチェック済' : '未チェック'}</span>
+                                </button>
+                                {isAiChecked && aiCheckedAt && (
+                                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                                        確認日時: {new Date(aiCheckedAt).toLocaleString('ja-JP')}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-[10px] text-gray-400 font-bold leading-relaxed ml-1">
+                                問題・解説の正確性を点検・担保したかどうかの管理フラグです（デフォルト: 未チェック）。
                             </p>
                         </div>
                         <div className="space-y-2">

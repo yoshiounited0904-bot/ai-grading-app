@@ -151,7 +151,8 @@ const DEFAULT_DASHBOARD_FILTERS = {
     subject: 'all',
     year: 'all',
     masterStatus: 'all',
-    publishStatus: 'all'
+    publishStatus: 'all',
+    aiCheckStatus: 'all'
 };
 
 const MASTER_STATUS_FILTER_OPTIONS = [
@@ -164,6 +165,11 @@ const MASTER_STATUS_FILTER_OPTIONS = [
 const PUBLISH_STATUS_FILTER_OPTIONS = [
     { value: 'published', label: '公開中' },
     { value: 'unpublished', label: '非公開' }
+];
+
+const AI_CHECK_FILTER_OPTIONS = [
+    { value: 'checked', label: 'AIチェック済' },
+    { value: 'unchecked', label: '未チェック' }
 ];
 
 const normalizeMasterStatus = (status) => {
@@ -437,6 +443,33 @@ function AdminDashboard() {
         }
     };
 
+    const handleToggleAiChecked = async (examId, currentChecked) => {
+        const nextChecked = !currentChecked;
+        const nextCheckedAt = nextChecked ? new Date().toISOString() : null;
+
+        // Optimistic UI update
+        setExams(prev => prev.map(e => e.id === examId ? {
+            ...e,
+            is_ai_checked: nextChecked,
+            ai_checked_at: nextCheckedAt
+        } : e));
+
+        const { error } = await updateAdminFields(examId, {
+            is_ai_checked: nextChecked,
+            ai_checked_at: nextCheckedAt
+        });
+
+        if (error) {
+            console.error('Error toggling AI check status:', error);
+            alert('AIチェック状態の更新に失敗しました: ' + (error.message || '不明なエラー'));
+            // Rollback on error
+            setExams(prev => prev.map(e => e.id === examId ? {
+                ...e,
+                is_ai_checked: currentChecked
+            } : e));
+        }
+    };
+
     const handlePreview = async (rawExam) => {
         const { data: fullExam, error } = await getAdminExamById(rawExam.id);
         if (error || !fullExam) {
@@ -551,6 +584,8 @@ function AdminDashboard() {
             if (dashboardFilters.masterStatus !== 'all' && normalizeMasterStatus(exam.master_status) !== dashboardFilters.masterStatus) return false;
             if (dashboardFilters.publishStatus === 'published' && !exam.is_published) return false;
             if (dashboardFilters.publishStatus === 'unpublished' && exam.is_published) return false;
+            if (dashboardFilters.aiCheckStatus === 'checked' && !exam.is_ai_checked) return false;
+            if (dashboardFilters.aiCheckStatus === 'unchecked' && exam.is_ai_checked) return false;
             return true;
         })
     ), [dashboardFilters, exams]);
@@ -1506,6 +1541,16 @@ function AdminDashboard() {
                                         <option key={option.value} value={option.value}>{option.label}</option>
                                     ))}
                                 </select>
+                                <select
+                                    value={dashboardFilters.aiCheckStatus}
+                                    onChange={(e) => updateDashboardFilter('aiCheckStatus', e.target.value)}
+                                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-navy-blue outline-none"
+                                >
+                                    <option value="all">全AIチェック状態</option>
+                                    {AI_CHECK_FILTER_OPTIONS.map(option => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
                             </div>
                         </section>
 
@@ -1544,6 +1589,7 @@ function AdminDashboard() {
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">採点基準</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">小問解説</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">詳細解説</th>
+                                                <th className="px-6 py-2 text-center whitespace-nowrap">AIチェック</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">公開設定</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">ステータス</th>
                                                 <th className="px-6 py-2 text-center whitespace-nowrap">未実装項目</th>
@@ -1557,10 +1603,11 @@ function AdminDashboard() {
                                                 const verifiedCount = dataGroup.exams.filter(exam => normalizeMasterStatus(exam.master_status) === 'verified').length;
                                                 const productionCount = dataGroup.exams.filter(exam => normalizeMasterStatus(exam.master_status) === 'production').length;
                                                 const publishedCount = dataGroup.exams.filter(exam => exam.is_published).length;
+                                                const aiCheckedCount = dataGroup.exams.filter(exam => exam.is_ai_checked).length;
                                                 return (
                                                     <React.Fragment key={dataGroup.groupKey}>
                                                         <tr>
-                                                            <td colSpan="13" className="px-3 pt-4 pb-1">
+                                                            <td colSpan="14" className="px-3 pt-4 pb-1">
                                                                 <div className="flex items-center justify-between gap-4 rounded-xl border border-indigo-100 bg-indigo-50/80 px-4 py-2">
                                                                     <div className="flex items-center gap-2 min-w-0">
                                                                         <span className="inline-block w-1 h-5 rounded-full bg-indigo-500"></span>
@@ -1569,7 +1616,7 @@ function AdminDashboard() {
                                                                     <span className="text-[10px] font-black text-indigo-500 whitespace-nowrap">
                                                                         {dataGroup.exams.length}件
                                                                         <span className="ml-2 text-indigo-400">{formatQuestionCounts(dataGroup.exams, examStats)}</span>
-                                                                        <span className="ml-2 text-indigo-400">完成 {completedCount}・検証済 {verifiedCount}・本番 {productionCount}・公開 {publishedCount}</span>
+                                                                        <span className="ml-2 text-indigo-400">AI済 {aiCheckedCount}・完成 {completedCount}・検証済 {verifiedCount}・本番 {productionCount}・公開 {publishedCount}</span>
                                                                     </span>
                                                                 </div>
                                                             </td>
@@ -1771,6 +1818,25 @@ function AdminDashboard() {
                                                         <span className="text-[9px] font-bold text-red-500 mt-0.5">未 {detailedExplanationStats.missing}/{detailedExplanationStats.required}問</span>
                                                     </Link>
                                                 )}
+                                            </td>
+
+                                            {/* AI Check Status Toggle */}
+                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                                <button
+                                                    onClick={() => handleToggleAiChecked(exam.id, exam.is_ai_checked)}
+                                                    className={`px-2.5 py-1 text-[9px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 whitespace-nowrap ${
+                                                        exam.is_ai_checked
+                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 shadow-sm'
+                                                            : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100 hover:text-gray-600'
+                                                    }`}
+                                                    title={exam.is_ai_checked ? (exam.ai_checked_at ? `AIチェック済 (${new Date(exam.ai_checked_at).toLocaleDateString('ja-JP')} 確認)\nクリックして未チェックに変更` : 'AIチェック済\nクリックして未チェックに変更') : 'クリックしてAIチェック済に変更'}
+                                                >
+                                                    {exam.is_ai_checked ? (
+                                                        <><span className="text-[12px]">🤖</span>AI済</>
+                                                    ) : (
+                                                        <><span className="text-[12px]">⚪</span>未</>
+                                                    )}
+                                                </button>
                                             </td>
                                              
                                             {/* Publish Toggle */}

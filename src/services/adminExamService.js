@@ -290,6 +290,8 @@ export const getAdminExams = async () => {
                     admin_comment,
                     is_completed,
                     is_published,
+                    is_ai_checked,
+                    ai_checked_at,
                     created_at,
                     updated_at
                 `)
@@ -323,6 +325,8 @@ export const getAdminExamsWithStructure = async () => {
                     admin_comment,
                     is_completed,
                     is_published,
+                    is_ai_checked,
+                    ai_checked_at,
                     created_at,
                     updated_at
                 `)
