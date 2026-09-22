@@ -4776,6 +4776,45 @@ function AdminExamEditor() {
         }
     };
 
+    const handleDownloadExamPdf = async () => {
+        const currentExam = examDataRef.current || examData;
+        const pdfUrl = currentExam?.pdf_path;
+        if (!pdfUrl) {
+            alert('この試験データには全体PDFがまだ保存されていません。\n先に問題PDFをアップロード・保存してください。');
+            return;
+        }
+
+        const u = currentExam.university || university || '大学';
+        const f = currentExam.faculty || faculty || '';
+        const y = currentExam.year || year || '';
+        const s = currentExam.subject || subject || '問題';
+        const filename = `${[u, f, y, s].filter(Boolean).join('_')}_問題.pdf`.replace(/\s+/g, '_');
+
+        try {
+            const res = await fetch(pdfUrl);
+            if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+            console.warn('Direct blob download failed, falling back to direct URL download:', err);
+            const a = document.createElement('a');
+            a.href = pdfUrl;
+            a.download = filename;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    };
+
     const handleQuestionsCsvFileSelect = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -5117,6 +5156,42 @@ function AdminExamEditor() {
                                 </span>
                             </summary>
                             <div className="mt-6 pt-6 border-t border-navy-blue/5 space-y-8">
+                                {/* Direct Full Exam PDF Download Banner */}
+                                <div className="bg-gradient-to-r from-indigo-50/90 via-sky-50/70 to-indigo-50/90 border border-indigo-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+                                    <div className="flex items-center gap-3.5">
+                                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg shadow-sm flex-shrink-0">
+                                            📄
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2 mb-0.5">
+                                                <h4 className="text-xs font-black text-indigo-950">登録済み問題PDF（全体）</h4>
+                                                {examData?.pdf_path ? (
+                                                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black border border-emerald-200">
+                                                        保存済み
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-black border border-amber-200">
+                                                        未保存（上部でアップロード必要）
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-[11px] text-indigo-900/70 font-medium">
+                                                外部AI（ChatGPT / Claude等）に小問解説CSVや大問詳細解説CSVと一緒に渡す問題原本PDFを、ワンクリックでダウンロードできます。
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleDownloadExamPdf}
+                                        disabled={!examData?.pdf_path}
+                                        className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                                        title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
+                                    >
+                                        <span>📥</span>
+                                        <span>全体問題PDFをダウンロード</span>
+                                    </button>
+                                </div>
+
                                 {/* Workflow overview */}
                                 <div className="bg-navy-blue/[0.02] border border-navy-blue/10 rounded-2xl p-5">
                                     <p className="font-black text-navy-blue uppercase tracking-widest text-[10px] mb-2">運用フロー（原本PDFとCSVの照合）</p>
@@ -5187,6 +5262,15 @@ function AdminExamEditor() {
                                                             className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2"
                                                         >
                                                             📥 小問解説CSVをインポート
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleDownloadExamPdf}
+                                                            disabled={!examData?.pdf_path}
+                                                            className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
+                                                        >
+                                                            📄 問題PDF
                                                         </button>
                                                         <input
                                                             ref={questionsCsvInputRef}
@@ -5328,6 +5412,15 @@ function AdminExamEditor() {
                                                             className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2"
                                                         >
                                                             📥 大問詳細解説CSVをインポート
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleDownloadExamPdf}
+                                                            disabled={!examData?.pdf_path}
+                                                            className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
+                                                        >
+                                                            📄 問題PDF
                                                         </button>
                                                         <input
                                                             ref={sectionsCsvInputRef}
