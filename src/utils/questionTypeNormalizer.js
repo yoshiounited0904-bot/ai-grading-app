@@ -262,11 +262,61 @@ const hasOrderingSignals = (question) => {
     return ORDERING_KEYWORDS.some(keyword => textBlob.includes(keyword));
 };
 
+export const isSingleChoiceSymbol = (value) => {
+    const str = String(value ?? '').trim().normalize('NFKC');
+    if (!str) return false;
+    // 1文字の英字 (a-z, A-Z)
+    if (/^[a-zA-Z]$/.test(str)) return true;
+    // 1〜10の数字
+    if (/^([1-9]|10)$/.test(str)) return true;
+    // 1文字のカタカナ (ア-ン)
+    if (/^[\u30A1-\u30F6]$/.test(str)) return true;
+    // ①〜⑳などの丸数字
+    if (/^[\u2460-\u2473]$/.test(str)) return true;
+    // (a), (1), (ア) のような括弧付き記号
+    if (/^[(（][a-zA-Z0-9\u30A1-\u30F6][)）]$/.test(str)) return true;
+    return false;
+};
+
+export const buildDefaultOptionsForChoiceAnswer = (answer) => {
+    const norm = String(answer || '').trim().normalize('NFKC');
+    if (/^[a-d]$/i.test(norm)) {
+        return norm === norm.toLowerCase() ? ['a', 'b', 'c', 'd'] : ['A', 'B', 'C', 'D'];
+    }
+    if (/^[e-f]$/i.test(norm)) {
+        return norm === norm.toLowerCase() ? ['a', 'b', 'c', 'd', 'e', 'f'] : ['A', 'B', 'C', 'D', 'E', 'F'];
+    }
+    if (/^[1-4]$/.test(norm)) {
+        return ['1', '2', '3', '4'];
+    }
+    if (/^[5-6]$/.test(norm)) {
+        return ['1', '2', '3', '4', '5', '6'];
+    }
+    if (/^[アイウエ]$/.test(norm)) {
+        return ['ア', 'イ', 'ウ', 'エ'];
+    }
+    if (/^[オカ]$/.test(norm)) {
+        return ['ア', 'イ', 'ウ', 'エ', 'オ', 'カ'];
+    }
+    return [];
+};
+
 export const inferQuestionType = (question = {}) => {
     const options = normalizeQuestionOptions(question.options);
     const answerParts = splitAnswerParts(question.correctAnswer);
     const hasOptions = options.length > 0;
     const answerIssue = String(question.answerIssue || '');
+
+    // 正解が1文字の選択肢記号（b, d, 3, ア等）の場合、絶対に記述（descriptive）や論述（essay）ではない！
+    const isAnswerChoiceSymbol = answerParts.length === 1 && isSingleChoiceSymbol(answerParts[0]);
+    const isMultipleChoiceSymbols = answerParts.length > 1 && answerParts.every(isSingleChoiceSymbol);
+
+    if (isAnswerChoiceSymbol && !hasEssaySignals(question)) {
+        return 'selection';
+    }
+    if (isMultipleChoiceSymbols && !hasEssaySignals(question)) {
+        return hasOrderingSignals(question) ? 'ordering' : 'selection_multi';
+    }
 
     if (hasEssaySignals(question)) return 'essay';
     if (hasOptions && answerParts.length > 1 && hasOrderingSignals(question)) return 'ordering';
@@ -276,13 +326,30 @@ export const inferQuestionType = (question = {}) => {
 };
 
 export const normalizeQuestionType = (question = {}) => {
-    const normalizedOptions = normalizeQuestionOptions(question.options);
+    let normalizedOptions = normalizeQuestionOptions(question.options);
     const currentType = String(question.type || '').toLowerCase();
+    const answerParts = splitAnswerParts(question.correctAnswer);
+    const isAnswerChoiceSymbol = answerParts.length === 1 && isSingleChoiceSymbol(answerParts[0]);
+
+    // 正解が選択肢記号なのに descriptive と指定されている場合、強制的に selection に修正
+    const shouldOverrideDescriptive = currentType === 'descriptive' && isAnswerChoiceSymbol;
+
     const inferredType = currentType === 'writing'
         ? 'essay'
-        : EXPLICIT_QUESTION_TYPES.has(currentType)
-            ? currentType
-            : inferQuestionType({ ...question, options: normalizedOptions });
+        : shouldOverrideDescriptive
+            ? 'selection'
+            : EXPLICIT_QUESTION_TYPES.has(currentType)
+                ? currentType
+                : inferQuestionType({ ...question, options: normalizedOptions });
+
+    // 選択問題で options が空の場合、正解記号から補完
+    if (normalizedOptions.length === 0 && (inferredType === 'selection' || isAnswerChoiceSymbol)) {
+        const defaulted = buildDefaultOptionsForChoiceAnswer(String(question.correctAnswer));
+        if (defaulted.length > 0) {
+            normalizedOptions = defaulted;
+        }
+    }
+
     const next = {
         ...question,
         type: inferredType

@@ -244,21 +244,27 @@ const JAPANESE_RULES = `
 ・配点は、最終的に指定満点へ一致するよう調整する。
 ・各小問の抽出時、設問文（questionText）や選択肢の本文（choiceTexts: {"1": "...", "2": "..."}）を省略せず、画像から正確に文字起こししてデータに含めること。これにより解説の精度が保たれる。
 
-【問題タイプの分類】
-1. selection
-   ・選択肢から1つ選ぶ問題。
-   ・選択肢番号、記号、語句の対応を誤って correctAnswer にしない。
+【問題タイプ（type）の厳格な分類・判定ルール - 誤認厳禁！】
+大学入試では、選択肢問題（記号選択）を「記述（descriptive）」と誤認するミスが極めて多いため、以下の基準を厳格に適用してください。
 
-2. selection_multi
-   ・複数選択、組み合わせ、すべて選べ、正しいものを2つ選べ等の問題。
+1. selection（単一記号選択）
+   ・設問や問題用紙に選択肢（a〜d, 1〜4, ア〜エ等）があり、その中から1つ選ばせる問題はすべて "selection" です。
+   ・正解（correctAnswer）がアルファベット1文字（a, b, c, d / A, B, C, D等）、数字1文字（1, 2, 3, 4等）、カタカナ1文字（ア, イ, ウ, エ等）である場合は、問題文または長文末に選択肢が存在する選択問題です。絶対に "descriptive"（記述）や "essay"（自由記述）にせず、必ず "selection" にしてください。
+   ・長文の空欄補充問題（例: 空欄に入る適切な語句をa〜dから選べ）であっても、選択肢から選ぶ形式なら「descriptive」ではなく必ず「selection」です。
+   ・options 配列には必ず ["a", "b", "c", "d"] のように選択肢記号の一覧を漏れなく格納してください。
 
-3. descriptive
-   ・漢字、語句、文法、古語、句法、現代語訳、抜き出し、短い記述、本文中の語句を答える問題。
-   ・「番号だけ答える」設問は、括弧内の語句ではなく番号を正解にする。
+2. selection_multi（複数記号選択）
+   ・「適当なものを2つ選べ」「すべて選べ」のように、複数の選択肢記号を順不同で選ばせる問題。correctAnswer は "b,d" のようにカンマ区切り。
 
-4. essay
-   ・理由説明、内容説明、要約、本文根拠を用いた記述、複数要素を含む論述問題。
-   ・採点基準が必要な問題として扱い、可能なら scoringElements を要素化する。
+3. ordering（並び替え・語順整序）
+   ・選択肢を正しい順序に並び替える問題。correctAnswer は "c,a,d,b" のように順序通りカンマ区切り。
+
+4. descriptive（語句短答記述・抜き出し）
+   ・【極めて重要】選択肢が一切なく、英単語（例: "environment"）、日本語の語句（例: "産業革命"）、漢字の書き取り（例: "創造"）、本文からの抜き出し語句などを、受験生自身が手書きで書く問題のみを指します。
+   ・正解がアルファベット記号（a, b, c, d等）や数字（1, 2, 3等）やカタカナ（ア, イ, ウ等）1文字のものを "descriptive" にすることは【重大な誤り】です。
+
+5. essay（自由記述・論述・英作文）
+   ・理由説明、要約、本文内容説明、英作文、小論文など、文章を作成させ採点基準（部分点）が必要な問題のみを指します。
 
 【配点の基本方針】
 ・選択問題は低〜中配点、複数選択は単一選択より重め。
@@ -1270,11 +1276,49 @@ const ensureEssayCharacterCountElement = (question: Record<string, unknown>): Re
   return { ...question, scoringElements: elements };
 };
 
+const isSingleChoiceSymbol = (value: unknown): boolean => {
+  const str = String(value ?? "").trim().normalize("NFKC");
+  if (!str) return false;
+  // 1文字の英字 (a-z, A-Z)
+  if (/^[a-zA-Z]$/.test(str)) return true;
+  // 1〜10の数字
+  if (/^([1-9]|10)$/.test(str)) return true;
+  // 1文字のカタカナ (ア-ン)
+  if (/^[\u30A1-\u30F6]$/.test(str)) return true;
+  // ①〜⑳などの丸数字
+  if (/^[\u2460-\u2473]$/.test(str)) return true;
+  // (a), (1), (ア) のような括弧付き記号
+  if (/^[(（][a-zA-Z0-9\u30A1-\u30F6][)）]$/.test(str)) return true;
+  return false;
+};
+
+const buildDefaultOptionsForChoiceAnswer = (answer: string): string[] => {
+  const norm = String(answer || "").trim().normalize("NFKC");
+  if (/^[a-d]$/i.test(norm)) {
+    return norm === norm.toLowerCase() ? ["a", "b", "c", "d"] : ["A", "B", "C", "D"];
+  }
+  if (/^[e-f]$/i.test(norm)) {
+    return norm === norm.toLowerCase() ? ["a", "b", "c", "d", "e", "f"] : ["A", "B", "C", "D", "E", "F"];
+  }
+  if (/^[1-4]$/.test(norm)) {
+    return ["1", "2", "3", "4"];
+  }
+  if (/^[5-6]$/.test(norm)) {
+    return ["1", "2", "3", "4", "5", "6"];
+  }
+  if (/^[アイウエ]$/.test(norm)) {
+    return ["ア", "イ", "ウ", "エ"];
+  }
+  if (/^[オカ]$/.test(norm)) {
+    return ["ア", "イ", "ウ", "エ", "オ", "カ"];
+  }
+  return [];
+};
+
 const inferGeneratedQuestionType = (question: Record<string, unknown>, options: string[]): string => {
   const currentType = String(question.type || "").toLowerCase();
   const autoNormalizableTypes = ["", "selection", "selection_multi", "ordering", "descriptive", "essay", "writing"];
   if (!autoNormalizableTypes.includes(currentType)) return String(question.type || "");
-  if (currentType === "descriptive") return "descriptive";
 
   const answerParts = splitAnswerParts(question.correctAnswer);
   const answerIssue = String(question.answerIssue || "");
@@ -1293,10 +1337,23 @@ const inferGeneratedQuestionType = (question: Record<string, unknown>, options: 
     hasQuestionScoringElements(question) ||
     ["自由記述", "論述", "小論文", "作文", "英作文", "要約", "あなたの考え", "自分の考え"].some((keyword) => textBlob.includes(keyword));
 
+  // 正解が1文字の選択肢記号（a, b, c, 1, ア等）の場合、絶対に記述（descriptive）や論述（essay）ではない！
+  const isAnswerChoiceSymbol = answerParts.length === 1 && isSingleChoiceSymbol(answerParts[0]);
+  const isMultipleChoiceSymbols = answerParts.length > 1 && answerParts.every(isSingleChoiceSymbol);
+
+  if (isAnswerChoiceSymbol && !hasEssaySignal) {
+    return "selection";
+  }
+  if (isMultipleChoiceSymbols && !hasEssaySignal) {
+    return hasOrderingSignal ? "ordering" : "selection_multi";
+  }
+
   if (hasEssaySignal) return "essay";
+  if (currentType === "descriptive") return "descriptive";
+
   if (options.length > 0 && answerParts.length > 1 && hasOrderingSignal) return "ordering";
   if (options.length > 0 && answerParts.length > 1 && answerIssue !== "single_choice_multiple_answers") return "selection_multi";
-  if (options.length > 0) return "selection";
+  if (options.length > 0 || currentType === "selection") return "selection";
   return "descriptive";
 };
 
@@ -1334,6 +1391,16 @@ const coerceGeneratedQuestion = (question: Record<string, unknown>, fallbackInde
   }
   next.type = inferGeneratedQuestionType(next, options);
   next.correctAnswer = normalizeChoiceAnswer(next.correctAnswer);
+
+  // 選択問題または正解が記号なのに options が空の場合、正解記号から典型選択肢を自動補完
+  if (options.length === 0 && (next.type === "selection" || isSingleChoiceSymbol(next.correctAnswer))) {
+    const defaulted = buildDefaultOptionsForChoiceAnswer(String(next.correctAnswer));
+    if (defaulted.length > 0) {
+      options = defaulted;
+      next.type = "selection";
+    }
+  }
+
   if (Array.isArray(next.alternativeAnswers)) {
     next.alternativeAnswers = normalizeAlternativeAnswers(next.alternativeAnswers);
   }
@@ -1729,9 +1796,11 @@ ${JSON.stringify(chunk.map((item, idx) => ({
 3. requiredQuestions の順番通りに出力する。
 4. id は requiredQuestions の id と完全一致させる。
 5. correctAnswerHint がある場合、correctAnswer はそれを優先して使う。
-6. answerFormat が "choice_number" の場合は、番号だけを答える選択問題です。type は必ず "selection"、correctAnswer は番号のみ、options は optionsHint を使うこと。
-7. 問題文から、type と options をできる限り正確に抽出する。
-8. 選択肢があり正解が1つなら "selection"、順不同の複数正解なら "selection_multi"、並び替えなら "ordering"、短答記述なら "descriptive"、自由記述・論述・英作文なら "essay"。
+8. 問題タイプ（type）の厳格判定:
+   ・正解（correctAnswer / correctAnswerHint）がアルファベット1文字（a, b, c, d / A, B, C, D）、数字1文字（1, 2, 3, 4）、カタカナ1文字（ア, イ, ウ, エ）である場合は【必ず type: "selection"】にしてください。決して "descriptive" や "essay" にしてはいけません。
+   ・空欄補充問題であっても選択肢記号から選ぶものはすべて "selection" です。options には ["a", "b", "c", "d"] のように記号配列を含めてください。
+   ・"descriptive" は英単語（例: "water"）や日本語用語（例: "平城京"）を直接記述・抜き出しさせる問題のみです。
+   ・選択肢があり正解が1つなら "selection"、順不同の複数正解なら "selection_multi"、並び替えなら "ordering"、短答語句記述なら "descriptive"、自由記述・論述・英作文なら "essay"。
 9. カタカナ選択肢の「カ」を漢字の「力」に、「オ」を漢字の「才」に誤変換しない。
 10. points は仮で 1、explanation は空文字 "" にする。
 11. Markdown、説明文、コードブロックは禁止。JSONオブジェクト1つのみ返す。
@@ -2063,7 +2132,12 @@ ${isJapanese ? `
 6. 全ての小問の \`explanation\` は必ず空文字 ("") に設定し、解説文は一切生成しないでください。
 7. 画像からテキストを読み取る際は、誤字脱字に注意し、正確に抽出してください。
 8. 語句・文・選択肢を正しい順番に並べ替える問題は、必ず \`type\` を "ordering" にしてください。この場合、\`correctAnswer\` は正しい順番をカンマ区切りで出力してください（例: "c,a,d,b"）。順序が採点対象ではない複数選択だけ "selection_multi" を使ってください。
-9. 問題タイプは厳密に分類してください。選択肢があり正解が1つなら "selection"、選択肢があり順不同の複数正解なら "selection_multi"、選択肢を正しい順に並べるなら "ordering"、選択肢がない短答・語句記述なら "descriptive"、採点基準が必要な自由記述・論述・英作文なら "essay" にしてください。
+9. 【問題タイプ（type）の厳密判定ルール - 選択肢問題を「記述」と誤認することは絶対に禁止！】:
+   ・正解（correctAnswer）がアルファベット1文字（a, b, c, d / A, B, C, D等）、数字1文字（1, 2, 3, 4等）、カタカナ1文字（ア, イ, ウ, エ等）である場合は、問題文または長文末に選択肢が存在する選択問題です。絶対に type を "descriptive" や "essay" にせず、必ず "selection" にしてください。
+   ・長文の空所補充問題であっても、選択肢記号から選ぶ形式であれば必ず type は "selection" です。
+   ・type: "selection" の場合は、options 配列に ["a", "b", "c", "d"] のように選択肢記号を必ず含めてください。options 配列を空にしてはいけません。
+   ・"descriptive" は、選択肢が全く存在せず、英単語（例: "environment"）や歴史用語（例: "織田信長"）、漢字の書き取りなど、受験生が語句を直接記入・抜き出しする問題のみに限定してください。正解が1文字の記号（a, b, c, d等）のものを "descriptive" にすることは重大な誤りです。
+   ・"essay" は、理由説明・要約・英作文・論述など、文章を書かせる問題のみに限定してください。
 10. カタカナ選択肢はOCRで漢字に誤変換しないでください。特に選択肢記号の「カ」は漢字の「力」ではなく必ず「カ」、「オ」は漢字の「才」ではなく必ず「オ」として出力してください。
 
 【出力構造】
@@ -3331,6 +3405,7 @@ ${expectedQuestionCount ? `この大問には少なくとも ${expectedQuestionC
 ・「(43)(44) 66」「(45)(46) 48」のような行が連続している場合、各行をすべて items に入れてください。
 ・「設問1 5」「設問2 3」「設問3 1」のような行が連続している場合、各行をすべて items に入れてください。設問2だけを代表として出力することは禁止です。
 ・「設問1 2（早良親王）」のように、小さい番号（通常1〜10）の右に括弧書きの語句がある行は、受験生が答えるのは番号だけです。この場合 answer は必ず "2" のような番号のみ、answerText は "早良親王"、answerFormat は "choice_number" にしてください。
+・解答が "a", "b", "c", "d" などのアルファベット記号、"1", "2", "3", "4" などの数字記号、"ア", "イ", "ウ", "エ" などのカタカナ記号である場合は【必ず選択問題】です。answer にはその記号（例: "b"）のみを入れ、answerFormat は "choice_number" にしてください。
 ・「設問2 3（平成天皇）」「設問3 5（承和の変）」のような形式も同じです。括弧内の語句を correctAnswer にしてはいけません。
 ・ただし「(1)(2) 50（帥升）」「(3)(4) 46（『後漢書』東夷伝）」「(9)(10) 74（山上憶良）」のような2桁以上の番号は、選択肢番号ではなく解答一覧・語句一覧の参照番号です。answer は "50" のように抽出してよいが、answerFormat は空文字、type/options は選択問題扱いにしないでください。
 ・「(A) ガリア」「(B) シトー」「(ア) 商鞅」のように、記号ラベルと語句が並ぶ行も解答一覧の一部です。A/B/C/ア/イ等のラベルを id とし、右側の語句を answer として items に入れてください。
@@ -3456,7 +3531,12 @@ ${requiredQuestionRule}
 8. 必ず以下のJSON構造（オブジェクト1つ）のみを出力してください。
 9. 画像からの読み取りミス（OCRミス）がないよう、特に記号や数値は慎重に確認してください。
 10. 語句・文・選択肢を正しい順番に並べ替える問題は、必ず \`type\` を "ordering" にしてください。この場合、\`correctAnswer\` は正しい順番をカンマ区切りで出力してください（例: "c,a,d,b"）。順序が採点対象ではない複数選択だけ "selection_multi" を使ってください。
-11. 問題タイプは厳密に分類してください。選択肢があり正解が1つなら "selection"、選択肢があり順不同の複数正解なら "selection_multi"、選択肢を正しい順に並べるなら "ordering"、選択肢がない短答・語句記述なら "descriptive"、採点基準が必要な自由記述・論述・英作文なら "essay" にしてください。
+11. 【問題タイプ（type）の厳密判定ルール - 選択肢問題を「記述」と誤認することは絶対に禁止！】:
+    ・正解がアルファベット1文字（a, b, c, d / A, B, C, D等）、数字1文字（1, 2, 3, 4等）、カタカナ1文字（ア, イ, ウ, エ等）である場合は、問題文または長文末に選択肢が存在する選択問題です。絶対に type を "descriptive" や "essay" にせず、必ず "selection" にしてください。
+    ・長文の空所補充問題（例: 空欄[1]に入る適切な語句をa〜dから選べ）であっても、選択肢記号から選ぶ形式であれば必ず type は "selection" です。
+    ・type: "selection" の場合は、options 配列に ["a", "b", "c", "d"] のように選択肢記号を必ず含めてください。options 配列を空にしてはいけません。
+    ・"descriptive" は、選択肢が全く存在せず、英単語（例: "environment"）や歴史用語（例: "織田信長"）、漢字の書き取りなど、受験生が語句を直接手書きで記入・抜き出しする問題のみに限定してください。正解が1文字の記号（a, b, c, d等）のものを "descriptive" にすることは重大な誤りです。
+    ・"essay" は、理由説明・要約・英作文・論述など、文章を書かせる問題のみに限定してください。
 12. カタカナ選択肢はOCRで漢字に誤変換しないでください。特に選択肢記号の「カ」は漢字の「力」ではなく必ず「カ」、「オ」は漢字の「才」ではなく必ず「オ」として出力してください。
 ${isJapanese ? `13. 漢字の書き取り・漢字表記・漢字に直す問題は、自動採点不能です。type は "descriptive" のまま、answerIssue と answerFormat に必ず "kanji_self_grade" を入れてください。` : ""}
 
