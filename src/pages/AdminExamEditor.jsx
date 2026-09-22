@@ -559,6 +559,8 @@ function AdminExamEditor() {
     const savedSnapshotRef = useRef('');
     const skipUnsavedCheckRef = useRef(true);
     const dirtyCheckTimerRef = useRef(null);
+    const questionsCsvInputRef = useRef(null);
+    const sectionsCsvInputRef = useRef(null);
 
     const [availableDrafts, setAvailableDrafts] = useState([]);
 
@@ -4787,17 +4789,37 @@ function AdminExamEditor() {
                 id: effectiveExamId,
                 structure: currentExam.structure || []
             });
-            setCsvPreviewTab('all');
-            setCsvPreviewModal({
-                type: 'questions',
-                title: '【小問解説CSV】インポート確認プレビュー',
-                fileName: file.name,
-                result: previewResult
-            });
+
+            const applyResult = applyImportQuestionsCsv(previewResult, currentExam);
+            if (applyResult) {
+                examDataRef.current = applyResult.nextExamData;
+                setExamData(applyResult.nextExamData);
+                setHasUnsavedChanges(true);
+                if (applyResult.nextExamData?.structure) {
+                    saveGenerationDraft(applyResult.nextExamData.structure, '小問解説CSVインポート即時反映');
+                }
+
+                if (applyResult.stats.updatedCount > 0) {
+                    alert(
+                        `小問解説CSVを即座に反映しました！\n\n` +
+                        `・更新: ${applyResult.stats.updatedCount}件\n` +
+                        `・スキップ（差分なし）: ${applyResult.stats.skippedCount}件\n` +
+                        `・エラー（未反映）: ${applyResult.stats.errorCount}件\n\n` +
+                        `※ 画面上の解説が更新されました。右上の「保存」ボタンを押してデータベースに保存してください。`
+                    );
+                } else {
+                    const errorDetail = previewResult.errors?.length > 0 ? `\n\n【詳細】\n${previewResult.errors.slice(0, 3).join('\n')}` : '';
+                    alert(
+                        `CSVの更新対象がありませんでした（0件更新）。\n\n` +
+                        `・スキップ（変更なし）: ${applyResult.stats.skippedCount}件\n` +
+                        `・エラー: ${applyResult.stats.errorCount}件${errorDetail}`
+                    );
+                }
+            }
         } catch (err) {
-            alert('小問解説CSVの読み込みに失敗しました：\n' + err.message);
+            alert('小問解説CSVの読み込み・反映に失敗しました：\n' + err.message);
         } finally {
-            e.target.value = '';
+            if (e.target) e.target.value = '';
         }
     };
 
@@ -4822,17 +4844,37 @@ function AdminExamEditor() {
                 id: effectiveExamId,
                 structure: currentExam.structure || []
             });
-            setCsvPreviewTab('all');
-            setCsvPreviewModal({
-                type: 'sections',
-                title: '【大問詳細解説CSV】インポート確認プレビュー',
-                fileName: file.name,
-                result: previewResult
-            });
+
+            const applyResult = applyImportSectionsAnalysisCsv(previewResult, currentExam);
+            if (applyResult) {
+                examDataRef.current = applyResult.nextExamData;
+                setExamData(applyResult.nextExamData);
+                setHasUnsavedChanges(true);
+                if (applyResult.nextExamData?.structure) {
+                    saveGenerationDraft(applyResult.nextExamData.structure, '大問詳細解説CSVインポート即時反映');
+                }
+
+                if (applyResult.stats.updatedCount > 0) {
+                    alert(
+                        `大問詳細解説CSVを即座に反映しました！\n\n` +
+                        `・更新: ${applyResult.stats.updatedCount}件\n` +
+                        `・スキップ（差分なし）: ${applyResult.stats.skippedCount}件\n` +
+                        `・エラー（未反映）: ${applyResult.stats.errorCount}件\n\n` +
+                        `※ 画面上の解説が更新されました。右上の「保存」ボタンを押してデータベースに保存してください。`
+                    );
+                } else {
+                    const errorDetail = previewResult.errors?.length > 0 ? `\n\n【詳細】\n${previewResult.errors.slice(0, 3).join('\n')}` : '';
+                    alert(
+                        `CSVの更新対象がありませんでした（0件更新）。\n\n` +
+                        `・スキップ（変更なし）: ${applyResult.stats.skippedCount}件\n` +
+                        `・エラー: ${applyResult.stats.errorCount}件${errorDetail}`
+                    );
+                }
+            }
         } catch (err) {
-            alert('大問詳細解説CSVの読み込みに失敗しました：\n' + err.message);
+            alert('大問詳細解説CSVの読み込み・反映に失敗しました：\n' + err.message);
         } finally {
-            e.target.value = '';
+            if (e.target) e.target.value = '';
         }
     };
 
@@ -5131,15 +5173,20 @@ function AdminExamEditor() {
                                                         >
                                                             📤 小問解説CSVをエクスポート
                                                         </button>
-                                                        <label className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => questionsCsvInputRef.current?.click()}
+                                                            className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2"
+                                                        >
                                                             📥 小問解説CSVをインポート
-                                                            <input
-                                                                type="file"
-                                                                accept=".csv"
-                                                                className="hidden"
-                                                                onChange={handleQuestionsCsvFileSelect}
-                                                            />
-                                                        </label>
+                                                        </button>
+                                                        <input
+                                                            ref={questionsCsvInputRef}
+                                                            type="file"
+                                                            accept=".csv,text/csv"
+                                                            className="hidden"
+                                                            onChange={handleQuestionsCsvFileSelect}
+                                                        />
                                                     </div>
                                                 </div>
 
@@ -5267,15 +5314,20 @@ function AdminExamEditor() {
                                                         >
                                                             📤 大問詳細解説CSVをエクスポート
                                                         </button>
-                                                        <label className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => sectionsCsvInputRef.current?.click()}
+                                                            className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 hover:bg-green-700 transition-all cursor-pointer flex items-center gap-2"
+                                                        >
                                                             📥 大問詳細解説CSVをインポート
-                                                            <input
-                                                                type="file"
-                                                                accept=".csv"
-                                                                className="hidden"
-                                                                onChange={handleSectionsCsvFileSelect}
-                                                            />
-                                                        </label>
+                                                        </button>
+                                                        <input
+                                                            ref={sectionsCsvInputRef}
+                                                            type="file"
+                                                            accept=".csv,text/csv"
+                                                            className="hidden"
+                                                            onChange={handleSectionsCsvFileSelect}
+                                                        />
                                                     </div>
                                                 </div>
 
