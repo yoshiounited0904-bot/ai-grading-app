@@ -489,6 +489,8 @@ function AdminExamEditor() {
     const [bulkSectionAnalysisProgress, setBulkSectionAnalysisProgress] = useState({ current: 0, total: 0 });
     const [isBulkGeneratingSections, setIsBulkGeneratingSections] = useState(false);
     const [bulkSectionsProgress, setBulkSectionsProgress] = useState({ current: 0, total: 0 });
+    const [isBulkGeneratingExplanationsOnly, setIsBulkGeneratingExplanationsOnly] = useState(false);
+    const [bulkExplanationsOnlyProgress, setBulkExplanationsOnlyProgress] = useState({ current: 0, total: 0 });
     const [bulkIncludeVocab, setBulkIncludeVocab] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploadingQuestion, setUploadingQuestion] = useState(false);
@@ -511,8 +513,10 @@ function AdminExamEditor() {
     const [essayModelAnswerLoading, setEssayModelAnswerLoading] = useState({});
     const [essayModelAnswerPreview, setEssayModelAnswerPreview] = useState(null);
     const [customPromptType, setCustomPromptType] = useState('auto');
-    const [questionsPromptType, setQuestionsPromptType] = useState('auto');
-    const [sectionsPromptType, setSectionsPromptType] = useState('auto');
+    const [questionsPromptMode, setQuestionsPromptMode] = useState('verify');
+    const [questionsPromptSubject, setQuestionsPromptSubject] = useState('auto');
+    const [sectionsPromptMode, setSectionsPromptMode] = useState('verify');
+    const [sectionsPromptSubject, setSectionsPromptSubject] = useState('auto');
     const [csvPreviewModal, setCsvPreviewModal] = useState(null);
     const [csvPreviewTab, setCsvPreviewTab] = useState('all');
 
@@ -1513,6 +1517,8 @@ function AdminExamEditor() {
                     finalQFiles,
                     finalAFiles,
                     {
+                        useNativePdf: options.useNativePdf,
+                        usePro: options.usePro,
                         collectedMetadata: stepPdfMetadata,
                         onWarning: (msg) => stepPdfWarnings.push(msg),
                         onChunk: async (partialSection, chunkInfo) => {
@@ -1544,6 +1550,7 @@ function AdminExamEditor() {
                     buildSectionAnalysisInstruction(baseInstruction, normalizedSectionResult),
                     examData?.subject || subject || '',
                     {
+                        useNativePdf: options.useNativePdf,
                         collectedMetadata: stepPdfMetadata,
                         onWarning: (msg) => stepPdfWarnings.push(msg)
                     }
@@ -1785,7 +1792,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleBulkGenerateSections = async (includeAnalysis = true, includeExplanations = true) => {
+    const handleBulkGenerateSections = async (includeAnalysis = true, includeExplanations = true, options = {}) => {
         if (!examId) {
             alert('IDを入力してください。');
             return;
@@ -1827,6 +1834,8 @@ function AdminExamEditor() {
                 setBulkSectionsProgress({ current: i, total: sectionCount });
                 let failureMessage = '';
                 const success = await handleGenerateSection(i, true, bulkIncludeVocab, includeAnalysis, includeExplanations, {
+                    useNativePdf: options.useNativePdf,
+                    usePro: options.usePro,
                     onError: (message) => {
                         failureMessage = message;
                     }
@@ -1857,6 +1866,73 @@ function AdminExamEditor() {
         } finally {
             setIsBulkGeneratingSections(false);
             setBulkSectionsProgress({ current: 0, total: 0 });
+        }
+    };
+
+    const handleBulkGenerateAllNativePdf = async () => {
+        if (!confirm(`全 ${sectionCount} つの大問データを【Gemini 3.1 Pro ＆ Native PDF】で全自動一括生成します。\n（構造抽出 ➔ 小問解説 ➔ 詳細解説 を全大問順番に実行します）\n※処理には数分かかる場合があります。よろしいですか？`)) return;
+        return handleBulkGenerateSections(true, true, { useNativePdf: true, usePro: true });
+    };
+
+    const handleBulkGenerateStructureOnlyNativePdf = async () => {
+        if (!confirm(`全 ${sectionCount} つの大問の【構造・正解・配点のみ】を【Gemini 3.8 Flash ＆ Native PDF】で一括生成します。\n（テキストレイヤー直読で高速抽出します。完了後に正解をご確認いただけます）\nよろしいですか？`)) return;
+        return handleBulkGenerateSections(false, false, { useNativePdf: true });
+    };
+
+    const handleBulkGenerateExplanationsOnlyNativePdf = async () => {
+        if (!examData || !examData.structure || examData.structure.length === 0) {
+            alert('大問の構成データが見つかりません。先にStep 1（構造・正解・配点）を実行してください。');
+            return;
+        }
+
+        const validSectionNums = [];
+        for (let i = 1; i <= sectionCount; i++) {
+            const sec = examData?.structure?.[i - 1];
+            if (sec && Array.isArray(sec.questions) && sec.questions.length > 0) {
+                validSectionNums.push(i);
+            }
+        }
+
+        if (validSectionNums.length === 0) {
+            alert('小問データが存在する大問がありません。先にStep 1（構造・正解・配点）を実行してください。');
+            return;
+        }
+
+        if (!confirm(`全 ${validSectionNums.length} つの大問の小問解説を【Gemini 3.1 Pro ＆ Native PDF】で一括生成します。\n（確定した正解データを維持し、各大問の小問解説を順番に作成します）\nよろしいですか？`)) {
+            return;
+        }
+
+        setIsBulkGeneratingExplanationsOnly(true);
+        setBulkExplanationsOnlyProgress({ current: 0, total: validSectionNums.length });
+
+        try {
+            const failures = [];
+            for (let idx = 0; idx < validSectionNums.length; idx++) {
+                const secNum = validSectionNums[idx];
+                setBulkExplanationsOnlyProgress({ current: idx + 1, total: validSectionNums.length });
+                try {
+                    await handleGenerateOnlyExplanations(secNum, false, { useNativePdf: true, usePro: true });
+                } catch (secError) {
+                    console.error(`Bulk explanations failed for section ${secNum}:`, secError);
+                    failures.push(`第${secNum}問`);
+                }
+
+                if (idx < validSectionNums.length - 1) {
+                    await new Promise(res => setTimeout(res, 2500));
+                }
+            }
+
+            if (failures.length > 0) {
+                alert(`${validSectionNums.length - failures.length}件の大問の小問解説生成が完了しました。\n失敗: ${failures.join(', ')}`);
+            } else {
+                alert('全大問の小問解説（Gemini 3.1 Pro）の一括生成が完了しました！');
+            }
+        } catch (error) {
+            console.error("Bulk explanations error:", error);
+            alert('小問解説の一括生成中にエラーが発生しました: ' + error.message);
+        } finally {
+            setIsBulkGeneratingExplanationsOnly(false);
+            setBulkExplanationsOnlyProgress({ current: 0, total: 0 });
         }
     };
 
@@ -3970,7 +4046,7 @@ function AdminExamEditor() {
         }
     };
 
-    const handleBulkGenerateSectionAnalyses = async () => {
+    const handleBulkGenerateSectionAnalyses = async (options = {}) => {
         if (!examData || !examData.structure) return;
 
         const tasks = [];
@@ -3985,7 +4061,8 @@ function AdminExamEditor() {
             return;
         }
 
-        if (!confirm('各大問の「詳細解説」をAIで一括生成します。これには時間がかかる場合があります。\n※すでに入力されている詳細解説もすべて上書きされます。\nよろしいですか？')) return;
+        const modeLabel = options.useNativePdf ? '【Gemini 3.1 Pro ＆ Native PDF】' : 'AI';
+        if (!confirm(`各大問の「詳細解説」を${modeLabel}で一括生成します。これには時間がかかる場合があります。\n※すでに入力されている詳細解説もすべて上書きされます。\nよろしいですか？`)) return;
 
         setBulkGeneratingSectionAnalyses(true);
         setBulkSectionAnalysisProgress({ current: 0, total: tasks.length });
@@ -4020,7 +4097,10 @@ function AdminExamEditor() {
                         finalQFiles,
                         finalAFiles,
                         buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sIdx + 1, section), section),
-                        examData?.subject || ''
+                        examData?.subject || '',
+                        {
+                            useNativePdf: options.useNativePdf,
+                        }
                     ));
                     handleStructureChange(sIdx, null, 'sectionAnalysis', validateGeneratedText(newAnalysis, `第${section.id}問の詳細解説`));
                 } catch (err) {
@@ -4044,11 +4124,15 @@ function AdminExamEditor() {
             }
             alert('大問詳細解説の一括生成が完了しました！');
         } catch (error) {
-            alert('一括生成中にエラーが発生しました:\n' + error.message);
+            alert('詳細解説の一括生成に失敗しました:\n' + error.message);
         } finally {
             setBulkGeneratingSectionAnalyses(false);
             setBulkSectionAnalysisProgress({ current: 0, total: 0 });
         }
+    };
+
+    const handleBulkGenerateSectionAnalysesNativePdf = async () => {
+        return handleBulkGenerateSectionAnalyses({ useNativePdf: true });
     };
 
     const handleRegenerateSectionAnalysis = async (sIdx, section, options = {}) => {
@@ -4115,7 +4199,7 @@ function AdminExamEditor() {
     };
 
     const handleGenerateExplanationsOnlyNativePdf = async (sectionNum) => {
-        if (!confirm(`大問${sectionNum}の小問解説を【Gemini 2.5 Pro ＆ Native PDF】で生成しますか？\n（既存の小問構造・正解データを維持したまま、PDF本文に即して深い解説を作成します）`)) return;
+        if (!confirm(`大問${sectionNum}の小問解説を【Gemini 3.1 Pro ＆ Native PDF】で生成しますか？\n（既存の小問構造・正解データを維持したまま、PDF本文に即して深い解説を作成します）`)) return;
         return handleGenerateOnlyExplanations(sectionNum, false, { useNativePdf: true, usePro: true });
     };
 
@@ -4686,10 +4770,12 @@ function AdminExamEditor() {
                                             examData.subject.includes('古文') ||
                                             examData.subject.includes('漢文')
                                         )) || subjectEn === 'japanese';
-                                        const effectiveQKey = questionsPromptType === 'auto'
-                                            ? (isJapaneseExam ? 'japanese_questions' : 'standard_questions')
-                                            : questionsPromptType;
-                                        const qPromptConfig = EXTERNAL_AI_PROMPTS[effectiveQKey] || EXTERNAL_AI_PROMPTS.japanese_questions;
+
+                                        const effectiveQSubject = questionsPromptSubject === 'auto'
+                                            ? (isJapaneseExam ? 'japanese' : 'standard')
+                                            : questionsPromptSubject;
+                                        const effectiveQKey = `${effectiveQSubject}_questions${questionsPromptMode === 'verify' ? '_verify' : ''}`;
+                                        const qPromptConfig = EXTERNAL_AI_PROMPTS[effectiveQKey] || EXTERNAL_AI_PROMPTS.japanese_questions_verify;
 
                                         return (
                                             <div className="bg-white rounded-2xl border border-navy-blue/15 p-6 shadow-sm space-y-5 flex flex-col justify-between">
@@ -4712,7 +4798,7 @@ function AdminExamEditor() {
                                                         <button
                                                             type="button"
                                                             onClick={handleExportQuestionsCsvClick}
-                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2"
+                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2 cursor-pointer"
                                                         >
                                                             📤 小問解説CSVをエクスポート
                                                         </button>
@@ -4730,29 +4816,30 @@ function AdminExamEditor() {
 
                                                 {/* Prompt Box */}
                                                 <div className="bg-navy-blue/5 p-4 rounded-2xl border border-navy-blue/10 space-y-3 mt-4">
+                                                    {/* Mode Selector & Copy Button */}
                                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                                         <div className="flex items-center gap-1 p-1 bg-navy-blue/10 rounded-xl">
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setQuestionsPromptType('japanese_questions')}
-                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
-                                                                    effectiveQKey === 'japanese_questions'
+                                                                onClick={() => setQuestionsPromptMode('verify')}
+                                                                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                                                    questionsPromptMode === 'verify'
                                                                         ? 'bg-white text-navy-blue shadow-sm'
                                                                         : 'text-navy-blue/60 hover:text-navy-blue'
                                                                 }`}
                                                             >
-                                                                📖 国語用
+                                                                🔍 既存解説の検証・修正用
                                                             </button>
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setQuestionsPromptType('standard_questions')}
-                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
-                                                                    effectiveQKey === 'standard_questions'
+                                                                onClick={() => setQuestionsPromptMode('create')}
+                                                                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                                                    questionsPromptMode === 'create'
                                                                         ? 'bg-white text-navy-blue shadow-sm'
                                                                         : 'text-navy-blue/60 hover:text-navy-blue'
                                                                 }`}
                                                             >
-                                                                🌐 標準 / 英語長文用
+                                                                ✨ 新規作成用
                                                             </button>
                                                         </div>
                                                         <button
@@ -4762,16 +4849,48 @@ function AdminExamEditor() {
                                                                 navigator.clipboard.writeText(qPromptConfig.prompt);
                                                                 alert(`【${qPromptConfig.name}】のプロンプトをコピーしました！`);
                                                             }}
-                                                            className="px-3 py-1 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1"
+                                                            className="px-3.5 py-1.5 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1 cursor-pointer"
                                                         >
                                                             📋 プロンプトをコピー
                                                         </button>
                                                     </div>
+
+                                                    {/* Subject Selector */}
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-navy-blue/10">
+                                                        <div className="flex items-center gap-1 p-0.5 bg-white/70 rounded-lg border border-navy-blue/10">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setQuestionsPromptSubject('japanese')}
+                                                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                                                    effectiveQSubject === 'japanese'
+                                                                        ? 'bg-navy-blue text-white shadow-xs'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                📖 国語
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setQuestionsPromptSubject('standard')}
+                                                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                                                    effectiveQSubject === 'standard'
+                                                                        ? 'bg-navy-blue text-white shadow-xs'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                🌐 標準 / 英語長文
+                                                            </button>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-navy-blue/60">
+                                                            {questionsPromptMode === 'verify' ? '※ 変更不要と判断した行はテキストそのまま維持' : '※ 空欄行の解説を作成'}
+                                                        </span>
+                                                    </div>
+
                                                     <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
                                                         <span className="truncate">{qPromptConfig.name}（{qPromptConfig.shortDescription}）</span>
                                                         <span className="font-mono flex-shrink-0 ml-2">{qPromptConfig.prompt.length.toLocaleString()}文字</span>
                                                     </div>
-                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-44 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
+                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-48 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
                                                         {qPromptConfig.prompt}
                                                     </pre>
                                                 </div>
@@ -4787,10 +4906,12 @@ function AdminExamEditor() {
                                             examData.subject.includes('古文') ||
                                             examData.subject.includes('漢文')
                                         )) || subjectEn === 'japanese';
-                                        const effectiveSecKey = sectionsPromptType === 'auto'
-                                            ? (isJapaneseExam ? 'japanese_sections' : 'standard_sections')
-                                            : sectionsPromptType;
-                                        const secPromptConfig = EXTERNAL_AI_PROMPTS[effectiveSecKey] || EXTERNAL_AI_PROMPTS.japanese_sections;
+
+                                        const effectiveSecSubject = sectionsPromptSubject === 'auto'
+                                            ? (isJapaneseExam ? 'japanese' : 'standard')
+                                            : sectionsPromptSubject;
+                                        const effectiveSecKey = `${effectiveSecSubject}_sections${sectionsPromptMode === 'verify' ? '_verify' : ''}`;
+                                        const secPromptConfig = EXTERNAL_AI_PROMPTS[effectiveSecKey] || EXTERNAL_AI_PROMPTS.japanese_sections_verify;
 
                                         return (
                                             <div className="bg-white rounded-2xl border border-navy-blue/15 p-6 shadow-sm space-y-5 flex flex-col justify-between">
@@ -4813,7 +4934,7 @@ function AdminExamEditor() {
                                                         <button
                                                             type="button"
                                                             onClick={handleExportSectionsCsvClick}
-                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2"
+                                                            className="px-4 py-2.5 bg-navy-blue text-white rounded-xl text-xs font-black shadow-md shadow-navy-blue/20 hover:bg-navy-light transition-all flex items-center gap-2 cursor-pointer"
                                                         >
                                                             📤 大問詳細解説CSVをエクスポート
                                                         </button>
@@ -4831,29 +4952,30 @@ function AdminExamEditor() {
 
                                                 {/* Prompt Box */}
                                                 <div className="bg-navy-blue/5 p-4 rounded-2xl border border-navy-blue/10 space-y-3 mt-4">
+                                                    {/* Mode Selector & Copy Button */}
                                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                                         <div className="flex items-center gap-1 p-1 bg-navy-blue/10 rounded-xl">
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setSectionsPromptType('japanese_sections')}
-                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
-                                                                    effectiveSecKey === 'japanese_sections'
+                                                                onClick={() => setSectionsPromptMode('verify')}
+                                                                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                                                    sectionsPromptMode === 'verify'
                                                                         ? 'bg-white text-navy-blue shadow-sm'
                                                                         : 'text-navy-blue/60 hover:text-navy-blue'
                                                                 }`}
                                                             >
-                                                                📖 国語用
+                                                                🔍 既存解説の検証・修正用
                                                             </button>
                                                             <button
                                                                 type="button"
-                                                                onClick={() => setSectionsPromptType('standard_sections')}
-                                                                className={`px-2.5 py-1 rounded-lg text-xs font-black transition-all ${
-                                                                    effectiveSecKey === 'standard_sections'
+                                                                onClick={() => setSectionsPromptMode('create')}
+                                                                className={`px-3 py-1 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                                                                    sectionsPromptMode === 'create'
                                                                         ? 'bg-white text-navy-blue shadow-sm'
                                                                         : 'text-navy-blue/60 hover:text-navy-blue'
                                                                 }`}
                                                             >
-                                                                🌐 標準 / 英語長文用
+                                                                ✨ 新規作成用
                                                             </button>
                                                         </div>
                                                         <button
@@ -4863,16 +4985,48 @@ function AdminExamEditor() {
                                                                 navigator.clipboard.writeText(secPromptConfig.prompt);
                                                                 alert(`【${secPromptConfig.name}】のプロンプトをコピーしました！`);
                                                             }}
-                                                            className="px-3 py-1 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1"
+                                                            className="px-3.5 py-1.5 bg-navy-blue text-white rounded-lg text-xs font-black shadow-sm hover:bg-navy-light transition-all flex items-center gap-1 cursor-pointer"
                                                         >
                                                             📋 プロンプトをコピー
                                                         </button>
                                                     </div>
+
+                                                    {/* Subject Selector */}
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-navy-blue/10">
+                                                        <div className="flex items-center gap-1 p-0.5 bg-white/70 rounded-lg border border-navy-blue/10">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSectionsPromptSubject('japanese')}
+                                                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                                                    effectiveSecSubject === 'japanese'
+                                                                        ? 'bg-navy-blue text-white shadow-xs'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                📖 国語
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSectionsPromptSubject('standard')}
+                                                                className={`px-2.5 py-0.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                                                                    effectiveSecSubject === 'standard'
+                                                                        ? 'bg-navy-blue text-white shadow-xs'
+                                                                        : 'text-navy-blue/60 hover:text-navy-blue'
+                                                                }`}
+                                                            >
+                                                                🌐 標準 / 英語長文
+                                                            </button>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold text-navy-blue/60">
+                                                            {sectionsPromptMode === 'verify' ? '※ 変更不要と判断した行はテキストそのまま維持' : '※ 空欄行の解説を作成'}
+                                                        </span>
+                                                    </div>
+
                                                     <div className="flex items-center justify-between text-[11px] text-navy-blue/60 font-bold px-1">
                                                         <span className="truncate">{secPromptConfig.name}（{secPromptConfig.shortDescription}）</span>
                                                         <span className="font-mono flex-shrink-0 ml-2">{secPromptConfig.prompt.length.toLocaleString()}文字</span>
                                                     </div>
-                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-44 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
+                                                    <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-navy-blue/80 max-h-48 overflow-y-auto p-3 bg-white/80 rounded-xl border border-navy-blue/10 select-all">
                                                         {secPromptConfig.prompt}
                                                     </pre>
                                                 </div>
@@ -5620,60 +5774,160 @@ function AdminExamEditor() {
                             })}
                         </div>
                         <div className="pt-10 flex flex-col items-center border-t border-indigo-50 mt-8">
-                            <div className="bg-gradient-to-br from-indigo-50/50 to-white p-8 rounded-3xl border border-indigo-100 max-w-2xl w-full text-center space-y-6 shadow-sm">
+                            <div className="bg-gradient-to-br from-indigo-50/50 to-white p-8 rounded-3xl border border-indigo-100 max-w-4xl w-full text-center space-y-6 shadow-sm">
                                 <h4 className="text-lg font-black text-navy-blue flex items-center justify-center gap-3">
                                     <span className="text-2xl">✨</span>全大問一括処理
                                 </h4>
-                                <p className="text-xs text-gray-500 font-bold leading-relaxed max-w-md mx-auto">
+                                <p className="text-xs text-gray-500 font-bold leading-relaxed max-w-xl mx-auto">
                                     上記で設定した各大問ファイルと目標配点をもとに、すべての大問データを順番にAI生成します。<br/>
-                                    <span className="text-red-400 font-black mt-2 block">※すでに生成済みのデータがある場合は上書きされます。</span>
+                                    <span className="text-red-400 font-black mt-1 block">※すでに生成済みのデータがある場合は上書きされます。</span>
                                 </p>
 
-                                <div className="flex justify-center mb-6">
-                                    <label className="flex items-center gap-3 bg-white/80 backdrop-blur px-6 py-3 rounded-2xl border border-indigo-100 cursor-pointer hover:bg-white transition-all shadow-sm">
+                                {/* ⚡ Gemini 3.1 Pro & 3.8 Flash & Native PDF 高精度・横断一括セクション */}
+                                <div className="bg-gradient-to-br from-indigo-50/90 to-purple-50/60 border-2 border-indigo-200 p-6 rounded-3xl space-y-5 text-left shadow-xs">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-base">⚡</span>
+                                            <span className="text-xs font-black text-navy-blue tracking-wide">
+                                                Gemini 3.1 Pro ＆ 3.8 Flash ＆ Native PDF 高精度横断一括生成
+                                            </span>
+                                        </div>
+                                        <span className="text-[10px] font-bold text-indigo-700 bg-white px-2.5 py-1 rounded-full border border-indigo-200 shadow-xs">
+                                            最新最上位推論・文字劣化ゼロ
+                                        </span>
+                                    </div>
+
+                                    {/* 完全全自動ボタン */}
+                                    <div>
+                                        <button
+                                            onClick={handleBulkGenerateAllNativePdf}
+                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating}
+                                            className="w-full bg-gradient-to-r from-indigo-600 via-purple-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-6 rounded-2xl shadow-xl shadow-indigo-200 transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3 cursor-pointer"
+                                        >
+                                            {isBulkGeneratingSections ? (
+                                                <>
+                                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                                    <span>全自動一括生成中 ({bulkSectionsProgress.current}/{bulkSectionsProgress.total})...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <span className="text-xl">🚀</span>
+                                                    <span>【全自動】全大問の構造 ＋ 小問解説(Pro) ＋ 詳細解説(Pro) をまるごと一括生成</span>
+                                                </>
+                                            )}
+                                        </button>
+                                        <p className="text-[10px] text-gray-400 text-center mt-1.5 font-bold">
+                                            全ステップを一撃で完了させたい場合はこちらをご利用ください
+                                        </p>
+                                    </div>
+
+                                    {/* 運用フローごとの横断一括ボタン3種 */}
+                                    <div className="pt-2 border-t border-indigo-100/70">
+                                        <div className="text-[10px] font-black text-indigo-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                            <span>📋 運用手順ごとの横断一括生成（途中で検査・修正を挟む場合）</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                            <button
+                                                onClick={handleBulkGenerateStructureOnlyNativePdf}
+                                                disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating}
+                                                className="bg-white hover:bg-indigo-50 text-indigo-700 border-2 border-indigo-200 font-bold py-3 px-3 rounded-xl transition-all text-xs flex flex-col items-center justify-center gap-1 shadow-xs disabled:opacity-50 cursor-pointer"
+                                                title="Step 1 横断: 全大問の構造・正解・配点のみを高速一括抽出"
+                                            >
+                                                <div className="flex items-center gap-1 font-black">
+                                                    <span className="text-sm">⚡</span>
+                                                    <span>Step 1: 全大問の構造・正解</span>
+                                                </div>
+                                                <span className="text-[9px] text-gray-400">正解・配点のみ高速一括生成</span>
+                                            </button>
+                                            <button
+                                                onClick={handleBulkGenerateExplanationsOnlyNativePdf}
+                                                disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating}
+                                                className="bg-white hover:bg-purple-50 text-purple-700 border-2 border-purple-200 font-bold py-3 px-3 rounded-xl transition-all text-xs flex flex-col items-center justify-center gap-1 shadow-xs disabled:opacity-50 cursor-pointer"
+                                                title="Step 3 横断: 確定した正解を維持し、全大問の小問解説をGemini 3.1 Proで一括生成"
+                                            >
+                                                {isBulkGeneratingExplanationsOnly ? (
+                                                    <div className="flex items-center gap-2 py-1 font-black">
+                                                        <div className="w-4 h-4 border-2 border-purple-300 border-t-purple-700 rounded-full animate-spin"></div>
+                                                        <span>生成中 ({bulkExplanationsOnlyProgress.current}/{bulkExplanationsOnlyProgress.total})</span>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex items-center gap-1 font-black">
+                                                            <span className="text-sm">⚡</span>
+                                                            <span>Step 3: 全大問の小問解説 (Pro)</span>
+                                                        </div>
+                                                        <span className="text-[9px] text-gray-400">確定正解維持 ＆ 3.1 Pro深層推論</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                            <button
+                                                onClick={handleBulkGenerateSectionAnalysesNativePdf}
+                                                disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating}
+                                                className="bg-white hover:bg-emerald-50 text-emerald-700 border-2 border-emerald-200 font-bold py-3 px-3 rounded-xl transition-all text-xs flex flex-col items-center justify-center gap-1 shadow-xs disabled:opacity-50 cursor-pointer"
+                                                title="Step 5 横断: 全大問の詳細解説（大問分析）をGemini 3.1 Proで一括生成"
+                                            >
+                                                {bulkGeneratingSectionAnalyses ? (
+                                                    <div className="flex items-center gap-2 py-1 font-black">
+                                                        <div className="w-4 h-4 border-2 border-emerald-300 border-t-emerald-700 rounded-full animate-spin"></div>
+                                                        <span>生成中 ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex items-center gap-1 font-black">
+                                                            <span className="text-sm">⚡</span>
+                                                            <span>Step 5: 全大問の詳細解説 (Pro)</span>
+                                                        </div>
+                                                        <span className="text-[9px] text-gray-400">大問全体の思考プロセスを一括生成</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex justify-center my-4">
+                                    <label className="flex items-center gap-3 bg-white/80 backdrop-blur px-6 py-2.5 rounded-2xl border border-indigo-100 cursor-pointer hover:bg-white transition-all shadow-xs">
                                         <input 
                                             type="checkbox" 
                                             checked={bulkIncludeVocab}
                                             onChange={(e) => setBulkIncludeVocab(e.target.checked)}
-                                            className="w-5 h-5 rounded-lg border-2 border-indigo-200 text-indigo-600 focus:ring-indigo-500 transition-all"
+                                            className="w-4 h-4 rounded border-2 border-indigo-200 text-indigo-600 focus:ring-indigo-500 transition-all"
                                         />
-                                        <span className="text-xs font-black text-navy-blue">難単語（抽出）も同時に行う</span>
+                                        <span className="text-xs font-bold text-navy-blue">難単語（抽出）も同時に行う</span>
                                     </label>
                                 </div>
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                                    <button
-                                        onClick={() => handleBulkGenerateSections(true, true)}
-                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
-                                        className="bg-gradient-to-r from-indigo-600 to-navy-blue hover:from-indigo-700 hover:to-navy-light text-white font-black py-4 px-6 rounded-2xl shadow-xl shadow-indigo-200 transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
-                                    >
-                                        {isBulkGeneratingSections ? (
-                                            <>
-                                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                                <span>一括生成中...</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <span className="text-xl">🚀</span>
-                                                大問構成＋小問解説＋詳細解説を全自動生成
-                                            </>
-                                        )}
-                                    </button>
-                                    <button
-                                        onClick={() => handleBulkGenerateSections(false, true)}
-                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
-                                        className="bg-white text-indigo-600 hover:bg-indigo-50 border-2 border-indigo-100 font-black py-4 px-6 rounded-2xl shadow-sm transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
-                                    >
-                                        <span className="text-lg">✍️</span>
-                                        小問・正解・配点・小問解説だけ一括生成
-                                    </button>
-                                    <button
-                                        onClick={() => handleBulkGenerateSections(false, false)}
-                                        disabled={isBulkGeneratingSections || generating || Object.values(generatingSectionData).some(v => v)}
-                                        className="bg-white text-gray-700 hover:bg-gray-50 border-2 border-gray-200 font-black py-4 px-6 rounded-2xl shadow-sm transition-all text-sm disabled:opacity-50 flex items-center justify-center gap-3"
-                                    >
-                                        <span className="text-lg">🏗️</span>
-                                        小問・正解・配点だけ一括生成
-                                    </button>
+
+                                {/* 従来方式の一括処理（互換性維持） */}
+                                <div className="border-t border-gray-100 pt-4">
+                                    <div className="text-[10px] font-bold text-gray-400 mb-2">
+                                        従来方式（通常画像方式）での一括処理:
+                                    </div>
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                                        <button
+                                            onClick={() => handleBulkGenerateSections(true, true)}
+                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
+                                            className="bg-white hover:bg-gray-50 text-indigo-600 border border-indigo-100 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            <span className="text-sm">🚀</span>
+                                            通常全自動一括生成
+                                        </button>
+                                        <button
+                                            onClick={() => handleBulkGenerateSections(false, true)}
+                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
+                                            className="bg-white text-indigo-600 hover:bg-indigo-50 border border-indigo-100 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            <span className="text-sm">✍️</span>
+                                            通常小問解説まで一括
+                                        </button>
+                                        <button
+                                            onClick={() => handleBulkGenerateSections(false, false)}
+                                            disabled={isBulkGeneratingSections || isBulkGeneratingExplanationsOnly || bulkGeneratingSectionAnalyses || generating || Object.values(generatingSectionData).some(v => v)}
+                                            className="bg-white text-gray-600 hover:bg-gray-50 border border-gray-200 font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            <span className="text-sm">🏗️</span>
+                                            通常構造のみ一括
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -5687,7 +5941,7 @@ function AdminExamEditor() {
                             <span className="bg-navy-blue text-white w-8 h-8 rounded-xl flex items-center justify-center text-sm shadow-lg shadow-navy-blue/20">C</span>
                             設問内容・配点の編集
                         </h2>
-                        <div className="admin-mobile-actions flex flex-wrap items-center gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-100">
+                        <div className="admin-mobile-actions flex flex-wrap items-center gap-2 bg-gray-50 p-2 rounded-2xl border border-gray-100">
                             <div className="px-4 py-2">
                                 <span className="text-[10px] font-black text-gray-400 uppercase block leading-none mb-1">合計配点</span>
                                 <span className={`text-sm font-black ${totalAllocatedPoints !== (parseInt(examData?.max_score) || 100) ? 'text-red-500' : 'text-navy-blue'}`}>
@@ -5696,39 +5950,79 @@ function AdminExamEditor() {
                             </div>
                             <button
                                 onClick={handleRegeneratePoints}
-                disabled={regeneratingPoints || bulkGenerating || bulkGeneratingSectionAnalyses}
-                                className="bg-navy-blue text-white hover:bg-navy-light font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50"
+                                disabled={regeneratingPoints || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || isBulkGeneratingSections}
+                                className="bg-navy-blue text-white hover:bg-navy-light font-black py-2.5 px-3.5 rounded-xl shadow-md transition-all text-xs disabled:opacity-50"
                             >
                                 {regeneratingPoints ? '再計算中...' : '🤖 配点自動調整'}
                             </button>
+
+                            {/* ⚡ Gemini 3.1 Pro & Native PDF ボタン */}
                             <button
-                                onClick={handleBulkGenerateExplanations}
-                                disabled={bulkGenerating || bulkGeneratingSectionAnalyses || regeneratingPoints}
-                                className="bg-indigo-600 text-white hover:bg-indigo-700 font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                style={{ minWidth: '190px' }}
+                                onClick={handleBulkGenerateExplanationsOnlyNativePdf}
+                                disabled={isBulkGeneratingExplanationsOnly || bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingSections || regeneratingPoints}
+                                className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 font-black py-2.5 px-3.5 rounded-xl shadow-md shadow-purple-200 transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+                                title="確定した正解を維持し、全大問の小問解説をGemini 3.1 Pro ＆ Native PDFで一括生成"
                             >
-                                {bulkGenerating ? (
+                                {isBulkGeneratingExplanationsOnly ? (
                                     <>
                                         <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                        <span>生成中 ({bulkProgress.current}/{bulkProgress.total})</span>
+                                        <span>小問解説(Pro) ({bulkExplanationsOnlyProgress.current}/{bulkExplanationsOnlyProgress.total})</span>
                                     </>
                                 ) : (
-                                    '空の小問解説を一括生成'
+                                    <>
+                                        <span>⚡</span>
+                                        <span>全小問解説を一括生成 (3.1 Pro)</span>
+                                    </>
                                 )}
                             </button>
                             <button
-                                onClick={handleBulkGenerateSectionAnalyses}
-                                disabled={bulkGeneratingSectionAnalyses || regeneratingPoints}
-                                className="bg-purple-600 text-white hover:bg-purple-700 font-black py-3 px-4 rounded-xl shadow-lg transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2"
-                                style={{ minWidth: '160px' }}
+                                onClick={handleBulkGenerateSectionAnalysesNativePdf}
+                                disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
+                                className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white hover:from-emerald-700 hover:to-teal-800 font-black py-2.5 px-3.5 rounded-xl shadow-md shadow-emerald-200 transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+                                title="全大問の詳細解説（大問分析）をGemini 3.1 Pro ＆ Native PDFで一括生成"
                             >
                                 {bulkGeneratingSectionAnalyses ? (
                                     <>
                                         <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                        <span>詳細解説生成中 ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
+                                        <span>詳細解説(Pro) ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
                                     </>
                                 ) : (
-                                    '📄 全詳細解説を一括作成'
+                                    <>
+                                        <span>⚡</span>
+                                        <span>全詳細解説を一括作成 (3.1 Pro)</span>
+                                    </>
+                                )}
+                            </button>
+
+                            {/* 従来方式のボタン */}
+                            <button
+                                onClick={handleBulkGenerateExplanations}
+                                disabled={bulkGenerating || bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || isBulkGeneratingSections || regeneratingPoints}
+                                className="bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200 font-bold py-2.5 px-3 rounded-xl transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                title="従来の画像方式で空の小問解説のみを1問ずつ生成"
+                            >
+                                {bulkGenerating ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-indigo-400 border-t-indigo-700 rounded-full animate-spin"></div>
+                                        <span>通常生成中 ({bulkProgress.current}/{bulkProgress.total})</span>
+                                    </>
+                                ) : (
+                                    '通常空欄解説のみ'
+                                )}
+                            </button>
+                            <button
+                                onClick={handleBulkGenerateSectionAnalyses}
+                                disabled={bulkGeneratingSectionAnalyses || isBulkGeneratingExplanationsOnly || bulkGenerating || isBulkGeneratingSections || regeneratingPoints}
+                                className="bg-white text-purple-700 hover:bg-purple-50 border border-purple-200 font-bold py-2.5 px-3 rounded-xl transition-all text-xs disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                title="従来の通常画像方式で全詳細解説を一括作成"
+                            >
+                                {bulkGeneratingSectionAnalyses ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-purple-400 border-t-purple-700 rounded-full animate-spin"></div>
+                                        <span>通常詳細解説中 ({bulkSectionAnalysisProgress.current}/{bulkSectionAnalysisProgress.total})</span>
+                                    </>
+                                ) : (
+                                    '通常詳細解説のみ'
                                 )}
                             </button>
                         </div>
