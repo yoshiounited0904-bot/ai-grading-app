@@ -13,7 +13,9 @@ import {
     ensureExamStructureEssayCharacterCountElements,
     normalizeExamStructureChoiceLabels,
     normalizeExamStructureQuestionTypes,
-    normalizeScoringElement
+    normalizeScoringElement,
+    isSingleChoiceSymbol,
+    buildDefaultOptionsForChoiceAnswer
 } from '../utils/questionTypeNormalizer';
 import universityBaseData from '../data/universityBaseData.json';
 import { MARKETING_CONFIG } from '../config/marketingConfig';
@@ -2881,6 +2883,94 @@ function AdminExamEditor() {
         }
     };
 
+    const resolveDefaultOptionsForQuestion = (targetQuestion, targetSection, subject) => {
+        // 1. 正解記号からの推測
+        const defaultedFromAnswer = buildDefaultOptionsForChoiceAnswer(targetQuestion?.correctAnswer);
+        if (defaultedFromAnswer && defaultedFromAnswer.length > 0) {
+            return defaultedFromAnswer;
+        }
+        // 2. 同一大問内の既存パターンの継承
+        const existingPatternQuestion = (targetSection?.questions || []).find(q =>
+            q !== targetQuestion &&
+            Array.isArray(q.options) &&
+            q.options.length >= 2
+        );
+        if (existingPatternQuestion && Array.isArray(existingPatternQuestion.options)) {
+            return [...existingPatternQuestion.options];
+        }
+        // 3. 科目デフォルト
+        if (subject === 'english') {
+            return ['a', 'b', 'c', 'd'];
+        }
+        return ['1', '2', '3', '4'];
+    };
+
+    const handleConvertDescriptiveToSelection = (sectionIdx) => {
+        const currentExamData = examDataRef.current || examData;
+        const structure = currentExamData?.structure || [];
+        const targetSection = structure[sectionIdx];
+        if (!targetSection || !Array.isArray(targetSection.questions)) return;
+
+        let convertedCount = 0;
+        const newQuestions = targetSection.questions.map(q => {
+            const isDescriptive = q.type === 'descriptive' || !q.type;
+            const answer = String(q.correctAnswer || '').trim();
+            const hasChoiceAnswer = isSingleChoiceSymbol(answer);
+
+            if (isDescriptive && hasChoiceAnswer) {
+                convertedCount += 1;
+                const options = resolveDefaultOptionsForQuestion(q, targetSection, subjectEn);
+                const { scoringElements, gradingCriteria, gradingInstruction, ...rest } = q;
+                return {
+                    ...rest,
+                    type: 'selection',
+                    options,
+                };
+            }
+            return q;
+        });
+
+        if (convertedCount === 0) return;
+
+        const newStructure = structure.map((sec, idx) =>
+            idx === sectionIdx ? { ...sec, questions: newQuestions } : sec
+        );
+        const nextExamData = { ...currentExamData, structure: newStructure };
+        examDataRef.current = nextExamData;
+        setExamData(nextExamData);
+    };
+
+    const handleBulkConvertSectionToChoice = (sectionIdx, preset = 'a,b,c,d') => {
+        const currentExamData = examDataRef.current || examData;
+        const structure = currentExamData?.structure || [];
+        const targetSection = structure[sectionIdx];
+        if (!targetSection || !Array.isArray(targetSection.questions)) return;
+
+        const optionsList = preset.split(',').map(s => s.trim()).filter(Boolean);
+        let convertedCount = 0;
+        const newQuestions = targetSection.questions.map(q => {
+            if (q.type === 'descriptive' || !q.type) {
+                convertedCount += 1;
+                const { scoringElements, gradingCriteria, gradingInstruction, ...rest } = q;
+                return {
+                    ...rest,
+                    type: 'selection',
+                    options: optionsList,
+                };
+            }
+            return q;
+        });
+
+        if (convertedCount === 0) return;
+
+        const newStructure = structure.map((sec, idx) =>
+            idx === sectionIdx ? { ...sec, questions: newQuestions } : sec
+        );
+        const nextExamData = { ...currentExamData, structure: newStructure };
+        examDataRef.current = nextExamData;
+        setExamData(nextExamData);
+    };
+
     const handleStructureChange = (sectionIdx, qIdx, field, value) => {
         const currentExamData = examDataRef.current || examData || {};
         const newStructure = (currentExamData.structure || []).map(section => ({
@@ -2962,6 +3052,17 @@ function AdminExamEditor() {
                 }
                 if (field === 'answerIssue' && value === 'single_choice_multiple_answers') {
                     targetQuestion.type = 'selection';
+                }
+                if (field === 'type' && ['selection', 'selection_multi', 'ordering'].includes(value)) {
+                    targetQuestion.type = value;
+                    const currentOptions = Array.isArray(targetQuestion.options)
+                        ? targetQuestion.options
+                        : (typeof targetQuestion.options === 'string' && targetQuestion.options.trim())
+                            ? targetQuestion.options.split(',').map(s => s.trim()).filter(Boolean)
+                            : [];
+                    if (currentOptions.length === 0) {
+                        targetQuestion.options = resolveDefaultOptionsForQuestion(targetQuestion, targetSection, subjectEn);
+                    }
                 }
                 if (field === 'type' && value === 'essay') {
                     targetSection.questions[qIdx] = ensureEssayCharacterCountElement(targetQuestion);
@@ -6754,6 +6855,9 @@ function AdminExamEditor() {
                     <div className="space-y-12">
                         {examData?.structure?.map((section, sIdx) => {
                             const missingExplanationCount = (section.questions || []).filter(isQuestionExplanationMissing).length;
+                            const descriptiveWithChoiceCount = (section.questions || []).filter(
+                                q => (q.type === 'descriptive' || !q.type) && isSingleChoiceSymbol(q.correctAnswer)
+                            ).length;
                             const activeGenerationPhase = sectionGenerationPhases[sIdx + 1];
                             const activeGenerationLabel = GENERATION_PHASE_LABELS[activeGenerationPhase] || '';
                             return (
@@ -6783,6 +6887,17 @@ function AdminExamEditor() {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2">
+                                        {descriptiveWithChoiceCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleConvertDescriptiveToSelection(sIdx)}
+                                                className="text-[11px] font-black text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-3 py-2 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                                                title={`正解が記号(b, 2等)の記述問題${descriptiveWithChoiceCount}件を、選択問題(4択)に一括変換`}
+                                            >
+                                                <span>⚡</span>
+                                                <span>記号正解を選択化 ({descriptiveWithChoiceCount}問)</span>
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleGenerateAllExplanationsForSection(sIdx + 1)}
                                             disabled={generatingExplanationsOnly[sIdx + 1] || generating}
@@ -6816,7 +6931,42 @@ function AdminExamEditor() {
                                             <tr className="bg-gray-50/50 border-b border-gray-50">
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ID</th>
                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">ラベル</th>
-                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">形式</th>
+                                                 <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest min-w-[140px]">
+                                                     <div className="flex flex-col gap-1">
+                                                         <div className="flex items-center justify-between">
+                                                             <span>形式</span>
+                                                             {descriptiveWithChoiceCount > 0 && (
+                                                                 <button
+                                                                     type="button"
+                                                                     onClick={() => handleConvertDescriptiveToSelection(sIdx)}
+                                                                     className="normal-case text-[8px] font-black text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-1.5 py-0.5 rounded shadow-xs transition-all flex items-center gap-0.5 cursor-pointer"
+                                                                     title={`正解が記号の記述問題${descriptiveWithChoiceCount}件を選択問題に一括変換`}
+                                                                 >
+                                                                     <span>⚡ 選択化({descriptiveWithChoiceCount})</span>
+                                                                 </button>
+                                                             )}
+                                                         </div>
+                                                         <div className="flex items-center gap-1">
+                                                             <span className="text-[8px] text-gray-400 normal-case">一括:</span>
+                                                             <button
+                                                                 type="button"
+                                                                 onClick={() => handleBulkConvertSectionToChoice(sIdx, 'a,b,c,d')}
+                                                                 className="normal-case text-[8px] font-bold text-gray-600 hover:text-indigo-600 bg-white hover:bg-indigo-50 px-1 py-0.5 rounded border border-gray-200 transition-colors cursor-pointer"
+                                                                 title="大問内の記述問題をすべて4択(a-d)に変換"
+                                                             >
+                                                                 a-d
+                                                             </button>
+                                                             <button
+                                                                 type="button"
+                                                                 onClick={() => handleBulkConvertSectionToChoice(sIdx, '1,2,3,4')}
+                                                                 className="normal-case text-[8px] font-bold text-gray-600 hover:text-indigo-600 bg-white hover:bg-indigo-50 px-1 py-0.5 rounded border border-gray-200 transition-colors cursor-pointer"
+                                                                 title="大問内の記述問題をすべて4択(1-4)に変換"
+                                                             >
+                                                                 1-4
+                                                             </button>
+                                                         </div>
+                                                     </div>
+                                                 </th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">完答</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">配点</th>
                                                  <th className="px-6 py-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">正解</th>
@@ -6890,14 +7040,74 @@ function AdminExamEditor() {
                                                                 )}
                                                             </div>
                                                             {['selection', 'selection_multi', 'ordering'].includes(q.type) && (
-                                                                <input 
-                                                                    type="text" 
-                                                                    value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
-                                                                    onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
-                                                                    placeholder={q.type === 'ordering' ? "並び替え候補(a,b,c)" : "選択肢(a,b,c)"}
-                                                                    className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white transition-all shadow-sm" 
-                                                                    title="カンマ区切りで入力（例: a,b,c,d）"
-                                                                />
+                                                                <div className="space-y-1">
+                                                                    <input 
+                                                                        type="text" 
+                                                                        value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
+                                                                        onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
+                                                                        placeholder={q.type === 'ordering' ? "並び替え候補(a,b,c)" : "選択肢(a,b,c)"}
+                                                                        className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white transition-all shadow-sm" 
+                                                                        title="カンマ区切りで入力（例: a,b,c,d）"
+                                                                    />
+                                                                    <div className="flex flex-wrap items-center gap-1">
+                                                                        {[
+                                                                            { label: 'a-d', value: 'a,b,c,d' },
+                                                                            { label: 'a-e', value: 'a,b,c,d,e' },
+                                                                            { label: '1-4', value: '1,2,3,4' },
+                                                                            { label: '1-5', value: '1,2,3,4,5' },
+                                                                            { label: 'ア-エ', value: 'ア,イ,ウ,エ' },
+                                                                        ].map(preset => (
+                                                                            <button
+                                                                                key={preset.label}
+                                                                                type="button"
+                                                                                onClick={() => handleStructureChange(sIdx, qIdx, 'options', preset.value)}
+                                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-500 transition-colors border border-gray-200/60 cursor-pointer"
+                                                                                title={`選択肢を「${preset.value}」に設定`}
+                                                                            >
+                                                                                {preset.label}
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            {q.type === 'descriptive' && (
+                                                                <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                                                                    <span className="text-[9px] text-gray-400 font-bold">変換:</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                            const def = resolveDefaultOptionsForQuestion(q, section, subjectEn);
+                                                                            handleStructureChange(sIdx, qIdx, 'options', def.join(','));
+                                                                        }}
+                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors border border-purple-200 cursor-pointer"
+                                                                        title="形式を「選択(一つ選択)」にして正解記号から選択肢を自動セット"
+                                                                    >
+                                                                        ⚡ 選択化
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                            handleStructureChange(sIdx, qIdx, 'options', 'a,b,c,d');
+                                                                        }}
+                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
+                                                                        title="形式を「選択」にし、a,b,c,dをセット"
+                                                                    >
+                                                                        a-d
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                            handleStructureChange(sIdx, qIdx, 'options', '1,2,3,4');
+                                                                        }}
+                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
+                                                                        title="形式を「選択」にし、1,2,3,4をセット"
+                                                                    >
+                                                                        1-4
+                                                                    </button>
+                                                                </div>
                                                             )}
                                                             {['selection', 'selection_multi', 'descriptive'].includes(q.type) && (
                                                                 <select
