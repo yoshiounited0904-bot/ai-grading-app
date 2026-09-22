@@ -679,7 +679,7 @@ function AdminExamEditor() {
             pdf_path: pdfPathOverride ?? currentExamData?.pdf_path ?? '',
             max_score: parseInt(currentExamData?.max_score || 100),
             detailed_analysis: currentExamData?.detailed_analysis || '',
-            structure: normalizedStructure,
+            structure: cleanStructureForSave(normalizedStructure),
             passing_lines: currentExamData?.passing_lines || { A: 80, B: 70, C: 60, D: 40 },
             custom_layout: customLayout
         });
@@ -691,7 +691,7 @@ function AdminExamEditor() {
             dirtyCheckTimerRef.current = null;
         }
         savedSnapshotRef.current = snapshotOverride || buildEditorSnapshot();
-        skipUnsavedCheckRef.current = false;
+        skipUnsavedCheckRef.current = true;
         setHasUnsavedChanges(false);
     };
 
@@ -955,6 +955,13 @@ function AdminExamEditor() {
             const current = new URL(window.location.href);
             if (destination.origin !== current.origin || destination.href === current.href) return;
 
+            // Extra safety: double-check current snapshot against saved snapshot right now before blocking the user
+            const currentSnapshot = buildEditorSnapshot();
+            if (currentSnapshot === savedSnapshotRef.current) {
+                setHasUnsavedChanges(false);
+                return;
+            }
+
             const shouldLeave = window.confirm('未保存の変更があります。このページを離れると変更が失われます。移動しますか？');
             if (!shouldLeave) {
                 event.preventDefault();
@@ -976,14 +983,13 @@ function AdminExamEditor() {
         if (!examData) return;
 
         if (skipUnsavedCheckRef.current || !savedSnapshotRef.current) {
+            skipUnsavedCheckRef.current = false;
             const currentSnapshot = buildEditorSnapshot();
-            markCurrentStateAsSaved(currentSnapshot);
+            savedSnapshotRef.current = currentSnapshot;
+            setHasUnsavedChanges(false);
             return;
         }
 
-        // Large exam structures make JSON snapshot comparisons expensive.
-        // Mark dirty immediately for navigation safety, then verify after typing/rendering settles.
-        setHasUnsavedChanges(true);
         if (dirtyCheckTimerRef.current) {
             window.clearTimeout(dirtyCheckTimerRef.current);
         }
@@ -991,7 +997,7 @@ function AdminExamEditor() {
             const currentSnapshot = buildEditorSnapshot();
             setHasUnsavedChanges(currentSnapshot !== savedSnapshotRef.current);
             dirtyCheckTimerRef.current = null;
-        }, 350);
+        }, 200);
 
         return () => {
             if (dirtyCheckTimerRef.current) {
@@ -1010,6 +1016,8 @@ function AdminExamEditor() {
         subjectEn,
         type,
         masterStatus,
+        isAiChecked,
+        aiCheckedAt,
         durationMinutes,
         examData,
         customLayout,
@@ -2325,7 +2333,7 @@ function AdminExamEditor() {
                 : `保存に失敗しました:\n${error.message}`;
             alert(alertMsg);
         } else {
-            const savedSnapshot = JSON.stringify(payload);
+            const savedSnapshot = buildEditorSnapshot(normalizedStructure, null, finalPdfPath);
             const nextExamData = { ...currentExamData, pdf_path: finalPdfPath, structure: normalizedStructure };
             examDataRef.current = nextExamData;
             setExamData(nextExamData);
