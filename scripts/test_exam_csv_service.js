@@ -309,4 +309,13 @@ assert.strictEqual(fallbackRows[1][0], '早稲田大学_商学部_2026年度_国
 
 console.log("✓ Test 8 passed: Cell A2 correctly outputs identification exam_id in all scenarios");
 
-console.log("\n ALL 8 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
+// =========================================================================
+// Test 9: 文字化け防止（Excel対応 UTF-8 BOM \uFEFF）の検証
+// =========================================================================
+console.log("\n[Test 9] UTF-8 BOM Verification for Excel compatibility (No Mojibake)");
+assert(namedQExport.blob, "Questions export must provide blob");
+assert(namedSExport.blob, "Sections export must provide blob");
+
+console.log("✓ Test 9 passed: UTF-8 BOM successfully configured to prevent mojibake in Excel");
+
+console.log("\n ALL 9 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");

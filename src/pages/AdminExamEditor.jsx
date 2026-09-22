@@ -4471,9 +4471,9 @@ function AdminExamEditor() {
                 year: currentExam.year || year,
                 subject: currentExam.subject || subject
             };
-            const { filename, content } = exportQuestionsCsv(exportData);
-            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
+            const { filename, content, blob } = exportQuestionsCsv(exportData);
+            const exportBlob = blob || new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(exportBlob);
             const a = document.createElement('a');
             a.href = url;
             a.download = filename;
@@ -4511,9 +4511,9 @@ function AdminExamEditor() {
                 year: currentExam.year || year,
                 subject: currentExam.subject || subject
             };
-            const { filename, content } = exportSectionsAnalysisCsv(exportData);
-            const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
+            const { filename, content, blob } = exportSectionsAnalysisCsv(exportData);
+            const exportBlob = blob || new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(exportBlob);
             const a = document.createElement('a');
             a.href = url;
             a.download = filename;
