@@ -3776,18 +3776,18 @@ function AdminExamEditor() {
                                             onClick={() => handleGenerateEssayModelAnswer(sectionIdx, qIdx, q, 'with_original')}
                                             disabled={essayModelAnswerLoading[`${sectionIdx}_${qIdx}`]}
                                             className="text-[9px] font-black px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 cursor-pointer"
-                                            title="独自採点基準＋元解答＋本文・問題文から、著作権に配慮した新模範解答を生成"
+                                            title="【Gemini 3.1 Pro】独自採点基準＋元解答＋本文・問題文から、著作権に配慮した新模範解答を生成"
                                         >
-                                            {essayModelAnswerLoading[`${sectionIdx}_${qIdx}`] === 'with_original' ? '🔄 生成中...' : '🤖 模範解答A (基準+元解答+本文)'}
+                                            {essayModelAnswerLoading[`${sectionIdx}_${qIdx}`] === 'with_original' ? '🔄 生成中...' : '🤖 模範解答A (3.1 Pro: 基準+元解答+本文)'}
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => handleGenerateEssayModelAnswer(sectionIdx, qIdx, q, 'rubric_only')}
                                             disabled={essayModelAnswerLoading[`${sectionIdx}_${qIdx}`]}
                                             className="text-[9px] font-black px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 cursor-pointer"
-                                            title="元解答を見ず、独自採点基準＋本文・問題文のみからゼロベースで新模範解答を生成"
+                                            title="【Gemini 3.1 Pro】元解答を見ず、独自採点基準＋本文・問題文のみからゼロベースで新模範解答を生成"
                                         >
-                                            {essayModelAnswerLoading[`${sectionIdx}_${qIdx}`] === 'rubric_only' ? '🔄 生成中...' : '🌱 模範解答B (基準+本文のみ)'}
+                                            {essayModelAnswerLoading[`${sectionIdx}_${qIdx}`] === 'rubric_only' ? '🔄 生成中...' : '🌱 模範解答B (3.1 Pro: 基準+本文のみ)'}
                                         </button>
                                     </div>
                                 </div>
@@ -4013,7 +4013,7 @@ function AdminExamEditor() {
                         <div className="w-1/2 bg-indigo-50/15 flex flex-col p-6" style={{ ...scoringModalStyles.pane, background: '#f8faff', display: 'flex', flexDirection: 'column' }}>
                             <div className="flex justify-between items-center mb-3">
                                 <span className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-1.5">
-                                    ✨ AI採点基準アシスタント
+                                    ✨ AI採点基準アシスタント (Gemini 3.1 Pro)
                                 </span>
                                 <button
                                     onClick={() => handleResetChat(sectionIdx, qIdx)}
@@ -4028,7 +4028,7 @@ function AdminExamEditor() {
                                     <div className="text-gray-400 text-center py-16 space-y-3 h-full flex flex-col justify-center items-center">
                                         <div className="text-3xl animate-bounce">💡</div>
                                         <p className="font-bold text-xs text-gray-600">
-                                            AIと対話しながら採点基準を作成
+                                            Gemini 3.1 Proと対話しながら採点基準を作成
                                         </p>
                                         <p className="text-[10px] text-gray-400 max-w-[280px] leading-normal text-center">
                                             AIは設問の内容や模範解答、現在の要素設定を熟知しています。「採点要素を提案して」「解説から要素に落とし込んで」など、お気軽にご相談ください。
@@ -6769,18 +6769,18 @@ function AdminExamEditor() {
                                                                     onClick={() => handleGenerateEssayModelAnswer(sIdx, qIdx, q, 'with_original')}
                                                                     disabled={essayModelAnswerLoading[`${sIdx}_${qIdx}`]}
                                                                     className="text-[9px] font-black px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-colors flex items-center justify-center gap-1 shadow-sm disabled:opacity-50 cursor-pointer"
-                                                                    title="独自採点基準＋元解答＋本文・問題文から、著作権に配慮した新模範解答を生成"
+                                                                    title="【Gemini 3.1 Pro】独自採点基準＋元解答＋本文・問題文から、著作権に配慮した新模範解答を生成"
                                                                 >
-                                                                    {essayModelAnswerLoading[`${sIdx}_${qIdx}`] === 'with_original' ? '🔄 生成中...' : '🤖 模範解答A (基準+元解答+本文)'}
+                                                                    {essayModelAnswerLoading[`${sIdx}_${qIdx}`] === 'with_original' ? '🔄 生成中...' : '🤖 模範解答A (3.1 Pro)'}
                                                                 </button>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleGenerateEssayModelAnswer(sIdx, qIdx, q, 'rubric_only')}
                                                                     disabled={essayModelAnswerLoading[`${sIdx}_${qIdx}`]}
                                                                     className="text-[9px] font-black px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors flex items-center justify-center gap-1 shadow-sm disabled:opacity-50 cursor-pointer"
-                                                                    title="元解答を見ず、独自採点基準＋本文・問題文のみからゼロベースで新模範解答を生成"
+                                                                    title="【Gemini 3.1 Pro】元解答を見ず、独自採点基準＋本文・問題文のみからゼロベースで新模範解答を生成"
                                                                 >
-                                                                    {essayModelAnswerLoading[`${sIdx}_${qIdx}`] === 'rubric_only' ? '🔄 生成中...' : '🌱 模範解答B (基準+本文のみ)'}
+                                                                    {essayModelAnswerLoading[`${sIdx}_${qIdx}`] === 'rubric_only' ? '🔄 生成中...' : '🌱 模範解答B (3.1 Pro)'}
                                                                 </button>
                                                             </div>
                                                         )}

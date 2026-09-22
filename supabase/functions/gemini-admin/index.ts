@@ -3963,17 +3963,27 @@ async function handleConsultScoringElements(genAI: GoogleGenerativeAI, body: Rec
     })),
   ];
 
-  let model;
-  try {
-    model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-  } catch {
-    model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
-  }
+  const rubricChatModels = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-pro",
+    "gemini-2.5-pro",
+    "gemini-3.8-flash",
+  ];
 
-  // deno-lint-ignore no-explicit-any
-  const chat = (model as any).startChat({ history: chatHistory });
-  const chatResult = await chat.sendMessage(userMessage);
-  return chatResult.response.text();
+  let lastError: unknown;
+  for (const modelName of rubricChatModels) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      // deno-lint-ignore no-explicit-any
+      const chat = (model as any).startChat({ history: chatHistory });
+      const chatResult = await chat.sendMessage(userMessage);
+      return chatResult.response.text();
+    } catch (err) {
+      console.warn(`[gemini-admin] consultScoringElements failed with model ${modelName}:`, err);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("All models failed for consultScoringElements.");
 }
 
 async function handleTransformRubricToScoringElements(genAI: GoogleGenerativeAI, body: Record<string, unknown>) {
