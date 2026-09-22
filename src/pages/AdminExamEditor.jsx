@@ -513,8 +513,10 @@ function AdminExamEditor() {
     const [essayModelAnswerLoading, setEssayModelAnswerLoading] = useState({});
     const [essayModelAnswerPreview, setEssayModelAnswerPreview] = useState(null);
     const [customPromptType, setCustomPromptType] = useState('auto');
+    const [questionsPromptType, setQuestionsPromptType] = useState('auto');
     const [questionsPromptMode, setQuestionsPromptMode] = useState('verify');
     const [questionsPromptSubject, setQuestionsPromptSubject] = useState('auto');
+    const [sectionsPromptType, setSectionsPromptType] = useState('auto');
     const [sectionsPromptMode, setSectionsPromptMode] = useState('verify');
     const [sectionsPromptSubject, setSectionsPromptSubject] = useState('auto');
     const [csvPreviewModal, setCsvPreviewModal] = useState(null);
@@ -3022,7 +3024,7 @@ function AdminExamEditor() {
 
     const renderCsvPreviewModal = () => {
         if (!csvPreviewModal) return null;
-        const { type, title, result } = csvPreviewModal;
+        const { type, title, fileName, result } = csvPreviewModal;
         const { summary, items } = result;
 
         const filteredItems = (items || []).filter(item => {
@@ -3042,9 +3044,16 @@ function AdminExamEditor() {
                                 <span className="text-xl">{isQuestion ? '📝' : '📖'}</span>
                                 <h3 className="text-lg font-black text-navy-blue">{title}</h3>
                             </div>
-                            <p className="text-xs text-gray-500 mt-1 font-bold">
-                                対象：{university || ''} {faculty || ''} {year ? year + '年度' : ''} {subject || ''}（ID: {examId || '未設定'}）
-                            </p>
+                            <div className="flex items-center flex-wrap gap-2 mt-1">
+                                <p className="text-xs text-gray-500 font-bold">
+                                    対象：{university || ''} {faculty || ''} {year ? year + '年度' : ''} {subject || ''}（ID: {examId || '未設定'}）
+                                </p>
+                                {fileName && (
+                                    <span className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-2 py-0.5 rounded-md font-mono font-bold">
+                                        📄 {fileName}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                         <button
                             type="button"
@@ -4430,7 +4439,16 @@ function AdminExamEditor() {
             return;
         }
         try {
-            const { filename, content } = exportQuestionsCsv(currentExam);
+            const exportData = {
+                ...currentExam,
+                examId: currentExam.examId || currentExam.id || examId,
+                structure: currentExam.structure || structure || [],
+                university: currentExam.university || university,
+                faculty: currentExam.faculty || faculty,
+                year: currentExam.year || year,
+                subject: currentExam.subject || subject
+            };
+            const { filename, content } = exportQuestionsCsv(exportData);
             const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -4450,7 +4468,16 @@ function AdminExamEditor() {
             return;
         }
         try {
-            const { filename, content } = exportSectionsAnalysisCsv(currentExam);
+            const exportData = {
+                ...currentExam,
+                examId: currentExam.examId || currentExam.id || examId,
+                structure: currentExam.structure || structure || [],
+                university: currentExam.university || university,
+                faculty: currentExam.faculty || faculty,
+                year: currentExam.year || year,
+                subject: currentExam.subject || subject
+            };
+            const { filename, content } = exportSectionsAnalysisCsv(exportData);
             const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -4476,6 +4503,7 @@ function AdminExamEditor() {
                 setCsvPreviewModal({
                     type: 'questions',
                     title: '【小問解説CSV】インポート確認プレビュー',
+                    fileName: file.name,
                     result: previewResult
                 });
             } catch (err) {
@@ -4500,6 +4528,7 @@ function AdminExamEditor() {
                 setCsvPreviewModal({
                     type: 'sections',
                     title: '【大問詳細解説CSV】インポート確認プレビュー',
+                    fileName: file.name,
                     result: previewResult
                 });
             } catch (err) {

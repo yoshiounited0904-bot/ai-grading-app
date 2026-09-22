@@ -159,11 +159,12 @@ export const exportQuestionsCsv = ({ examId, structure = [], university = '', fa
         ...rows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\r\n');
 
-    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_');
-    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_');
-    const cleanYear = year ? `${year}年度_` : '';
-    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_');
-    const filename = `${cleanUni}_${cleanFac}_${cleanYear}${cleanSub}_小問解説.csv`.replace(/^_+|_+$/g, '');
+    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
+    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const nameParts = [cleanUni || '大学', cleanFac || '学部', cleanYear, cleanSub || '科目'].filter(Boolean);
+    const filename = `${nameParts.join('_')}_小問解説.csv`;
 
     return {
         filename: filename || 'questions_explanations.csv',
@@ -175,7 +176,22 @@ export const exportQuestionsCsv = ({ examId, structure = [], university = '', fa
 /**
  * 小問解説CSVの取り込み前検証（プレビュー）
  */
-export const previewImportQuestionsCsv = ({ csvText, currentExamId, currentStructure = [] }) => {
+export const previewImportQuestionsCsv = (arg1, arg2) => {
+    let csvText = '';
+    let currentExamId = '';
+    let currentStructure = [];
+
+    if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1) && arg1.csvText !== undefined) {
+        csvText = arg1.csvText || '';
+        currentExamId = arg1.currentExamId || arg1.examId || '';
+        currentStructure = arg1.currentStructure || arg1.structure || [];
+    } else {
+        csvText = typeof arg1 === 'string' ? arg1 : '';
+        const examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
+        currentExamId = examObj.examId || examObj.id || (typeof arg2 === 'string' ? arg2 : '');
+        currentStructure = examObj.structure || (Array.isArray(arg2) ? arg2 : []);
+    }
+
     const rows = parseCsvText(csvText);
     if (rows.length < 2) {
         throw new Error('CSVデータが空か、有効なデータ行が存在しません。');
@@ -346,7 +362,23 @@ export const previewImportQuestionsCsv = ({ csvText, currentExamId, currentStruc
 /**
  * 検証済み小問解説の適用
  */
-export const applyImportQuestionsCsv = ({ previewResult, currentStructure = [] }) => {
+export const applyImportQuestionsCsv = (arg1, arg2) => {
+    let previewResult;
+    let currentStructure = [];
+    let currentExam = {};
+
+    if (typeof arg1 === 'object' && arg1 !== null && arg1.previewResult !== undefined) {
+        previewResult = arg1.previewResult;
+        currentStructure = arg1.currentStructure || arg1.structure || [];
+        currentExam = arg1.currentExam || {};
+    } else {
+        previewResult = arg1;
+        if (typeof arg2 === 'object' && arg2 !== null) {
+            currentExam = arg2;
+            currentStructure = arg2.structure || (Array.isArray(arg2) ? arg2 : []);
+        }
+    }
+
     if (!previewResult || previewResult.type !== 'question') {
         throw new Error('無効な小問解説プレビュー結果です。');
     }
@@ -383,11 +415,22 @@ export const applyImportQuestionsCsv = ({ previewResult, currentStructure = [] }
         };
     });
 
+    const nextExamData = {
+        ...currentExam,
+        structure: newStructure
+    };
+
     return {
         newStructure,
+        nextExamData,
         updatedCount,
         skippedCount: previewResult.skipCount,
-        errorCount: previewResult.errorCount
+        errorCount: previewResult.errorCount,
+        stats: {
+            updatedCount,
+            skippedCount: previewResult.skipCount,
+            errorCount: previewResult.errorCount
+        }
     };
 };
 
@@ -424,11 +467,12 @@ export const exportSectionsAnalysisCsv = ({ examId, structure = [], university =
         ...rows.map(row => row.map(escapeCsvCell).join(','))
     ].join('\r\n');
 
-    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_');
-    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_');
-    const cleanYear = year ? `${year}年度_` : '';
-    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_');
-    const filename = `${cleanUni}_${cleanFac}_${cleanYear}${cleanSub}_大問詳細解説.csv`.replace(/^_+|_+$/g, '');
+    const cleanUni = (university || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanFac = (faculty || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const cleanYear = year ? (String(year).endsWith('年度') ? String(year) : `${year}年度`) : '';
+    const cleanSub = (subject || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+    const nameParts = [cleanUni || '大学', cleanFac || '学部', cleanYear, cleanSub || '科目'].filter(Boolean);
+    const filename = `${nameParts.join('_')}_大問詳細解説.csv`;
 
     return {
         filename: filename || 'sections_analysis.csv',
@@ -440,7 +484,22 @@ export const exportSectionsAnalysisCsv = ({ examId, structure = [], university =
 /**
  * 大問詳細解説CSVの取り込み前検証（プレビュー）
  */
-export const previewImportSectionsAnalysisCsv = ({ csvText, currentExamId, currentStructure = [] }) => {
+export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
+    let csvText = '';
+    let currentExamId = '';
+    let currentStructure = [];
+
+    if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1) && arg1.csvText !== undefined) {
+        csvText = arg1.csvText || '';
+        currentExamId = arg1.currentExamId || arg1.examId || '';
+        currentStructure = arg1.currentStructure || arg1.structure || [];
+    } else {
+        csvText = typeof arg1 === 'string' ? arg1 : '';
+        const examObj = (typeof arg2 === 'object' && arg2 !== null) ? arg2 : {};
+        currentExamId = examObj.examId || examObj.id || (typeof arg2 === 'string' ? arg2 : '');
+        currentStructure = examObj.structure || (Array.isArray(arg2) ? arg2 : []);
+    }
+
     const rows = parseCsvText(csvText);
     if (rows.length < 2) {
         throw new Error('CSVデータが空か、有効なデータ行が存在しません。');
@@ -594,7 +653,23 @@ export const previewImportSectionsAnalysisCsv = ({ csvText, currentExamId, curre
 /**
  * 検証済み大問詳細解説の適用
  */
-export const applyImportSectionsAnalysisCsv = ({ previewResult, currentStructure = [] }) => {
+export const applyImportSectionsAnalysisCsv = (arg1, arg2) => {
+    let previewResult;
+    let currentStructure = [];
+    let currentExam = {};
+
+    if (typeof arg1 === 'object' && arg1 !== null && arg1.previewResult !== undefined) {
+        previewResult = arg1.previewResult;
+        currentStructure = arg1.currentStructure || arg1.structure || [];
+        currentExam = arg1.currentExam || {};
+    } else {
+        previewResult = arg1;
+        if (typeof arg2 === 'object' && arg2 !== null) {
+            currentExam = arg2;
+            currentStructure = arg2.structure || (Array.isArray(arg2) ? arg2 : []);
+        }
+    }
+
     if (!previewResult || previewResult.type !== 'section') {
         throw new Error('無効な大問詳細解説プレビュー結果です。');
     }
@@ -624,10 +699,21 @@ export const applyImportSectionsAnalysisCsv = ({ previewResult, currentStructure
         return section;
     });
 
+    const nextExamData = {
+        ...currentExam,
+        structure: newStructure
+    };
+
     return {
         newStructure,
+        nextExamData,
         updatedCount,
         skippedCount: previewResult.skipCount,
-        errorCount: previewResult.errorCount
+        errorCount: previewResult.errorCount,
+        stats: {
+            updatedCount,
+            skippedCount: previewResult.skipCount,
+            errorCount: previewResult.errorCount
+        }
     };
 };

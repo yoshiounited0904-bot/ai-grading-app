@@ -244,4 +244,43 @@ assert(conflictPreview.errors[0].includes('エクスポート後に解説が更�
 
 console.log("✓ Test 6 passed: Stale export version correctly flagged as conflict error");
 
-console.log("\n ALL 6 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
+// =========================================================================
+// Test 7: 大学・学部・年度・科目を付与したファイル名と柔軟な引数形式の検証
+// =========================================================================
+console.log("\n[Test 7] Export Filename Formatting with University, Faculty, Year, Subject");
+const namedQExport = exportQuestionsCsv({
+    examId,
+    structure: initialStructure,
+    university: '早稲田大学',
+    faculty: '商学部',
+    year: '2026',
+    subject: '国語'
+});
+assert.strictEqual(namedQExport.filename, '早稲田大学_商学部_2026年度_国語_小問解説.csv');
+
+const namedSExport = exportSectionsAnalysisCsv({
+    examId,
+    structure: initialStructure,
+    university: '早稲田大学',
+    faculty: '商学部',
+    year: '2026年度', // Already has '年度'
+    subject: '国語'
+});
+assert.strictEqual(namedSExport.filename, '早稲田大学_商学部_2026年度_国語_大問詳細解説.csv');
+
+// Positional parameters call test
+const posPreview = previewImportQuestionsCsv(modifiedCsvRows.join('\r\n'), {
+    examId,
+    structure: initialStructure
+});
+assert.strictEqual(posPreview.readyCount, 1);
+const posApplied = applyImportQuestionsCsv(posPreview, {
+    examId,
+    structure: initialStructure
+});
+assert.strictEqual(posApplied.updatedCount, 1);
+assert(posApplied.nextExamData && Array.isArray(posApplied.nextExamData.structure));
+
+console.log("✓ Test 7 passed: Filename formatting and dual parameter signatures verified");
+
+console.log("\n ALL 7 EXAM CSV SERVICE TESTS PASSED SUCCESSFULLY! 🎉\n");
