@@ -837,6 +837,13 @@ const ResultPage = () => {
     });
     const [currentStructure, setCurrentStructure] = useState(initialStructure || []);
     const [usageStatus, setUsageStatus] = useState(location.state?.usageStatus || null);
+    const [isAiChecked, setIsAiChecked] = useState(() => {
+        if (typeof location.state?.isAiChecked === 'boolean') return location.state.isAiChecked;
+        if (typeof location.state?.exam?.is_ai_checked === 'boolean') return location.state.exam.is_ai_checked;
+        if (typeof rawAnswers?.is_ai_checked === 'boolean') return rawAnswers.is_ai_checked;
+        return false;
+    });
+    const canShowDetailedAnalysis = Boolean(isAiChecked || incomingDesignMode);
     const shouldShowVocabulary = String(examSubject || '').toLowerCase() === 'english' || String(examSubject || '').includes('英語');
     const currentPlan = getUserPlan(profile, usageStatus);
     const planFeatures = getPlanFeatures(currentPlan);
@@ -967,6 +974,9 @@ const ResultPage = () => {
                 if (!error && data) {
                     console.log("--- SYNC WITH DB ---");
                     console.log("Master Data Questions:", data.structure?.flatMap(s => s.questions || []).length);
+                    if (typeof data.is_ai_checked === 'boolean') {
+                        setIsAiChecked(data.is_ai_checked);
+                    }
                     
                     // Sync with latest DB data to ensure persistence across reloads/navigation
                     setResultData(prev => {
@@ -2018,7 +2028,7 @@ const ResultPage = () => {
                                             })}
                                         </div>
                                     </div>
-                                    {window.innerWidth > 768 ? (
+                                    {canShowDetailedAnalysis && (window.innerWidth > 768 ? (
                                         <SectionAnalysisShell isDesignMode={isDesignMode}>
                                             <p style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6366f1', marginBottom: '0.75rem' }}>大問全体の詳細解説</p>
                                             {planFeatures.detailedExplanations ? (
@@ -2135,7 +2145,7 @@ const ResultPage = () => {
 	                                                )}
 	                                            </div>
 	                                        </details>
-                                    )}
+                                    ))}
                                 </div>
                                 {shouldShowSectionConsultation && (
                                     <ConsultationCTA

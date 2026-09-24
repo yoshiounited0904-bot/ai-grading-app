@@ -621,6 +621,7 @@ const ExamPage = () => {
                     universityName,
                     facultyName,
                     examId: exam.id,
+                    isAiChecked: Boolean(exam?.is_ai_checked || examData?.is_ai_checked),
                     examSubject: exam.subject,
                     examYear: exam.year,
                     examDurationMinutes: exam.duration_minutes,
