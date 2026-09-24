@@ -3,28 +3,30 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getExamsForUniversity } from '../data/examRegistry';
 import { SUBJECT_DISPLAY_ORDER } from '../config/subjectConfig';
 
-const isProductionExam = (exam) => exam?.master_status === 'production' || exam?.originalExam?.master_status === 'production';
+const isAiCheckedExam = (exam) => Boolean(exam?.is_ai_checked || exam?.originalExam?.is_ai_checked);
 
-const ProductionBadge = ({ compact = false }) => (
+const AiCheckedBadge = ({ compact = false }) => (
     <div
         style={{
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '0.25rem',
-            color: '#b91c1c',
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
+            gap: '0.2rem',
+            color: '#1d4ed8',
+            background: 'linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%)',
+            border: '1px solid #bfdbfe',
             borderRadius: '999px',
             fontSize: compact ? '0.62rem' : '0.68rem',
             fontWeight: 800,
             lineHeight: 1.2,
-            padding: compact ? '0.16rem 0.42rem' : '0.2rem 0.5rem',
-            whiteSpace: 'nowrap'
+            padding: compact ? '0.16rem 0.45rem' : '0.2rem 0.55rem',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 1px 2px rgba(37, 99, 235, 0.08)'
         }}
-        title="本番用として確認済み。採点基準・解説の整備が進んでおり、採点精度が高い問題です。"
+        title="AI検証済み。高精度な自動採点および詳細解説に対応しています。"
     >
-        高精度
+        <span style={{ fontSize: compact ? '0.62rem' : '0.68rem' }}>⚡</span>
+        高精度 採点・解説
     </div>
 );
 
@@ -231,7 +233,7 @@ const UniversityPage = () => {
                                                         {examsForCell.length > 0 ? (
                                                             <div style={{ display: 'grid', gap: '0.65rem', justifyItems: 'center' }}>
                                                                 {examsForCell.map((exam) => {
-                                                                    const production = isProductionExam(exam);
+                                                                    const aiChecked = isAiCheckedExam(exam);
                                                                     return (
                                                                         <div
                                                                             key={exam.uniqueId}
@@ -243,7 +245,7 @@ const UniversityPage = () => {
                                                                                 width: '100%'
                                                                             }}
                                                                         >
-                                                                            {production && <ProductionBadge compact />}
+                                                                            {aiChecked && <AiCheckedBadge compact />}
                                                                             <button
                                                                                 className="btn btn-primary"
                                                                                 style={{
@@ -252,22 +254,23 @@ const UniversityPage = () => {
                                                                                     borderRadius: '2px',
                                                                                     width: '100%',
                                                                                     maxWidth: '108px',
-                                                                                    boxShadow: production ? '0 0 0 3px rgba(185, 28, 28, 0.12)' : undefined,
-                                                                                    border: production ? '1px solid #b91c1c' : undefined
+                                                                                    boxShadow: aiChecked ? '0 0 0 3px rgba(37, 99, 235, 0.15)' : undefined,
+                                                                                    border: aiChecked ? '1px solid #2563eb' : undefined
                                                                                 }}
                                                                                 onClick={() => handleStartClick(exam)}
                                                                             >
                                                                                 解答する
                                                                             </button>
-                                                                            {production && (
+                                                                            {aiChecked && (
                                                                                 <div style={{
-                                                                                    color: '#991b1b',
+                                                                                    color: '#1d4ed8',
                                                                                     fontSize: '0.58rem',
                                                                                     fontWeight: 800,
                                                                                     lineHeight: 1.25,
-                                                                                    maxWidth: '8.5rem'
+                                                                                    maxWidth: '8.5rem',
+                                                                                    textAlign: 'center'
                                                                                 }}>
-                                                                                    採点精度が高い確認済み問題
+                                                                                    高精度な採点・詳細解説つき
                                                                                 </div>
                                                                             )}
                                                                         </div>
@@ -309,19 +312,19 @@ const UniversityPage = () => {
                                                         display: 'flex',
                                                         justifyContent: 'space-between',
                                                         alignItems: 'center',
-                                                        border: isProductionExam(exam) ? '1px solid #fecaca' : undefined,
-                                                        background: isProductionExam(exam) ? '#fffafa' : undefined
+                                                        border: isAiCheckedExam(exam) ? '1px solid #bfdbfe' : undefined,
+                                                        background: isAiCheckedExam(exam) ? '#f8faff' : undefined
                                                     }}
                                                 >
                                                     <div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
                                                             <div className="mobile-card-title">{exam.subject}</div>
-                                                            {isProductionExam(exam) && <ProductionBadge compact />}
+                                                            {isAiCheckedExam(exam) && <AiCheckedBadge compact />}
                                                         </div>
                                                         <div className="mobile-card-meta">{exam.year}年度</div>
-                                                        {isProductionExam(exam) && (
-                                                            <div style={{ marginTop: '0.35rem', color: '#991b1b', fontSize: '0.72rem', fontWeight: 800 }}>
-                                                                採点精度が高い確認済み問題
+                                                        {isAiCheckedExam(exam) && (
+                                                            <div style={{ marginTop: '0.35rem', color: '#1d4ed8', fontSize: '0.72rem', fontWeight: 800 }}>
+                                                                ⚡ 高精度な採点・詳細解説つき
                                                             </div>
                                                         )}
                                                     </div>

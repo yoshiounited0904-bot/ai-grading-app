@@ -567,6 +567,16 @@ function AdminExamEditor() {
     const sectionsCsvInputRef = useRef(null);
 
     const [availableDrafts, setAvailableDrafts] = useState([]);
+    const [editorNotification, setEditorNotification] = useState(null);
+
+    const showEditorNotification = useCallback((message, type = 'success', duration = 3500) => {
+        setEditorNotification({ id: Date.now(), message, type });
+        if (duration > 0) {
+            setTimeout(() => {
+                setEditorNotification(prev => prev?.message === message ? null : prev);
+            }, duration);
+        }
+    }, []);
 
     // JSON Data
     const [examData, setExamData] = useState(isNew ? {
@@ -1760,25 +1770,6 @@ function AdminExamEditor() {
                 throw new Error(`AIが ${missingGeneratedExplanations.length} 件の小問解説を返しませんでした。反映を中止しました。`);
             }
 
-            let generatedSectionAnalysis = sectionData.sectionAnalysis || '';
-            if (includeAnalysis) {
-                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'analysis' }));
-                ensureSectionAnalysisSources(sectionData, finalQFiles, finalAFiles);
-                generatedSectionAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
-                    subjectEn,
-                    sectionData,
-                    finalQFiles,
-                    finalAFiles,
-                    buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sectionNum, sectionData), sectionData),
-                    examData?.subject || '',
-                    {
-                        useNativePdf: options.useNativePdf,
-                        parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
-                    }
-                ));
-                generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${sectionData.id}問の詳細解説`);
-            }
-
             // Robust update logic: Try ID match first, then index match as fallback.
             const mergedQuestions = sectionData.questions.map((origQ, idx) => {
                 let match = aiQuestions.find(newQ =>
@@ -1801,6 +1792,29 @@ function AdminExamEditor() {
                 return origQ;
             });
 
+            let generatedSectionAnalysis = sectionData.sectionAnalysis || '';
+            if (includeAnalysis) {
+                setSectionGenerationPhases(prev => ({ ...prev, [sectionNum]: 'analysis' }));
+                ensureSectionAnalysisSources(sectionData, finalQFiles, finalAFiles);
+                const sectionWithLatestQuestions = {
+                    ...sectionData,
+                    questions: mergedQuestions
+                };
+                generatedSectionAnalysis = await geminiQueue.add(() => generateSectionDetailedAnalysis(
+                    subjectEn,
+                    sectionWithLatestQuestions,
+                    finalQFiles,
+                    finalAFiles,
+                    buildSectionAnalysisInstruction(getSectionInstruction(sectionInstructionsBySection, sectionNum, sectionData), sectionWithLatestQuestions),
+                    examData?.subject || '',
+                    {
+                        useNativePdf: options.useNativePdf,
+                        parsedMarkdown: options.disableOcr ? null : (options.parsedMarkdown || examData?.parsed_markdown || examData?.custom_layout?.parsed_markdown),
+                    }
+                ));
+                generatedSectionAnalysis = validateGeneratedText(generatedSectionAnalysis, `第${sectionData.id}問の詳細解説`);
+            }
+
             const finalSectionForSave = {
                 ...sectionData,
                 sectionAnalysis: includeAnalysis ? generatedSectionAnalysis : sectionData.sectionAnalysis,
@@ -1815,10 +1829,12 @@ function AdminExamEditor() {
 
             await persistSectionMerge(sectionNum, finalSectionForSave);
 
-            alert(includeAnalysis
-                ? `大問 ${sectionNum} の小問解説・詳細解説の生成が完了しました！`
-                : `大問 ${sectionNum} の小問解説の生成が完了しました！`
-            );
+            if (!options.silent) {
+                showEditorNotification(includeAnalysis
+                    ? `大問 ${sectionNum} の小問解説・詳細解説の生成が完了しました！`
+                    : `大問 ${sectionNum} の小問解説の生成が完了しました！`
+                );
+            }
 
         } catch (err) {
             console.error(err);
@@ -1954,7 +1970,7 @@ function AdminExamEditor() {
                 const secNum = validSectionNums[idx];
                 setBulkExplanationsOnlyProgress({ current: idx + 1, total: validSectionNums.length });
                 try {
-                    await handleGenerateOnlyExplanations(secNum, false, { useNativePdf: true, usePro: true, disableOcr: options.disableOcr });
+                    await handleGenerateOnlyExplanations(secNum, false, { useNativePdf: true, usePro: true, disableOcr: options.disableOcr, silent: true });
                 } catch (secError) {
                     console.error(`Bulk explanations failed for section ${secNum}:`, secError);
                     failures.push(`第${secNum}問`);
@@ -2027,7 +2043,8 @@ function AdminExamEditor() {
                     await handleGenerateOnlyExplanations(secNum, true, {
                         useNativePdf: true,
                         usePro: true,
-                        disableOcr: options.disableOcr
+                        disableOcr: options.disableOcr,
+                        silent: true
                     });
                 } catch (secError) {
                     console.error(`Bulk all explanations failed for section ${secNum}:`, secError);
@@ -7863,6 +7880,45 @@ const BlockDesigner = ({ layout, setLayout, examData, onSave }) => {
                         )}
                     </div>
                 </div>
+
+                {/* Editor Toast Notification */}
+                {editorNotification && (
+                    <div
+                        style={{
+                            position: 'fixed',
+                            bottom: '24px',
+                            right: '24px',
+                            zIndex: 99999,
+                            backgroundColor: editorNotification.type === 'error' ? '#ef4444' : '#10b981',
+                            color: '#ffffff',
+                            padding: '12px 20px',
+                            borderRadius: '12px',
+                            boxShadow: '0 10px 25px rgba(0,0,0,0.25)',
+                            fontWeight: '700',
+                            fontSize: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                        }}
+                    >
+                        <span>{editorNotification.type === 'error' ? '⚠️' : '✅'}</span>
+                        <span>{editorNotification.message}</span>
+                        <button
+                            onClick={() => setEditorNotification(null)}
+                            style={{
+                                marginLeft: '8px',
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#ffffff',
+                                cursor: 'pointer',
+                                fontSize: '16px',
+                                opacity: 0.8
+                            }}
+                        >
+                            ✕
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

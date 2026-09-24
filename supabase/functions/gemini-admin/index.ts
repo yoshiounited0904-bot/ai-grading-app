@@ -612,7 +612,12 @@ const buildAdminFirstSectionAnalysisPrompt = (
   subjectName: string,
   questions: Array<Record<string, unknown>>,
   options: { imageAvailable: boolean; fallbackMode?: string } = { imageAvailable: true },
-): string => `
+): string => {
+  const formattedAnswersList = questions
+    .map((q) => `・${q.label || q.id}: 正解 = 「${q.correctAnswer ?? ''}」`)
+    .join('\n');
+
+  return `
 あなたは大学入試の詳細解説を作成する専門講師です。
 
 【最重要】
@@ -620,6 +625,14 @@ const buildAdminFirstSectionAnalysisPrompt = (
 出力の構成、見出し、順番、文体、分量、禁止事項は、管理者の自作プロンプトに従ってください。
 管理者の自作プロンプトに書かれていない通常テンプレート、講評テンプレート、学習アドバイステンプレートを追加してはいけません。
 ${options.fallbackMode ? `これは${options.fallbackMode}ですが、自作プロンプトを短縮・要約・置換してはいけません。` : ""}
+
+【最優先正解ルール（絶対遵守）】
+以下の正解は小問構造データですでに確定済みの公式正解です。
+自作プロンプトに「【解答一覧】」や各設問の正解提示の指定がある場合は、必ず以下の確定正解をそのまま出力してください。
+絶対に「要確認」「未定」「不明」などの曖昧な言葉を出力したり、正解を勝手に推測・改変してはいけません。小問構造の正解を100%忠実に反映してください。
+
+【確定正解一覧（解答一覧には必ずこれをそのまま記載すること）】
+${formattedAnswersList}
 
 【管理者の自作プロンプト】
 ${adminInstruction}
@@ -658,13 +671,14 @@ ${JSON.stringify({
   }, null, 2)}
 
 【守るべき最低限の安全制約】
-・正解データを勝手に変更しない。
+・正解データ（correctAnswer）を勝手に変更しない。また解答一覧等で「要確認」と出力せず、確定正解一覧の値をそのまま明記すること。
 ・問題画像、解答画像、小問データ、正解データと矛盾する内容を書かない。
 ・根拠のない断定や、問題に無関係な知識展開をしない。
 ・アスタリスク（*）は使用しない。
 ・コードブロックで囲まない。
 ・詳細解説本文のみを返す。
 `;
+};
 
 const hasUsableExplanation = (value: unknown): boolean =>
   typeof value === "string" &&
@@ -3108,7 +3122,7 @@ ${buildJapaneseReadingAnalysisPrompt(allQuestions)}
 ${adminInstructionBlock}`;
 
   const finalPrompt = (adminInstruction
-    ? `${buildAdminFirstSectionAnalysisPrompt(adminInstruction, sectionData, subjectType, subjectName, allQuestions, { imageAvailable: true })}\n${documentAiBlock}`
+    ? `${buildAdminFirstSectionAnalysisPrompt(adminInstruction, sectionData, subjectType, subjectName, allQuestions, { imageAvailable: true })}\n${answersNote}\n${documentAiBlock}`
     : `
 ${instructionPriorityBlock}
 

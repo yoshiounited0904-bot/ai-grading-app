@@ -175,6 +175,8 @@ export const getExamsForUniversity = async (universityId) => {
                 structure: exam.structure,
                 duration_minutes: exam.duration_minutes,
                 master_status: exam.master_status,
+                is_ai_checked: exam.is_ai_checked,
+                ai_checked_at: exam.ai_checked_at,
                 is_published: exam.is_published
             };
 
@@ -255,7 +257,9 @@ export const getUniversities = async () => {
                 detailedAnalysis: exam.detailed_analysis,
                 structure: exam.structure,
                 duration_minutes: exam.duration_minutes,
-                master_status: exam.master_status
+                master_status: exam.master_status,
+                is_ai_checked: exam.is_ai_checked,
+                ai_checked_at: exam.ai_checked_at
             };
 
             // Add exam if not already present
