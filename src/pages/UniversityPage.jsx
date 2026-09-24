@@ -5,30 +5,6 @@ import { SUBJECT_DISPLAY_ORDER } from '../config/subjectConfig';
 
 const isAiCheckedExam = (exam) => Boolean(exam?.is_ai_checked || exam?.originalExam?.is_ai_checked);
 
-const AiCheckedBadge = ({ compact = false }) => (
-    <div
-        style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.2rem',
-            color: '#1d4ed8',
-            background: 'linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%)',
-            border: '1px solid #bfdbfe',
-            borderRadius: '999px',
-            fontSize: compact ? '0.62rem' : '0.68rem',
-            fontWeight: 800,
-            lineHeight: 1.2,
-            padding: compact ? '0.16rem 0.45rem' : '0.2rem 0.55rem',
-            whiteSpace: 'nowrap',
-            boxShadow: '0 1px 2px rgba(37, 99, 235, 0.08)'
-        }}
-        title="AI検証済み。高精度な自動採点および詳細解説に対応しています。"
-    >
-        <span style={{ fontSize: compact ? '0.62rem' : '0.68rem' }}>⚡</span>
-        高精度 採点・解説
-    </div>
-);
 
 const FACULTY_BASE_ORDER_BY_UNIVERSITY = {
     '慶應義塾大学': ['文', '経済', '法', '商', '医', '理工', '総合政策', '環境情報', '看護医療', '薬'],
@@ -245,7 +221,6 @@ const UniversityPage = () => {
                                                                                 width: '100%'
                                                                             }}
                                                                         >
-                                                                            {aiChecked && <AiCheckedBadge compact />}
                                                                             <button
                                                                                 className="btn btn-primary"
                                                                                 style={{
@@ -270,7 +245,7 @@ const UniversityPage = () => {
                                                                                     maxWidth: '8.5rem',
                                                                                     textAlign: 'center'
                                                                                 }}>
-                                                                                    高精度な採点・詳細解説つき
+                                                                                    ⚡ 高精度な採点・詳細解説つき
                                                                                 </div>
                                                                             )}
                                                                         </div>
@@ -319,7 +294,6 @@ const UniversityPage = () => {
                                                     <div>
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
                                                             <div className="mobile-card-title">{exam.subject}</div>
-                                                            {isAiCheckedExam(exam) && <AiCheckedBadge compact />}
                                                         </div>
                                                         <div className="mobile-card-meta">{exam.year}年度</div>
                                                         {isAiCheckedExam(exam) && (
