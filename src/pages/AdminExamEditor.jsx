@@ -5433,8 +5433,9 @@ function AdminExamEditor() {
                                             <span>AIが返したCSVをインポートし、プレビュー画面で差分・安全性を確認して反映＆保存</span>
                                         </div>
                                     </div>
-                                    <div className="mt-3 text-[11px] leading-relaxed bg-amber-50 text-amber-900 border border-amber-200/70 rounded-xl p-2.5 font-bold">
-                                        ⚠️ 解答PDFを外部AIに渡す必要はありません（CSV内の correct_answer 列を参照させます）。ID列やバージョン列は書き換えずにそのまま返してもらってください。
+                                    <div className="mt-3 text-[11px] leading-relaxed bg-amber-50 text-amber-900 border border-amber-200/70 rounded-xl p-2.5 font-bold space-y-1">
+                                        <div>⚠️ 解答PDFを外部AIに渡す必要はありません（CSV内の correct_answer 列を参照させます）。</div>
+                                        <div className="text-red-700">⚠️ 【最重要】外部AIが気を利かせて「解説バージョン」列（例: 2→3）を勝手に繰り上げて出力してしまうと、インポート時にバージョン不一致エラーになります。AIにはプロンプトの指示通り、バージョン列やID列の数値をエクスポート時のまま変更せず出力させてください。</div>
                                     </div>
                                 </div>
 

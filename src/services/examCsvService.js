@@ -405,7 +405,9 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
         item.currentUpdatedAt = currentQ.explanation_updated_at || currentQ.explanationUpdatedAt || '';
 
         // 3. 解説バージョンの整合性チェック
-        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion) {
+        // 外部AIが気を利かせて +1 繰り上げて出力してきた場合（例: システムv2に対してCSVがv3）も許容する
+        const isAdvanceIncrement = (csvVersion === currentVersion + 1);
+        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion && !isAdvanceIncrement) {
             item.status = 'error';
             item.reason = `エクスポート後に解説が更新されています（CSV: v${csvVersion}, 現在のシステム: v${currentVersion}）`;
             errorCount++;
@@ -433,8 +435,10 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
 
         // 5. 更新対象
         item.status = 'ready';
-        item.nextVersion = currentVersion + 1;
-        item.reason = `更新可能（v${currentVersion} → v${item.nextVersion}）`;
+        item.nextVersion = isAdvanceIncrement ? csvVersion : currentVersion + 1;
+        item.reason = isAdvanceIncrement
+            ? `更新可能（AIによる繰り上げを検知: v${currentVersion} → v${item.nextVersion}）`
+            : `更新可能（v${currentVersion} → v${item.nextVersion}）`;
         readyCount++;
         items.push(item);
     }
@@ -731,7 +735,9 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
         item.currentUpdatedAt = currentSec.section_analysis_updated_at || currentSec.sectionAnalysisUpdatedAt || '';
 
         // 3. バージョン整合性チェック
-        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion) {
+        // 外部AIが気を利かせて +1 繰り上げて出力してきた場合（例: システムv2に対してCSVがv3）も許容する
+        const isAdvanceIncrement = (csvVersion === currentVersion + 1);
+        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion && !isAdvanceIncrement) {
             item.status = 'error';
             item.reason = `エクスポート後に解説が更新されています（CSV: v${csvVersion}, 現在のシステム: v${currentVersion}）`;
             errorCount++;
@@ -759,8 +765,10 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
 
         // 5. 更新対象
         item.status = 'ready';
-        item.nextVersion = currentVersion + 1;
-        item.reason = `更新可能（v${currentVersion} → v${item.nextVersion}）`;
+        item.nextVersion = isAdvanceIncrement ? csvVersion : currentVersion + 1;
+        item.reason = isAdvanceIncrement
+            ? `更新可能（AIによる繰り上げを検知: v${currentVersion} → v${item.nextVersion}）`
+            : `更新可能（v${currentVersion} → v${item.nextVersion}）`;
         readyCount++;
         items.push(item);
     }
