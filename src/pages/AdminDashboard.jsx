@@ -1627,15 +1627,42 @@ function AdminDashboard() {
                                                 const pointStats = stats?.points || null;
                                                 const explanationStats = stats?.explanations || null;
                                                 const detailedExplanationStats = stats?.detailedExplanations || null;
-                                                const hasMissingCriteria = Boolean(criteriaStats?.missing > 0);
+                                                 const hasMissingCriteria = Boolean(criteriaStats?.missing > 0);
                                                 const hasPointMismatch = Boolean(pointStats?.isMismatch);
                                                 const hasMissingExplanation = Boolean(explanationStats?.missing > 0);
                                                 const hasMissingDetailedExplanation = Boolean(detailedExplanationStats?.missing > 0);
                                                 const currentMasterStatus = normalizeMasterStatus(exam.master_status);
+                                                const isAiChecked = Boolean(exam.is_ai_checked);
+
+                                                const rowBgClass = isAiChecked
+                                                    ? 'bg-emerald-50/70 group-hover:bg-emerald-100/60'
+                                                    : 'bg-white group-hover:bg-gray-50/50';
+                                                const rowShadowClass = isAiChecked
+                                                    ? 'shadow-md shadow-emerald-500/10'
+                                                    : 'shadow-sm';
+
+                                                const leftCellClass = `${rowBgClass} px-3 py-2 rounded-l-2xl ${
+                                                    isAiChecked
+                                                        ? 'border-y-2 border-l-4 border-y-emerald-300 border-l-emerald-500 group-hover:border-y-emerald-400 group-hover:border-l-emerald-600'
+                                                        : 'border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30'
+                                                } ${rowShadowClass}`;
+
+                                                const midCellClass = `${rowBgClass} px-3 py-2 border-y-2 ${
+                                                    isAiChecked
+                                                        ? 'border-y-emerald-300 group-hover:border-y-emerald-400'
+                                                        : 'border-y-gray-100 group-hover:border-navy-blue/30'
+                                                } ${rowShadowClass}`;
+
+                                                const rightCellClass = `${rowBgClass} px-3 py-2 rounded-r-2xl border-y-2 border-r-2 ${
+                                                    isAiChecked
+                                                        ? 'border-emerald-300 group-hover:border-emerald-400'
+                                                        : 'border-gray-100 group-hover:border-navy-blue/30'
+                                                } ${rowShadowClass}`;
+
                                                 return (
                                                 <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''} ${selectedExams.has(exam.id) ? 'bg-indigo-50/50' : ''} ${hasMissingCriteria || hasPointMismatch || hasMissingExplanation || hasMissingDetailedExplanation ? 'ring-2 ring-red-100 rounded-2xl' : ''}`}>
                                                     {/* Checkbox */}
-                                                    <td className="bg-white px-3 py-2 rounded-l-2xl border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                                    <td className={`${leftCellClass} text-center`}>
                                                         <input 
                                                             type="checkbox" 
                                                             className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
@@ -1644,8 +1671,20 @@ function AdminDashboard() {
                                                         />
                                                     </td>
                                                     {/* Faculty & ID */}
-                                                    <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[280px]">
+                                                    <td className={`${midCellClass} min-w-[280px]`}>
                                                         <div className="flex flex-col">
+                                                            {isAiChecked && (
+                                                                <div className="flex items-center gap-1.5 mb-1.5">
+                                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm tracking-wide">
+                                                                        <span>🤖</span> AIチェック済
+                                                                    </span>
+                                                                    {exam.ai_checked_at && (
+                                                                        <span className="text-[10px] font-bold text-emerald-700/80">
+                                                                            {new Date(exam.ai_checked_at).toLocaleDateString('ja-JP')}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                             {editingFacultyId === exam.id ? (
                                                                 <input
                                                                     type="text"
@@ -1663,27 +1702,37 @@ function AdminDashboard() {
                                                                             cancelFacultyEdit();
                                                                         }
                                                                     }}
-                                                                    className="w-full rounded-md border border-indigo-200 bg-indigo-50/40 px-2 py-1 text-base font-black text-navy-blue leading-tight outline-none focus:border-indigo-500 focus:bg-white"
+                                                                    className={`w-full rounded-md border px-2 py-1 text-base font-black leading-tight outline-none focus:bg-white ${
+                                                                        isAiChecked
+                                                                            ? 'border-emerald-300 bg-emerald-100/50 text-emerald-950 focus:border-emerald-500'
+                                                                            : 'border-indigo-200 bg-indigo-50/40 text-navy-blue focus:border-indigo-500'
+                                                                    }`}
                                                                 />
                                                             ) : (
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => beginFacultyEdit(exam)}
-                                                                    className="text-left text-base font-black text-navy-blue leading-tight hover:text-indigo-600 hover:underline decoration-indigo-300 underline-offset-4"
+                                                                    className={`text-left text-base font-black leading-tight hover:underline underline-offset-4 ${
+                                                                        isAiChecked
+                                                                            ? 'text-emerald-950 hover:text-emerald-700 decoration-emerald-400'
+                                                                            : 'text-navy-blue hover:text-indigo-600 decoration-indigo-300'
+                                                                    }`}
                                                                     title="クリックして学部名を編集"
                                                                 >
                                                                     {exam.faculty}
                                                                 </button>
                                                             )}
-                                                            <span className="text-[10px] font-mono mt-1 text-gray-300"># {exam.id}</span>
+                                                            <span className={`text-[10px] font-mono mt-1 ${isAiChecked ? 'text-emerald-700/60 font-bold' : 'text-gray-300'}`}># {exam.id}</span>
                                                         </div>
                                                     </td>
 
                                             {/* Year & Subject */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[130px]">
+                                            <td className={`${midCellClass} min-w-[130px]`}>
                                                 <div className="flex flex-col whitespace-nowrap">
                                                     <div className="flex items-center gap-2 whitespace-nowrap">
-                                                        <span className="text-sm font-black bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded whitespace-nowrap">{exam.year}年度</span>
+                                                        <span className={`text-sm font-black px-2 py-0.5 rounded whitespace-nowrap ${
+                                                            isAiChecked ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-50 text-indigo-600'
+                                                        }`}>{exam.year}年度</span>
                                                         {exam.pdf_path && (
                                                             <a href={exam.pdf_path} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-green-600 hover:text-green-800 inline-flex items-center gap-1 transition-colors whitespace-nowrap">
                                                                 📄 PDF
@@ -1695,7 +1744,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Question Count */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 <div className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 min-w-[70px]">
                                                     <span className="text-[10px] font-black text-slate-600">
                                                         {pointStats ? `${pointStats.questionCount}問` : statsLoading ? '確認中' : '未確認'}
@@ -1705,7 +1754,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Point Total Status */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 {!pointStats ? (
                                                     <div className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 min-w-[86px]">
                                                         <span className="text-[10px] font-black text-gray-400">{statsLoading ? '確認中' : '未確認'}</span>
@@ -1734,7 +1783,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Grading Criteria Status */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 {!criteriaStats ? (
                                                     <div className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 min-w-[78px]">
                                                         <span className="text-[10px] font-black text-gray-400">{statsLoading ? '確認中' : '未確認'}</span>
@@ -1763,7 +1812,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Question Explanation Status */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 {!explanationStats ? (
                                                     <div className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 min-w-[78px]">
                                                         <span className="text-[10px] font-black text-gray-400">{statsLoading ? '確認中' : '未確認'}</span>
@@ -1792,7 +1841,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Detailed Explanation Status */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 {!detailedExplanationStats ? (
                                                     <div className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 min-w-[78px]">
                                                         <span className="text-[10px] font-black text-gray-400">{statsLoading ? '確認中' : '未確認'}</span>
@@ -1821,12 +1870,12 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* AI Check Status Toggle */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 <button
                                                     onClick={() => handleToggleAiChecked(exam.id, exam.is_ai_checked)}
                                                     className={`px-2.5 py-1 text-[9px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 whitespace-nowrap ${
                                                         exam.is_ai_checked
-                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 shadow-sm'
+                                                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 hover:border-emerald-700 shadow-md ring-2 ring-emerald-300/60'
                                                             : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100 hover:text-gray-600'
                                                     }`}
                                                     title={exam.is_ai_checked ? (exam.ai_checked_at ? `AIチェック済 (${new Date(exam.ai_checked_at).toLocaleDateString('ja-JP')} 確認)\nクリックして未チェックに変更` : 'AIチェック済\nクリックして未チェックに変更') : 'クリックしてAIチェック済に変更'}
@@ -1840,7 +1889,7 @@ function AdminDashboard() {
                                             </td>
                                              
                                             {/* Publish Toggle */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 <button
                                                     onClick={() => handleTogglePublish(exam.id, exam.is_published)}
                                                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
@@ -1859,7 +1908,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Status Badge */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm text-center">
+                                            <td className={`${midCellClass} text-center`}>
                                                 <button
                                                     onClick={() => handleCycleStatus(exam.id, exam.master_status)}
                                                     className={`px-2 py-1 text-[9px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 whitespace-nowrap ${
@@ -1885,7 +1934,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Unimplemented Status */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[180px]">
+                                            <td className={`${midCellClass} min-w-[180px]`}>
                                                 <div className="flex flex-nowrap gap-1 justify-center mx-auto">
                                                     {[
                                                         { id: 'detailed', label: '詳細' },
@@ -1914,7 +1963,7 @@ function AdminDashboard() {
                                             </td>
 
                                             {/* Admin Comment */}
-                                            <td className="bg-white px-3 py-2 border-y-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm">
+                                            <td className={midCellClass}>
                                                 <textarea
                                                     defaultValue={exam.admin_comment || ''}
                                                     onBlur={(e) => {
@@ -1923,12 +1972,16 @@ function AdminDashboard() {
                                                         }
                                                     }}
                                                     placeholder="共有メモ..."
-                                                    className="w-full text-[10px] p-1.5 bg-yellow-50/20 border-b border-yellow-200/50 focus:border-navy-blue focus:bg-white transition-all resize-none h-8 outline-none"
+                                                    className={`w-full text-[10px] p-1.5 border-b focus:bg-white transition-all resize-none h-8 outline-none ${
+                                                        isAiChecked
+                                                            ? 'bg-emerald-100/40 border-emerald-300/60 focus:border-emerald-600'
+                                                            : 'bg-yellow-50/20 border-yellow-200/50 focus:border-navy-blue'
+                                                    }`}
                                                 />
                                             </td>
 
                                             {/* Actions */}
-                                            <td className="bg-white px-3 py-2 rounded-r-2xl border-y-2 border-r-2 border-gray-100 group-hover:border-navy-blue/30 shadow-sm min-w-[120px]">
+                                            <td className={`${rightCellClass} min-w-[120px]`}>
                                                 <div className="flex flex-col gap-0.5 w-28 ml-auto">
                                                     <button onClick={() => handlePreview(exam)} className="w-full py-0.5 text-[9px] font-black bg-navy-blue text-white rounded shadow hover:bg-navy-light transition-colors whitespace-nowrap">
                                                         プレビュー
