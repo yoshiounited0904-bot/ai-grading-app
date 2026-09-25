@@ -1406,20 +1406,18 @@ const coerceGeneratedQuestion = (question: Record<string, unknown>, fallbackInde
   next.type = inferGeneratedQuestionType(next, options);
   next.correctAnswer = normalizeChoiceAnswer(next.correctAnswer);
 
-  // 選択問題または正解が記号なのに options が空の場合、正解記号から典型選択肢を自動補完
+  // 選択問題または正解が記号の場合でも options は自動補完せず、管理者の意思で入力させる
   if (options.length === 0 && (next.type === "selection" || isSingleChoiceSymbol(next.correctAnswer))) {
-    const defaulted = buildDefaultOptionsForChoiceAnswer(String(next.correctAnswer));
-    if (defaulted.length > 0) {
-      options = defaulted;
-      next.type = "selection";
-    }
+    next.type = "selection";
   }
 
   if (Array.isArray(next.alternativeAnswers)) {
     next.alternativeAnswers = normalizeAlternativeAnswers(next.alternativeAnswers);
   }
-  if (options.length > 0 || ["selection", "selection_multi", "ordering"].includes(String(next.type))) {
+  if (options.length > 0) {
     next.options = options;
+  } else if (["selection", "selection_multi", "ordering"].includes(String(next.type))) {
+    next.options = [];
   } else {
     delete next.options;
   }

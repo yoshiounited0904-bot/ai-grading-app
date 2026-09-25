@@ -1986,3 +1986,7 @@ details summary::-webkit-details-marker {
 .border-l-6 { border-left-width: 6px; }
 .border-l-emerald-500 { border-left-color: #10b981; }
 .border-l-emerald-600 { border-left-color: #059669; }
+
+.hidden {
+  display: none !important;
+}

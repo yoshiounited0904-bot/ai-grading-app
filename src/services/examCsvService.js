@@ -404,18 +404,7 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
         item.currentVersion = currentVersion;
         item.currentUpdatedAt = currentQ.explanation_updated_at || currentQ.explanationUpdatedAt || '';
 
-        // 3. 解説バージョンの整合性チェック
-        // 外部AIが気を利かせて +1 繰り上げて出力してきた場合（例: システムv2に対してCSVがv3）も許容する
-        const isAdvanceIncrement = (csvVersion === currentVersion + 1);
-        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion && !isAdvanceIncrement) {
-            item.status = 'error';
-            item.reason = `エクスポート後に解説が更新されています（CSV: v${csvVersion}, 現在のシステム: v${currentVersion}）`;
-            errorCount++;
-            errors.push(`行 ${rowNum} [${secId}-${qId}]: ${item.reason}`);
-            items.push(item);
-            continue;
-        }
-
+        // 3. バージョン番号は読み込まずに無視（ナンバリングされた既存CSVもエラーなく取り込む）
         // 4. 内容変更の検証
         if (!csvExplanation) {
             item.status = 'skip';
@@ -427,18 +416,16 @@ export const previewImportQuestionsCsv = (arg1, arg2) => {
 
         if (isTextContentEqual(currentExplanation, csvExplanation)) {
             item.status = 'skip';
-            item.reason = '既存の小問解説と同一内容のためスキップ（バージョン維持）';
+            item.reason = '既存の小問解説と同一内容のためスキップ（内容変更なし）';
             skipCount++;
             items.push(item);
             continue;
         }
 
-        // 5. 更新対象
+        // 5. 更新対象（バージョン自動繰り上げは行わず、解説内容のみを更新）
         item.status = 'ready';
-        item.nextVersion = isAdvanceIncrement ? csvVersion : currentVersion + 1;
-        item.reason = isAdvanceIncrement
-            ? `更新可能（AIによる繰り上げを検知: v${currentVersion} → v${item.nextVersion}）`
-            : `更新可能（v${currentVersion} → v${item.nextVersion}）`;
+        item.nextVersion = currentVersion;
+        item.reason = '更新可能（小問解説を反映）';
         readyCount++;
         items.push(item);
     }
@@ -734,18 +721,7 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
         item.currentVersion = currentVersion;
         item.currentUpdatedAt = currentSec.section_analysis_updated_at || currentSec.sectionAnalysisUpdatedAt || '';
 
-        // 3. バージョン整合性チェック
-        // 外部AIが気を利かせて +1 繰り上げて出力してきた場合（例: システムv2に対してCSVがv3）も許容する
-        const isAdvanceIncrement = (csvVersion === currentVersion + 1);
-        if (csvVersion !== null && !isNaN(csvVersion) && csvVersion !== currentVersion && !isAdvanceIncrement) {
-            item.status = 'error';
-            item.reason = `エクスポート後に解説が更新されています（CSV: v${csvVersion}, 現在のシステム: v${currentVersion}）`;
-            errorCount++;
-            errors.push(`行 ${rowNum} [大問 ${secId}]: ${item.reason}`);
-            items.push(item);
-            continue;
-        }
-
+        // 3. バージョン番号は読み込まずに無視（ナンバリングされた既存CSVもエラーなく取り込む）
         // 4. 内容変更の検証
         if (!csvAnalysis) {
             item.status = 'skip';
@@ -757,18 +733,16 @@ export const previewImportSectionsAnalysisCsv = (arg1, arg2) => {
 
         if (isTextContentEqual(currentAnalysis, csvAnalysis)) {
             item.status = 'skip';
-            item.reason = '既存の大問詳細解説と同一内容のためスキップ（バージョン維持）';
+            item.reason = '既存の大問詳細解説と同一内容のためスキップ（内容変更なし）';
             skipCount++;
             items.push(item);
             continue;
         }
 
-        // 5. 更新対象
+        // 5. 更新対象（バージョン自動繰り上げは行わず、解説内容のみを更新）
         item.status = 'ready';
-        item.nextVersion = isAdvanceIncrement ? csvVersion : currentVersion + 1;
-        item.reason = isAdvanceIncrement
-            ? `更新可能（AIによる繰り上げを検知: v${currentVersion} → v${item.nextVersion}）`
-            : `更新可能（v${currentVersion} → v${item.nextVersion}）`;
+        item.nextVersion = currentVersion;
+        item.reason = '更新可能（大問詳細解説を反映）';
         readyCount++;
         items.push(item);
     }
@@ -906,3 +880,117 @@ export const readCsvFileWithEncodingDetection = async (file) => {
     }
 };
 
+/**
+ * CSVテキストの内容から「小問解説CSV」か「大問詳細解説CSV」かを自動判別
+ * @param {string} text 
+ * @returns {'question'|'section'|'unknown'}
+ */
+export const detectCsvType = (text) => {
+    try {
+        const rows = parseCsvText(text);
+        if (!rows || rows.length === 0) return 'unknown';
+        const headerRow = rows[0].map(h => String(h || '').trim().toLowerCase().replace(/[\s_・]/g, ''));
+        if (headerRow.some(h => h.includes('sectionanalysis') || h.includes('大問詳細解説'))) {
+            return 'section';
+        }
+        if (headerRow.some(h => h.includes('explanation') || h.includes('小問解説') || h.includes('questionid') || h.includes('小問id'))) {
+            return 'question';
+        }
+        return 'unknown';
+    } catch {
+        return 'unknown';
+    }
+};
+
+/**
+ * 小問解説CSVと大問詳細解説CSVの2ファイルを一括エクスポート
+ */
+export const exportBothCsvs = (examData) => {
+    const qCsv = exportQuestionsCsv(examData);
+    const secCsv = exportSectionsAnalysisCsv(examData);
+    return {
+        questions: qCsv,
+        sections: secCsv,
+        questionsCsv: qCsv,
+        sectionsCsv: secCsv
+    };
+};
+
+/**
+ * 複数（または単一）のCSVテキストを自動判別して一括インポート
+ * @param {Array<{ text: string, name?: string }>} csvEntries
+ * @param {object} currentExam
+ */
+export const applyImportMultiCsvs = (csvEntries, currentExam) => {
+    let workingExam = { ...(currentExam || {}) };
+    let workingStructure = [...(workingExam.structure || [])];
+    
+    let totalQuestionsUpdated = 0;
+    let totalQuestionsSkipped = 0;
+    let totalQuestionsErrors = 0;
+    
+    let totalSectionsUpdated = 0;
+    let totalSectionsSkipped = 0;
+    let totalSectionsErrors = 0;
+
+    const detailedErrors = [];
+
+    for (const entry of csvEntries) {
+        const text = entry.text || '';
+        const name = entry.name || '';
+        const type = detectCsvType(text);
+
+        if (type === 'question') {
+            const preview = previewImportQuestionsCsv(text, {
+                ...workingExam,
+                structure: workingStructure
+            });
+            if (preview.errors?.length > 0) {
+                detailedErrors.push(...preview.errors);
+            }
+            const apply = applyImportQuestionsCsv(preview, {
+                ...workingExam,
+                structure: workingStructure
+            });
+            workingExam = apply.nextExamData;
+            workingStructure = apply.newStructure;
+            totalQuestionsUpdated += apply.stats.updatedCount;
+            totalQuestionsSkipped += apply.stats.skippedCount;
+            totalQuestionsErrors += apply.stats.errorCount;
+        } else if (type === 'section') {
+            const preview = previewImportSectionsAnalysisCsv(text, {
+                ...workingExam,
+                structure: workingStructure
+            });
+            if (preview.errors?.length > 0) {
+                detailedErrors.push(...preview.errors);
+            }
+            const apply = applyImportSectionsAnalysisCsv(preview, {
+                ...workingExam,
+                structure: workingStructure
+            });
+            workingExam = apply.nextExamData;
+            workingStructure = apply.newStructure;
+            totalSectionsUpdated += apply.stats.updatedCount;
+            totalSectionsSkipped += apply.stats.skippedCount;
+            totalSectionsErrors += apply.stats.errorCount;
+        } else {
+            detailedErrors.push(`ファイル "${name || '不明'}" は小問解説または大問詳細解説のCSVとして認識できませんでした。`);
+        }
+    }
+
+    return {
+        nextExamData: workingExam,
+        newStructure: workingStructure,
+        stats: {
+            questionsUpdated: totalQuestionsUpdated,
+            questionsSkipped: totalQuestionsSkipped,
+            questionsErrors: totalQuestionsErrors,
+            sectionsUpdated: totalSectionsUpdated,
+            sectionsSkipped: totalSectionsSkipped,
+            sectionsErrors: totalSectionsErrors,
+            totalUpdated: totalQuestionsUpdated + totalSectionsUpdated
+        },
+        errors: detailedErrors
+    };
+};

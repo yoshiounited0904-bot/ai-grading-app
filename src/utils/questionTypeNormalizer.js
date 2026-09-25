@@ -271,10 +271,12 @@ export const isSingleChoiceSymbol = (value) => {
     if (/^([1-9]|10)$/.test(str)) return true;
     // 1文字のカタカナ (ア-ン)
     if (/^[\u30A1-\u30F6]$/.test(str)) return true;
+    // 1文字のひらがな (ぁ-ん)
+    if (/^[\u3041-\u3096]$/.test(str)) return true;
     // ①〜⑳などの丸数字
     if (/^[\u2460-\u2473]$/.test(str)) return true;
-    // (a), (1), (ア) のような括弧付き記号
-    if (/^[(（][a-zA-Z0-9\u30A1-\u30F6][)）]$/.test(str)) return true;
+    // (a), (1), (ア), (あ) のような括弧付き記号
+    if (/^[(（][a-zA-Z0-9\u30A1-\u30F6\u3041-\u3096][)）]$/.test(str)) return true;
     return false;
 };
 
@@ -297,6 +299,12 @@ export const buildDefaultOptionsForChoiceAnswer = (answer) => {
     }
     if (/^[オカ]$/.test(norm)) {
         return ['ア', 'イ', 'ウ', 'エ', 'オ', 'カ'];
+    }
+    if (/^[あいうえ]$/.test(norm)) {
+        return ['あ', 'い', 'う', 'え'];
+    }
+    if (/^[おか]$/.test(norm)) {
+        return ['あ', 'い', 'う', 'え', 'お', 'か'];
     }
     return [];
 };
@@ -342,21 +350,17 @@ export const normalizeQuestionType = (question = {}) => {
                 ? currentType
                 : inferQuestionType({ ...question, options: normalizedOptions });
 
-    // 選択問題で options が空の場合、正解記号から補完
-    if (normalizedOptions.length === 0 && (inferredType === 'selection' || isAnswerChoiceSymbol)) {
-        const defaulted = buildDefaultOptionsForChoiceAnswer(String(question.correctAnswer));
-        if (defaulted.length > 0) {
-            normalizedOptions = defaulted;
-        }
-    }
-
+    // 選択問題の options はユーザーの意思で入力・適用するため、ここでは自動補完しない
     const next = {
         ...question,
         type: inferredType
     };
 
-    if (normalizedOptions.length > 0 || OPTION_TYPES.has(inferredType)) {
+    if (normalizedOptions.length > 0) {
         next.options = normalizedOptions;
+        next.correctAnswer = normalizeChoiceAnswer(question.correctAnswer);
+    } else if (OPTION_TYPES.has(inferredType)) {
+        next.options = [];
         next.correctAnswer = normalizeChoiceAnswer(question.correctAnswer);
     } else {
         delete next.options;

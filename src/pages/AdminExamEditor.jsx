@@ -20,7 +20,7 @@ import {
 import universityBaseData from '../data/universityBaseData.json';
 import { MARKETING_CONFIG } from '../config/marketingConfig';
 import { SUBJECT_OPTIONS, inferSubjectIdFromLabel } from '../config/subjectConfig';
-import { EXTERNAL_AI_PROMPTS } from '../config/externalAiPrompts';
+import { EXTERNAL_AI_PROMPTS, CHATGPT_PROJECT_PROMPTS } from '../config/externalAiPrompts';
 import {
     exportQuestionsCsv,
     previewImportQuestionsCsv,
@@ -28,7 +28,9 @@ import {
     exportSectionsAnalysisCsv,
     previewImportSectionsAnalysisCsv,
     applyImportSectionsAnalysisCsv,
-    readCsvFileWithEncodingDetection
+    readCsvFileWithEncodingDetection,
+    exportBothCsvs,
+    applyImportMultiCsvs
 } from '../services/examCsvService';
 
 const normalizeAdBlockContent = (content) => {
@@ -526,6 +528,7 @@ function AdminExamEditor() {
     const [sectionsPromptType, setSectionsPromptType] = useState('auto');
     const [sectionsPromptMode, setSectionsPromptMode] = useState('verify');
     const [sectionsPromptSubject, setSectionsPromptSubject] = useState('auto');
+    const [chatgptPromptTab, setChatgptPromptTab] = useState('common_rules');
     const [csvPreviewModal, setCsvPreviewModal] = useState(null);
     const [csvPreviewTab, setCsvPreviewTab] = useState('all');
 
@@ -560,11 +563,13 @@ function AdminExamEditor() {
     const [sectionPointsBySection, setSectionPointsBySection] = useState({ 1: '', 2: '', 3: '' });
     const [sectionExpectedQuestionCounts, setSectionExpectedQuestionCounts] = useState({ 1: '', 2: '', 3: '' });
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [focusedOptionKey, setFocusedOptionKey] = useState(null);
     const savedSnapshotRef = useRef('');
     const skipUnsavedCheckRef = useRef(true);
     const dirtyCheckTimerRef = useRef(null);
     const questionsCsvInputRef = useRef(null);
     const sectionsCsvInputRef = useRef(null);
+    const multiCsvInputRef = useRef(null);
 
     const [availableDrafts, setAvailableDrafts] = useState([]);
     const [editorNotification, setEditorNotification] = useState(null);
@@ -3077,9 +3082,7 @@ function AdminExamEditor() {
                         : (typeof targetQuestion.options === 'string' && targetQuestion.options.trim())
                             ? targetQuestion.options.split(',').map(s => s.trim()).filter(Boolean)
                             : [];
-                    if (currentOptions.length === 0) {
-                        targetQuestion.options = resolveDefaultOptionsForQuestion(targetQuestion, targetSection, subjectEn);
-                    }
+                    targetQuestion.options = currentOptions;
                 }
                 if (field === 'type' && value === 'essay') {
                     targetSection.questions[qIdx] = ensureEssayCharacterCountElement(targetQuestion);
@@ -5000,12 +5003,14 @@ function AdminExamEditor() {
         }
     };
 
-    const handleDownloadExamPdf = async () => {
+    const handleDownloadExamPdf = async (silent = false) => {
         const currentExam = examDataRef.current || examData;
         const pdfUrl = currentExam?.pdf_path;
         if (!pdfUrl) {
-            alert('この試験データには全体PDFがまだ保存されていません。\n先に問題PDFをアップロード・保存してください。');
-            return;
+            if (!silent) {
+                alert('この試験データには全体PDFがまだ保存されていません。\n先に問題PDFをアップロード・保存してください。');
+            }
+            return false;
         }
 
         const u = currentExam.university || university || '大学';
@@ -5026,6 +5031,7 @@ function AdminExamEditor() {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(blobUrl);
+            return true;
         } catch (err) {
             console.warn('Direct blob download failed, falling back to direct URL download:', err);
             const a = document.createElement('a');
@@ -5036,6 +5042,7 @@ function AdminExamEditor() {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+            return true;
         }
     };
 
@@ -5147,6 +5154,183 @@ function AdminExamEditor() {
         } finally {
             if (e.target) e.target.value = '';
         }
+    };
+
+    const handleExportBothCsvsClick = (showNotice = true) => {
+        const currentExam = examDataRef.current || examData;
+        if (!currentExam?.structure?.length) {
+            alert('先に問題構造データを生成してください。');
+            return;
+        }
+        try {
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                'exam'
+            ).trim();
+
+            const exportData = {
+                ...currentExam,
+                examId: effectiveExamId,
+                id: effectiveExamId,
+                structure: currentExam.structure || structure || [],
+                university: currentExam.university || university,
+                faculty: currentExam.faculty || faculty,
+                year: currentExam.year || year,
+                subject: currentExam.subject || subject
+            };
+
+            const res = exportBothCsvs(exportData);
+            const questions = res?.questions || res?.questionsCsv;
+            const sections = res?.sections || res?.sectionsCsv;
+
+            if (!questions || !sections) {
+                throw new Error('CSV生成データの取得に失敗しました。');
+            }
+
+            // 1. Download questions CSV
+            const qBlob = questions.blob || new Blob(['\uFEFF' + (questions.content || '')], { type: 'text/csv;charset=utf-8;' });
+            const qUrl = URL.createObjectURL(qBlob);
+            const qA = document.createElement('a');
+            qA.href = qUrl;
+            qA.download = questions.filename || `${effectiveExamId}_小問解説.csv`;
+            qA.click();
+            URL.revokeObjectURL(qUrl);
+
+            // 2. Download sections CSV after short delay to prevent browser popup block
+            setTimeout(() => {
+                const sBlob = sections.blob || new Blob(['\uFEFF' + (sections.content || '')], { type: 'text/csv;charset=utf-8;' });
+                const sUrl = URL.createObjectURL(sBlob);
+                const sA = document.createElement('a');
+                sA.href = sUrl;
+                sA.download = sections.filename || `${effectiveExamId}_大問詳細解説.csv`;
+                sA.click();
+                URL.revokeObjectURL(sUrl);
+            }, 300);
+
+            if (showNotice) {
+                showEditorNotification('2つのCSV（小問解説・大問詳細解説）をダウンロードしました！');
+            }
+        } catch (err) {
+            alert('一括CSVエクスポートに失敗しました：\n' + err.message);
+        }
+    };
+
+    const handleExportThreeItemsClick = async () => {
+        const currentExam = examDataRef.current || examData;
+        if (!currentExam?.structure?.length) {
+            alert('先に問題構造データを生成してください。');
+            return;
+        }
+
+        const hasPdf = !!currentExam?.pdf_path;
+        if (!hasPdf) {
+            alert('【注意】全体問題PDFがまだ保存されていません。\nCSV 2点のみダウンロードします。\n（ChatGPTへの送信用に、事前に問題PDFをアップロード・保存してください）');
+            handleExportBothCsvsClick(true);
+            return;
+        }
+
+        // 1. Download PDF first
+        await handleDownloadExamPdf(true);
+
+        // 2. Download 2 CSVs with slight delay
+        setTimeout(() => {
+            handleExportBothCsvsClick(false);
+            showEditorNotification('3点（問題PDF＋小問CSV＋大問CSV）を一括ダウンロードしました！');
+        }, 350);
+    };
+
+    const handleMultiCsvFileSelect = async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        try {
+            const csvEntries = [];
+            for (const file of files) {
+                const text = await readCsvFileWithEncodingDetection(file);
+                csvEntries.push({ name: file.name, filename: file.name, text });
+            }
+
+            const currentExam = examDataRef.current || examData || {};
+            const effectiveExamId = (
+                currentExam.examId ||
+                currentExam.id ||
+                examId ||
+                id ||
+                (universityId && facultyId && year && subjectEn ? `${universityId}-${facultyId}-${year}-${subjectEn}`.toLowerCase() : '') ||
+                [university, faculty, year, subject].filter(Boolean).join('_') ||
+                ''
+            ).trim();
+
+            const applyResult = applyImportMultiCsvs(csvEntries, {
+                ...currentExam,
+                examId: effectiveExamId,
+                id: effectiveExamId,
+                structure: currentExam.structure || []
+            });
+
+            if (applyResult) {
+                examDataRef.current = applyResult.nextExamData;
+                setExamData(applyResult.nextExamData);
+                setHasUnsavedChanges(true);
+                if (applyResult.nextExamData?.structure) {
+                    saveGenerationDraft(applyResult.nextExamData.structure, '一括CSVインポート即時反映');
+                }
+
+                const s = applyResult.stats;
+                const errDetail = applyResult.errors?.length > 0
+                    ? `\n\n【注意・エラー】\n${applyResult.errors.slice(0, 4).join('\n')}`
+                    : '';
+
+                if (s.totalUpdated > 0) {
+                    alert(
+                        `一括CSVインポートが完了し、即座に反映しました！\n\n` +
+                        `・小問解説更新: ${s.questionsUpdated}件 (変更なし: ${s.questionsSkipped}件)\n` +
+                        `・大問詳細解説更新: ${s.sectionsUpdated}件 (変更なし: ${s.sectionsSkipped}件)\n` +
+                        (s.questionsErrors > 0 || s.sectionsErrors > 0 ? `・エラー: 小問 ${s.questionsErrors}件 / 大問 ${s.sectionsErrors}件\n` : '') +
+                        errDetail +
+                        `\n\n※ 画面上の解説が更新されました。右上の「保存」ボタンを押してデータベースに保存してください。`
+                    );
+                } else {
+                    alert(
+                        `CSVの更新対象がありませんでした（0件更新）。\n\n` +
+                        `・小問解説: 更新 0件 / スキップ ${s.questionsSkipped}件 / エラー ${s.questionsErrors}件\n` +
+                        `・大問解説: 更新 0件 / スキップ ${s.sectionsSkipped}件 / エラー ${s.sectionsErrors}件\n` +
+                        errDetail
+                    );
+                }
+            }
+        } catch (err) {
+            alert('一括CSVの読み込み・反映に失敗しました：\n' + err.message);
+        } finally {
+            if (e.target) e.target.value = '';
+        }
+    };
+
+    const handleDownloadPromptFile = (tabKey) => {
+        const item = CHATGPT_PROJECT_PROMPTS[tabKey];
+        if (!item?.prompt) return;
+        const filename = item.filename || `${tabKey}.md`;
+        const blob = new Blob([item.prompt], { type: 'text/markdown;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const handleDownloadAllPromptFiles = () => {
+        const keys = ['common_rules', 'question_rules', 'english_section', 'social_section'];
+        keys.forEach((key, index) => {
+            setTimeout(() => {
+                handleDownloadPromptFile(key);
+            }, index * 250);
+        });
+        showEditorNotification('4つの仕様書ファイル（.md）を順次ダウンロードしました！ChatGPTプロジェクトの「Project Knowledge」に追加してください。');
     };
 
     const handleApplyCsvImport = () => {
@@ -5380,63 +5564,171 @@ function AdminExamEditor() {
                                 </span>
                             </summary>
                             <div className="mt-6 pt-6 border-t border-navy-blue/5 space-y-8">
-                                {/* Direct Full Exam PDF Download Banner */}
-                                <div className="bg-gradient-to-r from-indigo-50/90 via-sky-50/70 to-indigo-50/90 border border-indigo-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
-                                    <div className="flex items-center gap-3.5">
-                                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg shadow-sm flex-shrink-0">
-                                            📄
+
+                                {/* NEW: ChatGPT Project Integration Card (Recommended) */}
+                                <div className="bg-gradient-to-br from-emerald-50/80 via-white to-teal-50/50 rounded-2xl border-2 border-emerald-500/30 p-6 shadow-sm space-y-6">
+                                    {/* Header */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-xl shadow-md shadow-emerald-200">
+                                            🚀
                                         </div>
                                         <div>
-                                            <div className="flex items-center gap-2 mb-0.5">
-                                                <h4 className="text-xs font-black text-indigo-950">登録済み問題PDF（全体）</h4>
-                                                {examData?.pdf_path ? (
-                                                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black border border-emerald-200">
-                                                        保存済み
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-black border border-amber-200">
-                                                        未保存（上部でアップロード必要）
-                                                    </span>
-                                                )}
+                                            <div className="flex items-center gap-2">
+                                                <h4 className="text-base font-black text-gray-900">ChatGPTプロジェクト連携（小問＆大問 一括完結）</h4>
+                                                <span className="text-[10px] font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full shadow-xs">
+                                                    推奨・1回の指示で両方完成
+                                                </span>
                                             </div>
-                                            <p className="text-[11px] text-indigo-900/70 font-medium">
-                                                外部AI（ChatGPT / Claude等）に小問解説CSVや大問詳細解説CSVと一緒に渡す問題原本PDFを、ワンクリックでダウンロードできます。
+                                            <p className="text-xs text-gray-600 mt-0.5">
+                                                ChatGPTの「Project」機能の『情報源（Project Knowledge）』に仕様書を入れておくことで、<strong>1回の会話で小問解説と大問詳細解説の両方を同時に作成</strong>できます。
                                             </p>
                                         </div>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleDownloadExamPdf}
-                                        disabled={!examData?.pdf_path}
-                                        className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
-                                        title={examData?.pdf_path ? '全体問題PDFをダウンロード' : '全体問題PDFが保存されていません'}
-                                    >
-                                        <span>📥</span>
-                                        <span>全体問題PDFをダウンロード</span>
-                                    </button>
+
+                                    {/* 【初回のみ】STEP 1: プロジェクト情報源 & 指示の登録 */}
+                                    <div className="bg-white rounded-xl border border-indigo-200 p-4 sm:p-5 shadow-xs space-y-4">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                                            <div className="flex items-center gap-2.5">
+                                                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white font-mono font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-xs">
+                                                    ①
+                                                </span>
+                                                <h5 className="font-black text-gray-900 text-sm">STEP ① 【初回のみ】ChatGPTプロジェクトの設定（事前準備）</h5>
+                                            </div>
+                                            <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full w-fit">
+                                                ※ 1回設定すれば以降は無言送信（ファイル添付のみ）でOK
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {/* ①-A: 情報源（Knowledge） */}
+                                            <div className="bg-indigo-50/50 rounded-xl border border-indigo-100 p-3.5 flex flex-col justify-between space-y-3">
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-black text-indigo-950 text-xs sm:text-sm">①-A. 仕様書を情報源（Knowledge）に登録</span>
+                                                    </div>
+                                                    <p className="text-gray-600 text-xs leading-relaxed">
+                                                        全4仕様書（ZIP）をダウンロード・解凍し、ChatGPTプロジェクト設定の<strong>「Project Knowledge（情報源）」</strong>にドラッグ＆ドロップしてください。
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDownloadAllPromptFiles()}
+                                                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                                                >
+                                                    📦 ①-A 仕様書（4ファイル）を一括DL
+                                                </button>
+                                            </div>
+
+                                            {/* ①-B: プロジェクト指示（Instructions） */}
+                                            <div className="bg-indigo-50/50 rounded-xl border border-indigo-100 p-3.5 flex flex-col justify-between space-y-3">
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-black text-indigo-950 text-xs sm:text-sm">①-B. 指示用プロンプトを「指示」に埋め込み</span>
+                                                    </div>
+                                                    <p className="text-gray-600 text-xs leading-relaxed">
+                                                        このプロンプトをコピーして、ChatGPTプロジェクト設定の<strong>「Instructions（指示）」</strong>に貼り付けてください。<strong>無言でPDFとCSVを送るだけで自動生成</strong>されます。
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        navigator.clipboard.writeText(CHATGPT_PROJECT_PROMPTS.instructions.prompt);
+                                                        alert('【プロジェクト指示用プロンプト】をクリップボードにコピーしました！\n\nChatGPTプロジェクト設定の「Instructions（指示）」欄に貼り付けて保存してください。\nこれにより、次回から問題PDFとCSVを添付して無言送信するだけで自動生成されます！');
+                                                    }}
+                                                    className="w-full py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg text-xs font-black shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                                                >
+                                                    📋 ①-B 指示用プロンプトをコピー
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 【毎回の手順】STEP 2 〜 3 (2列カード) */}
+                                    <div>
+                                        <div className="text-xs font-black text-gray-700 mb-2.5 flex items-center gap-1.5">
+                                            <span>⚡ 試験ごとの作成フロー（STEP ② ➔ ③）</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            {/* STEP 2: エクスポート */}
+                                            <div className="bg-white rounded-xl border border-emerald-500/20 p-4 flex flex-col justify-between shadow-xs hover:border-emerald-500/40 transition-all">
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-mono font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-xs">
+                                                            ②
+                                                        </span>
+                                                        <h5 className="font-black text-gray-900 text-xs sm:text-sm">CSV・PDFを書き出し</h5>
+                                                    </div>
+                                                    <p className="text-gray-500 text-xs leading-relaxed">
+                                                        問題PDF・小問CSV・大問CSVの3点をDLし、<strong>ChatGPTにそのまま添付して送信（無言送信でOK）</strong>します。
+                                                    </p>
+                                                </div>
+                                                <div className="pt-3 mt-3 border-t border-gray-100 space-y-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleExportThreeItemsClick}
+                                                        className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-200 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                                                        title="問題PDF・小問CSV・大問詳細解説CSVの3点をまとめてダウンロードします"
+                                                    >
+                                                        📦 ② CSV＋PDFの3点を一括DL
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleExportBothCsvsClick(true)}
+                                                        className="w-full py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                                                        title="小問解説CSVと大問詳細解説CSVの2点のみをダウンロードします"
+                                                    >
+                                                        📤 2つのCSVのみエクスポート
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* STEP 3: インポート */}
+                                            <div className="bg-white rounded-xl border border-emerald-500/20 p-4 flex flex-col justify-between shadow-xs hover:border-emerald-500/40 transition-all">
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-mono font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-xs">
+                                                            ③
+                                                        </span>
+                                                        <h5 className="font-black text-gray-900 text-xs sm:text-sm">完成CSVを取り込み</h5>
+                                                    </div>
+                                                    <p className="text-gray-500 text-xs leading-relaxed">
+                                                        ChatGPTが出力したCSV（_修正版.csv）を選択するだけで自動判別し、即座に反映＆保存されます。
+                                                    </p>
+                                                    <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-lg px-2.5 py-1.5 leading-snug">
+                                                        💡 <strong>2ファイル同時</strong>のほか、小問・大問の<strong>片方ずつの取り込みも可能</strong>です（自動判別）。
+                                                    </div>
+                                                </div>
+                                                <div className="pt-3 mt-3 border-t border-gray-100">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => multiCsvInputRef.current?.click()}
+                                                        className="w-full py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-black shadow-md shadow-green-200 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                                                    >
+                                                        📥 ③ 完成CSVを取り込み（1〜2個）
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 隠しinput */}
+                                    <input
+                                        ref={multiCsvInputRef}
+                                        type="file"
+                                        multiple
+                                        accept=".csv,text/csv"
+                                        style={{ display: 'none' }}
+                                        className="hidden"
+                                        onChange={handleMultiCsvFileSelect}
+                                    />
+
                                 </div>
 
-                                {/* Workflow overview */}
-                                <div className="bg-navy-blue/[0.02] border border-navy-blue/10 rounded-2xl p-5">
-                                    <p className="font-black text-navy-blue uppercase tracking-widest text-[10px] mb-2">運用フロー（原本PDFとCSVの照合）</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-600">
-                                        <div className="flex gap-2.5 items-start">
-                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">1</span>
-                                            <span>目的のCSV（小問解説 または 大問詳細解説）をエクスポート</span>
-                                        </div>
-                                        <div className="flex gap-2.5 items-start">
-                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">2</span>
-                                            <span>外部AIに問題PDF＋CSV＋指示プロンプトを渡し、解説列を埋めてもらう（解答PDFは渡さない）</span>
-                                        </div>
-                                        <div className="flex gap-2.5 items-start">
-                                            <span className="font-mono font-black text-navy-blue bg-navy-blue/10 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px]">3</span>
-                                            <span>AIが返したCSVをインポートし、プレビュー画面で差分・安全性を確認して反映＆保存</span>
-                                        </div>
-                                    </div>
-                                    <div className="mt-3 text-[11px] leading-relaxed bg-amber-50 text-amber-900 border border-amber-200/70 rounded-xl p-2.5 font-bold space-y-1">
-                                        <div>⚠️ 解答PDFを外部AIに渡す必要はありません（CSV内の correct_answer 列を参照させます）。</div>
-                                        <div className="text-red-700">⚠️ 【最重要】外部AIが気を利かせて「解説バージョン」列（例: 2→3）を勝手に繰り上げて出力してしまうと、インポート時にバージョン不一致エラーになります。AIにはプロンプトの指示通り、バージョン列やID列の数値をエクスポート時のまま変更せず出力させてください。</div>
-                                    </div>
+                                <div className="relative flex py-2 items-center">
+                                    <div className="flex-grow border-t border-gray-200"></div>
+                                    <span className="flex-shrink mx-4 text-xs font-bold text-gray-400">または 個別に小問／大問を連携する場合</span>
+                                    <div className="flex-grow border-t border-gray-200"></div>
                                 </div>
 
                                 {/* 2 Separated Cards Grid */}
@@ -5492,6 +5784,7 @@ function AdminExamEditor() {
                                                             ref={questionsCsvInputRef}
                                                             type="file"
                                                             accept=".csv,text/csv"
+                                                            style={{ display: 'none' }}
                                                             className="hidden"
                                                             onChange={handleQuestionsCsvFileSelect}
                                                         />
@@ -5633,6 +5926,7 @@ function AdminExamEditor() {
                                                             ref={sectionsCsvInputRef}
                                                             type="file"
                                                             accept=".csv,text/csv"
+                                                            style={{ display: 'none' }}
                                                             className="hidden"
                                                             onChange={handleSectionsCsvFileSelect}
                                                         />
@@ -6897,6 +7191,11 @@ function AdminExamEditor() {
                                                 小問解説 未生成 {missingExplanationCount}件
                                             </span>
                                         )}
+                                        {descriptiveWithChoiceCount > 0 && (
+                                            <span className="shrink-0 bg-amber-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full inline-flex items-center gap-1 shadow-sm animate-pulse">
+                                                ⚠️ 要確認(記号解答): {descriptiveWithChoiceCount}件
+                                            </span>
+                                        )}
                                         {activeGenerationLabel && (
                                             <span className="shrink-0 bg-indigo-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full inline-flex items-center gap-2 shadow-sm">
                                                 <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
@@ -6909,11 +7208,11 @@ function AdminExamEditor() {
                                             <button
                                                 type="button"
                                                 onClick={() => handleConvertDescriptiveToSelection(sIdx)}
-                                                className="text-[11px] font-black text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-3 py-2 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
-                                                title={`正解が記号(b, 2等)の記述問題${descriptiveWithChoiceCount}件を、選択問題(4択)に一括変換`}
+                                                className="text-[11px] font-black text-amber-950 bg-amber-200 hover:bg-amber-300 border-2 border-amber-400 px-3.5 py-2 rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                                                title={`正解が記号(b, 2, ア等)の記述問題${descriptiveWithChoiceCount}件を、選択問題に一括変換`}
                                             >
-                                                <span>⚡</span>
-                                                <span>記号正解を選択化 ({descriptiveWithChoiceCount}問)</span>
+                                                <span>⚠️ ⚡</span>
+                                                <span>要確認: 記号解答を選択化 ({descriptiveWithChoiceCount}問)</span>
                                             </button>
                                         )}
                                         <button
@@ -6994,7 +7293,8 @@ function AdminExamEditor() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
-                                            {section.questions.map((q, qIdx) => {
+                                             {section.questions.map((q, qIdx) => {
+                                                const isDescriptiveWithChoiceAnswer = (q.type === 'descriptive' || !q.type) && isSingleChoiceSymbol(q.correctAnswer);
                                                 const essayNeedsCriteria = q.type === 'essay';
                                                 const explanationMissing = isQuestionExplanationMissing(q);
                                                 const essayCriteriaDone = Boolean(
@@ -7005,7 +7305,9 @@ function AdminExamEditor() {
                                                         Number.isFinite(Number(item?.points))
                                                     ))
                                                 );
-                                                const rowClassName = explanationMissing
+                                                const rowClassName = isDescriptiveWithChoiceAnswer
+                                                    ? 'bg-amber-50 hover:bg-amber-100/70 transition-colors ring-2 ring-inset ring-amber-400 border-l-4 border-l-amber-500'
+                                                    : explanationMissing
                                                     ? 'bg-amber-50/70 hover:bg-amber-50 transition-colors ring-1 ring-inset ring-amber-200'
                                                     : essayNeedsCriteria
                                                     ? essayCriteriaDone
@@ -7016,10 +7318,25 @@ function AdminExamEditor() {
                                                 <tr key={qIdx} className={rowClassName}>
                                                     <td className="px-6 py-4"><input type="text" value={q.id} onChange={e => handleStructureChange(sIdx, qIdx, 'id', e.target.value)} className="w-12 p-3 rounded-xl border border-gray-100 text-xs font-black bg-gray-50/30" /></td>
                                                     <td className="px-6 py-4"><input type="text" value={q.label} onChange={e => handleStructureChange(sIdx, qIdx, 'label', e.target.value)} className="w-16 p-3 rounded-xl border border-gray-100 text-xs font-bold" /></td>
-                                                                                                        <td className="px-6 py-4">
+                                                    <td className="px-6 py-4">
                                                         <div className="flex flex-col gap-2">
+                                                            {isDescriptiveWithChoiceAnswer && (
+                                                                <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-500 text-white rounded-md shadow-xs animate-pulse w-fit">
+                                                                    <span className="text-[9px] font-black whitespace-nowrap">⚠️ 要確認: 解答が記号「{q.correctAnswer}」</span>
+                                                                </div>
+                                                            )}
                                                             <div className="flex items-center gap-1">
-                                                                <select value={q.type || 'selection'} onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)} className={`w-[120px] p-2 rounded-xl border text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30 ${essayNeedsCriteria && !essayCriteriaDone ? 'border-red-200 text-red-700' : 'border-gray-100'}`}>
+                                                                <select
+                                                                    value={q.type || 'selection'}
+                                                                    onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)}
+                                                                    className={`w-[120px] p-2 rounded-xl border text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30 ${
+                                                                        isDescriptiveWithChoiceAnswer
+                                                                            ? 'border-amber-400 ring-2 ring-amber-200 text-amber-950 bg-amber-50/50'
+                                                                            : essayNeedsCriteria && !essayCriteriaDone
+                                                                            ? 'border-red-200 text-red-700'
+                                                                            : 'border-gray-100'
+                                                                    }`}
+                                                                >
                                                                     <option value="selection">選択(一つ選択)</option>
                                                                     <option value="selection_multi">選択(複数選択)</option>
                                                                     <option value="ordering">並び替え</option>
@@ -7057,74 +7374,131 @@ function AdminExamEditor() {
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            {['selection', 'selection_multi', 'ordering'].includes(q.type) && (
-                                                                <div className="space-y-1">
-                                                                    <input 
-                                                                        type="text" 
-                                                                        value={Array.isArray(q.options) ? q.options.join(',') : (q.options || '')} 
-                                                                        onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
-                                                                        placeholder={q.type === 'ordering' ? "並び替え候補(a,b,c)" : "選択肢(a,b,c)"}
-                                                                        className="w-full min-w-[110px] p-2 rounded-lg border border-gray-100 text-[10px] bg-white transition-all shadow-sm" 
-                                                                        title="カンマ区切りで入力（例: a,b,c,d）"
-                                                                    />
-                                                                    <div className="flex flex-wrap items-center gap-1">
-                                                                        {[
-                                                                            { label: 'a-d', value: 'a,b,c,d' },
-                                                                            { label: 'a-e', value: 'a,b,c,d,e' },
-                                                                            { label: '1-4', value: '1,2,3,4' },
-                                                                            { label: '1-5', value: '1,2,3,4,5' },
-                                                                            { label: 'ア-エ', value: 'ア,イ,ウ,エ' },
-                                                                        ].map(preset => (
-                                                                            <button
-                                                                                key={preset.label}
-                                                                                type="button"
-                                                                                onClick={() => handleStructureChange(sIdx, qIdx, 'options', preset.value)}
-                                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-500 transition-colors border border-gray-200/60 cursor-pointer"
-                                                                                title={`選択肢を「${preset.value}」に設定`}
-                                                                            >
-                                                                                {preset.label}
-                                                                            </button>
-                                                                        ))}
+                                                            {['selection', 'selection_multi', 'ordering'].includes(q.type) && (() => {
+                                                                const optionKey = `${sIdx}-${qIdx}`;
+                                                                const currentVal = Array.isArray(q.options) ? q.options.join(',') : (q.options || '');
+                                                                const suggestedFromAnswer = buildDefaultOptionsForChoiceAnswer(q.correctAnswer);
+                                                                const suggestedList = (suggestedFromAnswer && suggestedFromAnswer.length > 0)
+                                                                    ? suggestedFromAnswer
+                                                                    : resolveDefaultOptionsForQuestion(q, section, subjectEn);
+                                                                const suggestedStr = suggestedList && suggestedList.length > 0 ? suggestedList.join(',') : '';
+                                                                const isFocused = focusedOptionKey === optionKey;
+                                                                const isUnset = !currentVal.trim();
+                                                                // 入力を試みようとした時（フォーカス時）、または現在未入力の時にお勧めを表示
+                                                                const showSuggestion = Boolean(suggestedStr && currentVal !== suggestedStr && (isFocused || isUnset));
+
+                                                                return (
+                                                                    <div className="space-y-1.5">
+                                                                        <input 
+                                                                            type="text" 
+                                                                            value={currentVal} 
+                                                                            onChange={e => handleStructureChange(sIdx, qIdx, 'options', e.target.value)} 
+                                                                            onFocus={() => setFocusedOptionKey(optionKey)}
+                                                                            onBlur={() => {
+                                                                                setTimeout(() => {
+                                                                                    setFocusedOptionKey(prev => prev === optionKey ? null : prev);
+                                                                                }, 250);
+                                                                            }}
+                                                                            placeholder={q.type === 'ordering' ? "並び替え候補(a,b,c)" : "選択肢(a,b,c)"}
+                                                                            className={`w-full min-w-[110px] p-2 rounded-lg border text-[10px] bg-white transition-all shadow-sm ${
+                                                                                isFocused ? 'border-amber-400 ring-2 ring-amber-100' : 'border-gray-200'
+                                                                            }`} 
+                                                                            title="カンマ区切りで入力（例: a,b,c,d）"
+                                                                        />
+                                                                        {showSuggestion && (
+                                                                            <div className="flex items-center gap-1.5 p-1 bg-amber-50 border border-amber-300 rounded-md shadow-xs animate-in fade-in duration-150">
+                                                                                <span className="text-[9px] font-black text-amber-800 flex items-center gap-0.5 whitespace-nowrap">
+                                                                                    💡 解答「{q.correctAnswer || '―'}」から推測:
+                                                                                </span>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onMouseDown={(e) => {
+                                                                                        e.preventDefault();
+                                                                                        handleStructureChange(sIdx, qIdx, 'options', suggestedStr);
+                                                                                        setFocusedOptionKey(null);
+                                                                                    }}
+                                                                                    className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 hover:bg-amber-600 text-white shadow-xs transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+                                                                                    title={`クリックすると選択肢に「${suggestedStr}」を入力します`}
+                                                                                >
+                                                                                    【{suggestedStr}】を適用
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="flex flex-wrap items-center gap-1">
+                                                                            {[
+                                                                                { label: 'a-d', value: 'a,b,c,d' },
+                                                                                { label: 'a-e', value: 'a,b,c,d,e' },
+                                                                                { label: '1-4', value: '1,2,3,4' },
+                                                                                { label: '1-5', value: '1,2,3,4,5' },
+                                                                                { label: 'ア-エ', value: 'ア,イ,ウ,エ' },
+                                                                            ].map(preset => (
+                                                                                <button
+                                                                                    key={preset.label}
+                                                                                    type="button"
+                                                                                    onClick={() => handleStructureChange(sIdx, qIdx, 'options', preset.value)}
+                                                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-500 transition-colors border border-gray-200/60 cursor-pointer"
+                                                                                    title={`選択肢を「${preset.value}」に設定`}
+                                                                                >
+                                                                                    {preset.label}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
                                                                     </div>
-                                                                </div>
-                                                            )}
-                                                            {q.type === 'descriptive' && (
+                                                                );
+                                                            })()}
+                                                             {q.type === 'descriptive' && (
                                                                 <div className="flex flex-wrap items-center gap-1 mt-0.5">
-                                                                    <span className="text-[9px] text-gray-400 font-bold">変換:</span>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
-                                                                            const def = resolveDefaultOptionsForQuestion(q, section, subjectEn);
-                                                                            handleStructureChange(sIdx, qIdx, 'options', def.join(','));
-                                                                        }}
-                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors border border-purple-200 cursor-pointer"
-                                                                        title="形式を「選択(一つ選択)」にして正解記号から選択肢を自動セット"
-                                                                    >
-                                                                        ⚡ 選択化
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
-                                                                            handleStructureChange(sIdx, qIdx, 'options', 'a,b,c,d');
-                                                                        }}
-                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
-                                                                        title="形式を「選択」にし、a,b,c,dをセット"
-                                                                    >
-                                                                        a-d
-                                                                    </button>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            handleStructureChange(sIdx, qIdx, 'type', 'selection');
-                                                                            handleStructureChange(sIdx, qIdx, 'options', '1,2,3,4');
-                                                                        }}
-                                                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
-                                                                        title="形式を「選択」にし、1,2,3,4をセット"
-                                                                    >
-                                                                        1-4
-                                                                    </button>
+                                                                    {isDescriptiveWithChoiceAnswer ? (
+                                                                        <div className="flex items-center gap-1.5 p-1 bg-amber-100/90 border border-amber-300 rounded-md">
+                                                                            <span className="text-[9px] font-black text-amber-900">
+                                                                                ⚠️ 選択問題の可能性:
+                                                                            </span>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleStructureChange(sIdx, qIdx, 'type', 'selection')}
+                                                                                className="text-[9px] font-black px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+                                                                                title="形式を「選択(一つ選択)」に変更します"
+                                                                            >
+                                                                                ⚡ 選択問題に変更
+                                                                            </button>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <>
+                                                                            <span className="text-[9px] text-gray-400 font-bold">変換:</span>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                                }}
+                                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 transition-colors border border-purple-200 cursor-pointer"
+                                                                                title="形式を「選択(一つ選択)」に変更（選択肢は候補から選ぶか入力できます）"
+                                                                            >
+                                                                                ⚡ 選択化
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                                    handleStructureChange(sIdx, qIdx, 'options', 'a,b,c,d');
+                                                                                }}
+                                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
+                                                                                title="形式を「選択」にし、a,b,c,dをセット"
+                                                                            >
+                                                                                a-d
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    handleStructureChange(sIdx, qIdx, 'type', 'selection');
+                                                                                    handleStructureChange(sIdx, qIdx, 'options', '1,2,3,4');
+                                                                                }}
+                                                                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 hover:bg-indigo-50 hover:text-indigo-600 text-gray-600 transition-colors border border-gray-200/80 cursor-pointer"
+                                                                                title="形式を「選択」にし、1,2,3,4をセット"
+                                                                            >
+                                                                                1-4
+                                                                            </button>
+                                                                        </>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                             {['selection', 'selection_multi', 'descriptive'].includes(q.type) && (
@@ -7178,7 +7552,31 @@ function AdminExamEditor() {
                                                     </td>
                                                     <td className="px-6 py-4"><input type="text" inputMode="numeric" pattern="[0-9]*" value={q.points} onChange={e => handleStructureChange(sIdx, qIdx, 'points', parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0)} className="w-14 p-3 rounded-xl border border-gray-100 text-xs font-black text-indigo-600 bg-indigo-50/30" /></td>
                                                     <td className="px-6 py-4">
-                                                        <input type="text" value={q.correctAnswer} onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} className="w-full min-w-[120px] p-3 rounded-xl border border-gray-100 text-xs font-bold" />
+                                                        <input 
+                                                            type="text" 
+                                                            value={q.correctAnswer} 
+                                                            onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} 
+                                                            className={`w-full min-w-[120px] p-3 rounded-xl border text-xs font-bold transition-all ${
+                                                                isDescriptiveWithChoiceAnswer
+                                                                    ? 'border-amber-400 bg-amber-50/70 ring-2 ring-amber-300 text-amber-950 font-black'
+                                                                    : 'border-gray-100'
+                                                            }`} 
+                                                        />
+                                                        {isDescriptiveWithChoiceAnswer && (
+                                                            <div className="mt-1 flex items-center justify-between gap-1 p-1 bg-amber-100/90 border border-amber-300 rounded-md">
+                                                                <span className="text-[9px] font-black text-amber-900 leading-tight">
+                                                                    ⚠️ 解答「{q.correctAnswer}」は記号です
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleStructureChange(sIdx, qIdx, 'type', 'selection')}
+                                                                    className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white shadow-xs whitespace-nowrap cursor-pointer active:scale-95"
+                                                                    title="選択問題に変更します"
+                                                                >
+                                                                    選択式に変更
+                                                                </button>
+                                                            </div>
+                                                        )}
                                                         {q.type === 'essay' && (
                                                             <div className="mt-2 flex flex-col gap-1">
                                                                 <button
