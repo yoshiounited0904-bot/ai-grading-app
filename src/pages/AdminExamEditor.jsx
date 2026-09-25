@@ -7166,10 +7166,20 @@ function AdminExamEditor() {
 
                     <div className="space-y-12">
                         {examData?.structure?.map((section, sIdx) => {
+                            const isSingleAnswerSymbol = (ans) => {
+                                if (!ans) return false;
+                                const s = String(ans).trim();
+                                if (!s || s.includes(',') || s.includes('、')) return false;
+                                return isSingleChoiceSymbol(s) || s.length === 1;
+                            };
                             const missingExplanationCount = (section.questions || []).filter(isQuestionExplanationMissing).length;
                             const descriptiveWithChoiceCount = (section.questions || []).filter(
                                 q => (q.type === 'descriptive' || !q.type) && isSingleChoiceSymbol(q.correctAnswer)
                             ).length;
+                            const multiOrOrderingSingleAnswerCount = (section.questions || []).filter(
+                                q => (q.type === 'selection_multi' || q.type === 'ordering') && isSingleAnswerSymbol(q.correctAnswer)
+                            ).length;
+                            const totalNeedsCheckCount = descriptiveWithChoiceCount + multiOrOrderingSingleAnswerCount;
                             const activeGenerationPhase = sectionGenerationPhases[sIdx + 1];
                             const activeGenerationLabel = GENERATION_PHASE_LABELS[activeGenerationPhase] || '';
                             return (
@@ -7191,9 +7201,11 @@ function AdminExamEditor() {
                                                 小問解説 未生成 {missingExplanationCount}件
                                             </span>
                                         )}
-                                        {descriptiveWithChoiceCount > 0 && (
+                                        {totalNeedsCheckCount > 0 && (
                                             <span className="shrink-0 bg-amber-500 text-white text-[10px] font-black px-3 py-1.5 rounded-full inline-flex items-center gap-1 shadow-sm animate-pulse">
-                                                ⚠️ 要確認(記号解答): {descriptiveWithChoiceCount}件
+                                                ⚠️ 要確認: {totalNeedsCheckCount}件
+                                                {descriptiveWithChoiceCount > 0 && `(記号記述${descriptiveWithChoiceCount})`}
+                                                {multiOrOrderingSingleAnswerCount > 0 && `(単一正解${multiOrOrderingSingleAnswerCount})`}
                                             </span>
                                         )}
                                         {activeGenerationLabel && (
@@ -7295,6 +7307,8 @@ function AdminExamEditor() {
                                         <tbody className="divide-y divide-gray-50">
                                              {section.questions.map((q, qIdx) => {
                                                 const isDescriptiveWithChoiceAnswer = (q.type === 'descriptive' || !q.type) && isSingleChoiceSymbol(q.correctAnswer);
+                                                const isMultiOrOrderingWithSingleAnswer = (q.type === 'selection_multi' || q.type === 'ordering') && isSingleAnswerSymbol(q.correctAnswer);
+                                                const isNeedsCheck = isDescriptiveWithChoiceAnswer || isMultiOrOrderingWithSingleAnswer;
                                                 const essayNeedsCriteria = q.type === 'essay';
                                                 const explanationMissing = isQuestionExplanationMissing(q);
                                                 const essayCriteriaDone = Boolean(
@@ -7305,7 +7319,7 @@ function AdminExamEditor() {
                                                         Number.isFinite(Number(item?.points))
                                                     ))
                                                 );
-                                                const rowClassName = isDescriptiveWithChoiceAnswer
+                                                const rowClassName = isNeedsCheck
                                                     ? 'bg-amber-50 hover:bg-amber-100/70 transition-colors ring-2 ring-inset ring-amber-400 border-l-4 border-l-amber-500'
                                                     : explanationMissing
                                                     ? 'bg-amber-50/70 hover:bg-amber-50 transition-colors ring-1 ring-inset ring-amber-200'
@@ -7325,12 +7339,19 @@ function AdminExamEditor() {
                                                                     <span className="text-[9px] font-black whitespace-nowrap">⚠️ 要確認: 解答が記号「{q.correctAnswer}」</span>
                                                                 </div>
                                                             )}
+                                                            {isMultiOrOrderingWithSingleAnswer && (
+                                                                <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-500 text-white rounded-md shadow-xs animate-pulse w-fit">
+                                                                    <span className="text-[9px] font-black whitespace-nowrap">
+                                                                        ⚠️ 要確認: {q.type === 'ordering' ? '並び替え' : '複数選択'}ですが解答が1つ「{q.correctAnswer}」
+                                                                    </span>
+                                                                </div>
+                                                            )}
                                                             <div className="flex items-center gap-1">
                                                                 <select
                                                                     value={q.type || 'selection'}
                                                                     onChange={e => handleStructureChange(sIdx, qIdx, 'type', e.target.value)}
                                                                     className={`w-[120px] p-2 rounded-xl border text-[10px] font-bold bg-white outline-none focus:border-navy-blue/30 ${
-                                                                        isDescriptiveWithChoiceAnswer
+                                                                        isNeedsCheck
                                                                             ? 'border-amber-400 ring-2 ring-amber-200 text-amber-950 bg-amber-50/50'
                                                                             : essayNeedsCriteria && !essayCriteriaDone
                                                                             ? 'border-red-200 text-red-700'
@@ -7501,6 +7522,21 @@ function AdminExamEditor() {
                                                                     )}
                                                                 </div>
                                                             )}
+                                                            {isMultiOrOrderingWithSingleAnswer && (
+                                                                <div className="flex items-center gap-1.5 p-1 bg-amber-100/90 border border-amber-300 rounded-md mt-1">
+                                                                    <span className="text-[9px] font-black text-amber-900 whitespace-nowrap">
+                                                                        💡 単一選択の可能性:
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleStructureChange(sIdx, qIdx, 'type', 'selection')}
+                                                                        className="text-[9px] font-black px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+                                                                        title="形式を「選択(一つ選択)」に変更します"
+                                                                    >
+                                                                        ⚡ 単一選択に変更
+                                                                    </button>
+                                                                </div>
+                                                            )}
                                                             {['selection', 'selection_multi', 'descriptive'].includes(q.type) && (
                                                                 <select
                                                                     value={q.answerIssue || ''}
@@ -7557,7 +7593,7 @@ function AdminExamEditor() {
                                                             value={q.correctAnswer} 
                                                             onChange={e => handleStructureChange(sIdx, qIdx, 'correctAnswer', e.target.value)} 
                                                             className={`w-full min-w-[120px] p-3 rounded-xl border text-xs font-bold transition-all ${
-                                                                isDescriptiveWithChoiceAnswer
+                                                                isNeedsCheck
                                                                     ? 'border-amber-400 bg-amber-50/70 ring-2 ring-amber-300 text-amber-950 font-black'
                                                                     : 'border-gray-100'
                                                             }`} 
@@ -7574,6 +7610,21 @@ function AdminExamEditor() {
                                                                     title="選択問題に変更します"
                                                                 >
                                                                     選択式に変更
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                        {isMultiOrOrderingWithSingleAnswer && (
+                                                            <div className="mt-1 flex items-center justify-between gap-1 p-1 bg-amber-100/90 border border-amber-300 rounded-md">
+                                                                <span className="text-[9px] font-black text-amber-900 leading-tight">
+                                                                    ⚠️ {q.type === 'ordering' ? '並び替え' : '複数選択'}ですが解答が1つのみ（{q.correctAnswer}）
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleStructureChange(sIdx, qIdx, 'type', 'selection')}
+                                                                    className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white shadow-xs whitespace-nowrap cursor-pointer active:scale-95"
+                                                                    title="単一選択に変更します"
+                                                                >
+                                                                    単一選択に変更
                                                                 </button>
                                                             </div>
                                                         )}
