@@ -1635,32 +1635,32 @@ function AdminDashboard() {
                                                 const isAiChecked = Boolean(exam.is_ai_checked);
 
                                                 const rowBgClass = isAiChecked
-                                                    ? 'bg-emerald-50/70 group-hover:bg-emerald-100/60'
-                                                    : 'bg-white group-hover:bg-gray-50/50';
+                                                    ? 'bg-emerald-50'
+                                                    : 'bg-white group-hover:bg-gray-50';
                                                 const rowShadowClass = isAiChecked
-                                                    ? 'shadow-md shadow-emerald-500/10'
+                                                    ? 'shadow-md'
                                                     : 'shadow-sm';
 
                                                 const leftCellClass = `${rowBgClass} px-3 py-2 rounded-l-2xl ${
                                                     isAiChecked
-                                                        ? 'border-y-2 border-l-4 border-y-emerald-300 border-l-emerald-500 group-hover:border-y-emerald-400 group-hover:border-l-emerald-600'
-                                                        : 'border-y-2 border-l-2 border-gray-100 group-hover:border-navy-blue/30'
+                                                        ? 'border-y-2 border-l-6 border-emerald-300 border-l-emerald-600'
+                                                        : 'border-y-2 border-l-2 border-gray-100'
                                                 } ${rowShadowClass}`;
 
                                                 const midCellClass = `${rowBgClass} px-3 py-2 border-y-2 ${
                                                     isAiChecked
-                                                        ? 'border-y-emerald-300 group-hover:border-y-emerald-400'
-                                                        : 'border-y-gray-100 group-hover:border-navy-blue/30'
+                                                        ? 'border-emerald-300'
+                                                        : 'border-gray-100'
                                                 } ${rowShadowClass}`;
 
                                                 const rightCellClass = `${rowBgClass} px-3 py-2 rounded-r-2xl border-y-2 border-r-2 ${
                                                     isAiChecked
-                                                        ? 'border-emerald-300 group-hover:border-emerald-400'
-                                                        : 'border-gray-100 group-hover:border-navy-blue/30'
+                                                        ? 'border-emerald-300'
+                                                        : 'border-gray-100'
                                                 } ${rowShadowClass}`;
 
                                                 return (
-                                                <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''} ${selectedExams.has(exam.id) ? 'bg-indigo-50/50' : ''} ${hasMissingCriteria || hasPointMismatch || hasMissingExplanation || hasMissingDetailedExplanation ? 'ring-2 ring-red-100 rounded-2xl' : ''}`}>
+                                                <tr key={exam.id} className={`group hover:-translate-y-0.5 transition-all duration-300 ${isAiChecked ? 'exam-row-ai-checked' : 'exam-row-normal'} ${exam.is_completed ? 'opacity-70 hover:opacity-100' : ''} ${selectedExams.has(exam.id) ? 'bg-indigo-50' : ''} ${hasMissingCriteria || hasPointMismatch || hasMissingExplanation || hasMissingDetailedExplanation ? 'ring-2 ring-red-100 rounded-2xl' : ''}`}>
                                                     {/* Checkbox */}
                                                     <td className={`${leftCellClass} text-center`}>
                                                         <input 
@@ -1675,11 +1675,11 @@ function AdminDashboard() {
                                                         <div className="flex flex-col">
                                                             {isAiChecked && (
                                                                 <div className="flex items-center gap-1.5 mb-1.5">
-                                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm tracking-wide">
+                                                                    <span className="ai-checked-badge">
                                                                         <span>🤖</span> AIチェック済
                                                                     </span>
                                                                     {exam.ai_checked_at && (
-                                                                        <span className="text-[10px] font-bold text-emerald-700/80">
+                                                                        <span className="text-[10px] font-bold text-emerald-800">
                                                                             {new Date(exam.ai_checked_at).toLocaleDateString('ja-JP')}
                                                                         </span>
                                                                     )}
@@ -1704,8 +1704,8 @@ function AdminDashboard() {
                                                                     }}
                                                                     className={`w-full rounded-md border px-2 py-1 text-base font-black leading-tight outline-none focus:bg-white ${
                                                                         isAiChecked
-                                                                            ? 'border-emerald-300 bg-emerald-100/50 text-emerald-950 focus:border-emerald-500'
-                                                                            : 'border-indigo-200 bg-indigo-50/40 text-navy-blue focus:border-indigo-500'
+                                                                            ? 'border-emerald-300 bg-emerald-100 text-emerald-950 focus:border-emerald-500'
+                                                                            : 'border-indigo-200 bg-indigo-50 text-navy-blue focus:border-indigo-500'
                                                                     }`}
                                                                 />
                                                             ) : (
@@ -1714,7 +1714,7 @@ function AdminDashboard() {
                                                                     onClick={() => beginFacultyEdit(exam)}
                                                                     className={`text-left text-base font-black leading-tight hover:underline underline-offset-4 ${
                                                                         isAiChecked
-                                                                            ? 'text-emerald-950 hover:text-emerald-700 decoration-emerald-400'
+                                                                            ? 'ai-checked-faculty-name hover:text-emerald-700 decoration-emerald-400'
                                                                             : 'text-navy-blue hover:text-indigo-600 decoration-indigo-300'
                                                                     }`}
                                                                     title="クリックして学部名を編集"
@@ -1722,7 +1722,7 @@ function AdminDashboard() {
                                                                     {exam.faculty}
                                                                 </button>
                                                             )}
-                                                            <span className={`text-[10px] font-mono mt-1 ${isAiChecked ? 'text-emerald-700/60 font-bold' : 'text-gray-300'}`}># {exam.id}</span>
+                                                            <span className={`text-[10px] font-mono mt-1 ${isAiChecked ? 'text-emerald-800 font-bold' : 'text-gray-300'}`}># {exam.id}</span>
                                                         </div>
                                                     </td>
 
@@ -1731,7 +1731,7 @@ function AdminDashboard() {
                                                 <div className="flex flex-col whitespace-nowrap">
                                                     <div className="flex items-center gap-2 whitespace-nowrap">
                                                         <span className={`text-sm font-black px-2 py-0.5 rounded whitespace-nowrap ${
-                                                            isAiChecked ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-50 text-indigo-600'
+                                                            isAiChecked ? 'bg-emerald-200 text-emerald-900' : 'bg-indigo-50 text-indigo-600'
                                                         }`}>{exam.year}年度</span>
                                                         {exam.pdf_path && (
                                                             <a href={exam.pdf_path} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-green-600 hover:text-green-800 inline-flex items-center gap-1 transition-colors whitespace-nowrap">
@@ -1875,7 +1875,7 @@ function AdminDashboard() {
                                                     onClick={() => handleToggleAiChecked(exam.id, exam.is_ai_checked)}
                                                     className={`px-2.5 py-1 text-[9px] font-black rounded-full transition-all flex items-center justify-center mx-auto gap-1 border-2 whitespace-nowrap ${
                                                         exam.is_ai_checked
-                                                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 hover:border-emerald-700 shadow-md ring-2 ring-emerald-300/60'
+                                                            ? 'ai-checked-toggle-active'
                                                             : 'bg-gray-50 text-gray-400 border-gray-100 hover:bg-gray-100 hover:text-gray-600'
                                                     }`}
                                                     title={exam.is_ai_checked ? (exam.ai_checked_at ? `AIチェック済 (${new Date(exam.ai_checked_at).toLocaleDateString('ja-JP')} 確認)\nクリックして未チェックに変更` : 'AIチェック済\nクリックして未チェックに変更') : 'クリックしてAIチェック済に変更'}

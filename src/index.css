@@ -1903,3 +1903,86 @@ details[open] .details-arrow {
 details summary::-webkit-details-marker {
   display: none;
 }
+
+/* ========================================================
+   Admin Dashboard Exam Card Styles (AI Checked Highlighting)
+   ======================================================== */
+.exam-row-ai-checked td {
+  background-color: #ecfdf5 !important; /* emerald-50 */
+  border-top: 2px solid #6ee7b7 !important; /* emerald-300 */
+  border-bottom: 2px solid #6ee7b7 !important;
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.08);
+}
+
+.exam-row-ai-checked td:first-child {
+  border-left: 6px solid #059669 !important; /* emerald-600 accent bar */
+}
+
+.exam-row-ai-checked td:last-child {
+  border-right: 2px solid #6ee7b7 !important;
+}
+
+.exam-row-ai-checked:hover td {
+  background-color: #d1fae5 !important; /* emerald-100 */
+  border-top-color: #059669 !important;
+  border-bottom-color: #059669 !important;
+}
+
+.exam-row-ai-checked:hover td:last-child {
+  border-right-color: #059669 !important;
+}
+
+.ai-checked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: #059669 !important;
+  color: #ffffff !important;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.4);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ai-checked-toggle-active {
+  background-color: #059669 !important;
+  color: #ffffff !important;
+  border: 2px solid #047857 !important;
+  box-shadow: 0 2px 5px rgba(5, 150, 105, 0.3) !important;
+}
+
+.ai-checked-faculty-name {
+  color: #064e3b !important;
+  font-weight: 900 !important;
+}
+
+/* Emerald utility classes */
+.bg-emerald-50 { background-color: #ecfdf5; }
+.bg-emerald-100 { background-color: #d1fae5; }
+.bg-emerald-200 { background-color: #a7f3d0; }
+.bg-emerald-500 { background-color: #10b981; }
+.bg-emerald-600 { background-color: #059669; }
+.bg-emerald-700 { background-color: #047857; }
+
+.text-emerald-600 { color: #059669; }
+.text-emerald-700 { color: #047857; }
+.text-emerald-800 { color: #065f46; }
+.text-emerald-900 { color: #064e3b; }
+.text-emerald-950 { color: #022c22; }
+
+.border-emerald-100 { border-color: #d1fae5; }
+.border-emerald-200 { border-color: #a7f3d0; }
+.border-emerald-300 { border-color: #6ee7b7; }
+.border-emerald-400 { border-color: #34d399; }
+.border-emerald-500 { border-color: #10b981; }
+.border-emerald-600 { border-color: #059669; }
+.border-y-2 { border-top-width: 2px; border-bottom-width: 2px; }
+.border-l-2 { border-left-width: 2px; }
+.border-r-2 { border-right-width: 2px; }
+.border-l-4 { border-left-width: 4px; }
+.border-l-6 { border-left-width: 6px; }
+.border-l-emerald-500 { border-left-color: #10b981; }
+.border-l-emerald-600 { border-left-color: #059669; }
